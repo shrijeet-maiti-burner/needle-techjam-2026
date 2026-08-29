@@ -14,6 +14,20 @@ from needle.catalog import (
 
 
 class CatalogValidationTest(unittest.TestCase):
+    def test_extracts_sentence_bounded_need_paraphrases(self) -> None:
+        self.assertEqual(
+            extract_query_signatures(
+                ["I've changed my mind. I need Stainless Steel Band now."]
+            ),
+            ("stainless steel band",),
+        )
+
+    def test_extracts_important_detail_paraphrase(self) -> None:
+        self.assertEqual(
+            extract_query_signatures(["The important detail is Pull On closure."]),
+            ("pull on closure",),
+        )
+
     def write_catalog(self, products: list[dict]) -> Path:
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

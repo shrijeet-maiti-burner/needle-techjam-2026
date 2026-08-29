@@ -7,13 +7,19 @@ from typing import Mapping
 
 
 EXPLICIT_OVERRIDE_RE = re.compile(
-    r"\b(?:ignore my earlier preference|ignore what i said|changed my mind|instead i need|actually,? instead)\b",
+    r"\b(?:"
+    r"ignore\s+my\s+earlier\s+preference"
+    r"|ignore\s+what\s+i\s+said"
+    r"|changed\s+my\s+mind"
+    r"|instead\s+i\s+need"
+    r"|actually\s*,?\s*instead"
+    r")\b",
     re.IGNORECASE,
 )
 PREFERENCE_OVERRIDE_RE = re.compile(
     r"\b(?:"
     r"(?:ignore|disregard|forget)\s+(?:my\s+)?(?:earlier|previous|old)\s+preference"
-    r"|changed my mind about (?:that|the|my)\s+(?:earlier\s+)?preference"
+    r"|changed\s+my\s+mind\s+about\s+(?:that|the|my)\s+(?:earlier\s+)?preference"
     r")\b",
     re.IGNORECASE,
 )

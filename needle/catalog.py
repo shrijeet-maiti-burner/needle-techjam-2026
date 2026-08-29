@@ -14,7 +14,15 @@ from needle.contracts import Candidate
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
 SIGNATURE_MARKER_RE = re.compile(
-    r"(?:key requirement is|what matters is|what i need is)\s*:\s*(.+)",
+    r"(?:"
+    r"key requirement is"
+    r"|what matters is"
+    r"|what i need is"
+    r"|i (?:absolutely )?need"
+    r"|(?:my )?must[- ]have is"
+    r"|(?:the )?important (?:detail|details|thing|things) (?:is|are)"
+    r"|(?:my )?(?:priority|priorities) (?:is|are)"
+    r")\s*:?\s*(.+)",
     re.IGNORECASE,
 )
 MATERIAL_RE = re.compile(
@@ -129,7 +137,13 @@ def extract_query_signatures(messages: Iterable[str]) -> tuple[str, ...]:
             # but catalog features can contain them too. Only the first span
             # is structurally unambiguous. Later spans remain available to
             # sparse retrieval instead of becoming unsafe exact evidence.
-            signature = canonical_signature(marker.group(1).split(";", 1)[0])
+            explicit_value = re.sub(
+                r"\s+now\s*[.!?]*\s*$",
+                "",
+                marker.group(1).split(";", 1)[0],
+                flags=re.IGNORECASE,
+            )
+            signature = canonical_signature(explicit_value)
             if signature:
                 signatures.append(signature)
 

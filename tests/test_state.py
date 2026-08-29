@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from needle.diagnostics import surface_noise
 from needle.state import (
     ConstraintStatus, Polarity, SessionState, StateStore, extract_constraints,
     extract_subject_anchor,
@@ -241,6 +242,18 @@ class OverrideTest(unittest.TestCase):
         self.assertIn("I'm after Women Dresses.", state.retrieval_text)
         self.assertNotIn("black", state.retrieval_text)
         self.assertEqual(state.subject_anchor, "I'm after Women Dresses.")
+
+    def test_surface_noise_cannot_preserve_revoked_preference(self) -> None:
+        state = SessionState("s", {}, override_policy="preserve_subject")
+        state.observe(surface_noise("I'm looking for Women Dresses. Pull On closure."), 1)
+        state.observe(
+            surface_noise(
+                "Actually, ignore my earlier preference. What I need is: cotton."
+            ),
+            2,
+        )
+        self.assertNotIn("PULL", state.retrieval_text)
+        self.assertIn("COTTON", state.retrieval_text)
 
     def test_no_reset_retains_raw_history_as_diagnostic_control(self) -> None:
         state = SessionState("s", {}, override_policy="no_reset")
