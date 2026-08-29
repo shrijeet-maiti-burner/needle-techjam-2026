@@ -23,9 +23,12 @@ Python 3.10 or later is required. The baseline path uses only the standard libra
 python scripts/bootstrap.py
 python -m unittest discover -s tests -v
 python scripts/evaluate.py --output results/baseline.json
+python scripts/run_experiment.py --experiment-id H0-CONTROL --network-state enabled
 ```
 
 `bootstrap.py` downloads the official participant kit, verifies its pinned SHA-256 digest, and extracts it under the ignored `.artifacts/` directory. `evaluate.py` runs our `starter.agent.Agent` against the unmodified official evaluator and public data.
+
+`run_experiment.py` is the decision-grade path: it refuses dirty trees by default and writes an ignored, immutable directory containing the raw result, artifact/config fingerprints, strict-contract report, scenario metrics, latency, environment, and checksums.
 
 ## Repository map
 

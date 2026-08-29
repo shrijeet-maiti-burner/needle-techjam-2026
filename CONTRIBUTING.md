@@ -40,3 +40,5 @@ git diff --check
 ```
 
 The official evaluator must also complete before an integration or release-candidate merge.
+
+Use `scripts/run_experiment.py` for decision-grade runs. Dirty-tree runs require the explicit `--allow-dirty` flag and remain diagnostic only.
