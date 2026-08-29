@@ -1,0 +1,10 @@
+# The agent runs on the Python standard library only.
+# sqlite3 (with FTS5) ships with CPython and is used for retrieval.
+# There are no third-party runtime dependencies to install.
+#
+# Requires Python 3.10 or later.
+#
+#   python -c "import sqlite3; sqlite3.connect(':memory:').execute(\
+#     \"CREATE VIRTUAL TABLE t USING fts5(x)\")"
+#
+# If that line runs without error, the environment is sufficient.

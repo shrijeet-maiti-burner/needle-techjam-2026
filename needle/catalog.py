@@ -312,9 +312,28 @@ class CatalogIndex:
         self.product_count = 0
         self._rating_numbers: dict[str, int] = {}
         self._max_log_rating = 1.0
+        self.signature_index_fallback: str | None = None
         self._build()
         if self.signature_index_path is not None:
-            self._open_signature_index()
+            try:
+                self._open_signature_index()
+            except (ValueError, OSError, sqlite3.Error) as error:
+                # A bundled index is an optimisation, never a requirement. If
+                # the scoring catalog differs from the one it was built against
+                # by even a byte, or the file is missing or unreadable, rebuild
+                # in process rather than failing construction. Raising here
+                # aborts the agent before any session runs and scores zero,
+                # where the rebuilt path still scores what pure sparse scores.
+                self.signature_index_fallback = f"{type(error).__name__}: {error}"
+                self.signature_index_path = None
+                self._external_signature_connection = None
+                self._signature_count_cache.clear()
+                self.connection.close()
+                self.connection = sqlite3.connect(":memory:")
+                self.product_count = 0
+                self._rating_numbers.clear()
+                self._max_log_rating = 1.0
+                self._build()
 
     def _build(self) -> None:
         cursor = self.connection.cursor()
