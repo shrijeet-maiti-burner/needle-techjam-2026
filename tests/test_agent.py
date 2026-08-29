@@ -29,6 +29,24 @@ PRODUCTS = (
         "description": "winter outerwear",
     },
     {
+        "parent_asin": "BLACK_SHIRT_2",
+        "title": "Black cotton shirt",
+        "categories": ["Clothing", "Shirts"],
+        "features": ["cotton blend"],
+        "details": {"Color": "Black"},
+        "store": "Second Example",
+        "description": "casual shirt",
+    },
+    {
+        "parent_asin": "BLACK_SHIRT_3",
+        "title": "Black cotton shirt",
+        "categories": ["Clothing", "Shirts"],
+        "features": ["cotton blend"],
+        "details": {"Color": "Black"},
+        "store": "Third Example",
+        "description": "casual shirt",
+    },
+    {
         "parent_asin": "BLUE_SHOES",
         "title": "Blue running shoes",
         "categories": ["Shoes", "Running"],
@@ -87,6 +105,39 @@ class AgentTest(unittest.TestCase):
         self.agent.reset("bounded", {})
         response = self.agent.respond("bounded", "clothing shoes", 1, 100)
         self.assertLessEqual(len(response["recommendations"]), 10)
+
+    def test_fixed_slate_size_is_respected(self) -> None:
+        agent = Agent(self.catalog_path, slate_size=1)
+        agent.reset("single", {})
+
+        response = agent.respond("single", "black cotton shirt", 1, 10)
+
+        self.assertEqual(len(response["recommendations"]), 1)
+
+    def test_sequential_policy_does_not_repeat_candidates(self) -> None:
+        agent = Agent(self.catalog_path, slate_size=1, exclude_seen=True)
+        agent.reset("sequential", {})
+
+        first = agent.respond("sequential", "black cotton shirt", 1, 10)
+        second = agent.respond("sequential", "same requirements", 2, 10)
+        third = agent.respond("sequential", "same requirements", 3, 10)
+        identifiers = [
+            first["recommendations"][0]["parent_asin"],
+            second["recommendations"][0]["parent_asin"],
+            third["recommendations"][0]["parent_asin"],
+        ]
+
+        self.assertEqual(len(set(identifiers)), 3)
+
+    def test_reset_clears_sequential_history(self) -> None:
+        agent = Agent(self.catalog_path, slate_size=1, exclude_seen=True)
+        agent.reset("reused", {})
+        first = agent.respond("reused", "black cotton shirt", 1, 10)
+        agent.reset("reused", {})
+
+        restarted = agent.respond("reused", "black cotton shirt", 1, 10)
+
+        self.assertEqual(restarted["recommendations"], first["recommendations"])
 
 
 if __name__ == "__main__":

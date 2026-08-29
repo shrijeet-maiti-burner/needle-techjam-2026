@@ -1,14 +1,43 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import sqlite3
+import unicodedata
+from collections import defaultdict
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from needle.contracts import Candidate
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
+SIGNATURE_MARKER_RE = re.compile(
+    r"(?:key requirement is|what matters is|what i need is)\s*:\s*(.+)",
+    re.IGNORECASE,
+)
+MATERIAL_RE = re.compile(
+    r"\b(cotton|polyester|nylon|leather|wool|spandex|silk|rayon|fabric)\b",
+    re.IGNORECASE,
+)
+COLOR_RE = re.compile(
+    r"\b(black|white|blue|red|pink|green|brown|gray|grey|purple|yellow|orange)\b",
+    re.IGNORECASE,
+)
+
+SEARCH_FIELDS = (
+    "title",
+    "categories",
+    "features",
+    "details",
+    "store",
+    "description",
+)
+DEFAULT_FIELD_WEIGHTS = (6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
+RETRIEVAL_MODES = frozenset({"sparse", "signature_first"})
+QUERY_MODES = frozenset({"any", "all"})
+
 STOPWORDS = frozenset(
     {
         "a",
@@ -56,6 +85,24 @@ def _text(value: object) -> str:
     return str(value)
 
 
+def _flatten_values(value: object) -> list[str]:
+    if isinstance(value, dict):
+        return [f"{key}: {item}" for key, item in value.items() if item not in (None, "", [])]
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    return [str(value)] if value not in (None, "") else []
+
+
+def _clean_constraint(value: object, limit: int = 180) -> str:
+    return re.sub(r"\s+", " ", str(value)).strip(" -;,.\t\n")[:limit].rstrip()
+
+
+def canonical_signature(value: object) -> str:
+    normalized = unicodedata.normalize("NFKD", _clean_constraint(value).casefold())
+    without_marks = "".join(character for character in normalized if not unicodedata.combining(character))
+    return " ".join(TOKEN_RE.findall(without_marks))
+
+
 def query_terms(text: str, limit: int = 60) -> list[str]:
     terms = (
         token.lower()
@@ -65,15 +112,98 @@ def query_terms(text: str, limit: int = 60) -> list[str]:
     return list(dict.fromkeys(terms))[:limit]
 
 
-class CatalogIndex:
-    """Validated in-memory FTS5 index over participant-visible catalog fields."""
+def extract_query_signatures(messages: Iterable[str]) -> tuple[str, ...]:
+    """Extract catalog-grounded fragments from released-style dialogue.
 
-    def __init__(self, catalog_path: str | Path) -> None:
+    This deliberately recognizes only explicit value-bearing clauses and the
+    small material/color vocabulary. It is a high-precision experiment arm,
+    not a general semantic parser; sparse retrieval remains the fallback.
+    """
+
+    signatures: list[str] = []
+    for message in messages:
+        marker = SIGNATURE_MARKER_RE.search(message)
+        if marker:
+            # The released customer separates constraints with semicolons,
+            # but catalog features can contain them too. Only the first span
+            # is structurally unambiguous. Later spans remain available to
+            # sparse retrieval instead of becoming unsafe exact evidence.
+            signature = canonical_signature(marker.group(1).split(";", 1)[0])
+            if signature:
+                signatures.append(signature)
+
+        material = MATERIAL_RE.search(message)
+        if material:
+            signatures.append(canonical_signature(material.group(1)))
+        color = COLOR_RE.search(message)
+        if color:
+            signatures.append(canonical_signature(f"color: {color.group(1)}"))
+    return tuple(dict.fromkeys(signatures))
+
+
+def product_signatures(product: dict[str, object]) -> tuple[str, ...]:
+    searchable = " ".join(_text(product.get(field)) for field in SEARCH_FIELDS)
+    values: list[object] = [
+        *_flatten_values(product.get("features")),
+        *_flatten_values(product.get("details")),
+    ]
+    material = MATERIAL_RE.search(searchable)
+    if material:
+        values.insert(0, material.group(1).lower())
+    color = COLOR_RE.search(searchable)
+    if color:
+        values.insert(1, f"color: {color.group(1).lower()}")
+    if product.get("price") not in (None, ""):
+        values.append(f"budget around ${product['price']}")
+    return tuple(
+        dict.fromkeys(
+            signature
+            for value in values
+            if (signature := canonical_signature(value))
+        )
+    )
+
+
+class CatalogIndex:
+    """Validated in-memory lexical index with isolated experiment controls."""
+
+    def __init__(
+        self,
+        catalog_path: str | Path,
+        *,
+        retrieval_mode: str = "sparse",
+        query_mode: str = "any",
+        field_weights: Sequence[float] = DEFAULT_FIELD_WEIGHTS,
+        popularity_strength: float = 0.0,
+        signature_bucket_limit: int = 100,
+    ) -> None:
+        if retrieval_mode not in RETRIEVAL_MODES:
+            raise ValueError(f"unsupported retrieval mode: {retrieval_mode}")
+        if query_mode not in QUERY_MODES:
+            raise ValueError(f"unsupported query mode: {query_mode}")
+        if len(field_weights) != len(SEARCH_FIELDS):
+            raise ValueError(f"field_weights must contain {len(SEARCH_FIELDS)} values")
+        parsed_weights = tuple(float(value) for value in field_weights)
+        if any(not math.isfinite(value) or value < 0 for value in parsed_weights):
+            raise ValueError("field_weights must be finite and non-negative")
+        if not math.isfinite(popularity_strength) or not 0.0 <= popularity_strength <= 1.0:
+            raise ValueError("popularity_strength must be between 0 and 1")
+        if not 1 <= int(signature_bucket_limit) <= 50_000:
+            raise ValueError("signature_bucket_limit must be in 1..50000")
+
         self.catalog_path = Path(catalog_path)
         if not self.catalog_path.is_file():
             raise FileNotFoundError(f"catalog not found: {self.catalog_path}")
+        self.retrieval_mode = retrieval_mode
+        self.query_mode = query_mode
+        self.field_weights = parsed_weights
+        self.popularity_strength = float(popularity_strength)
+        self.signature_bucket_limit = int(signature_bucket_limit)
         self.connection = sqlite3.connect(":memory:")
         self.product_count = 0
+        self._rating_numbers: dict[str, int] = {}
+        self._signature_index: dict[str, frozenset[str]] = {}
+        self._max_log_rating = 1.0
         self._build()
 
     def _build(self) -> None:
@@ -81,10 +211,11 @@ class CatalogIndex:
         cursor.execute(
             "CREATE VIRTUAL TABLE products USING fts5("
             "parent_asin UNINDEXED, title, categories, features, details, store, description, "
-            "tokenize='unicode61 remove_diacritics 2')"
+            "rating_number UNINDEXED, tokenize='unicode61 remove_diacritics 2')"
         )
         seen: set[str] = set()
-        batch: list[tuple[str, str, str, str, str, str, str]] = []
+        signatures: defaultdict[str, set[str]] = defaultdict(set)
+        batch: list[tuple[str, str, str, str, str, str, str, int]] = []
         with self.catalog_path.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
@@ -96,6 +227,8 @@ class CatalogIndex:
                 if parent_asin in seen:
                     raise ValueError(f"duplicate parent_asin in catalog: {parent_asin}")
                 seen.add(parent_asin)
+                rating_number = max(0, int(product.get("rating_number") or 0))
+                self._rating_numbers[parent_asin] = rating_number
                 batch.append(
                     (
                         parent_asin,
@@ -105,27 +238,120 @@ class CatalogIndex:
                         _text(product.get("details")),
                         _text(product.get("store")),
                         _text(product.get("description")),
+                        rating_number,
                     )
                 )
+                if self.retrieval_mode == "signature_first":
+                    for signature in product_signatures(product):
+                        signatures[signature].add(parent_asin)
                 if len(batch) >= 1_000:
-                    cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+                    cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
                     batch.clear()
         if batch:
-            cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?)", batch)
+            cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
         self.connection.commit()
         self.product_count = len(seen)
         if self.product_count == 0:
             raise ValueError("catalog is empty")
+        self._max_log_rating = max(
+            (math.log1p(value) for value in self._rating_numbers.values()),
+            default=1.0,
+        ) or 1.0
+        self._signature_index = {
+            signature: frozenset(parent_asins)
+            for signature, parent_asins in signatures.items()
+        }
 
-    def search(self, text: str, limit: int) -> list[Candidate]:
-        bounded_limit = max(0, min(int(limit), 10))
+    def signature_candidates(self, messages: Iterable[str]) -> tuple[tuple[str, ...], frozenset[str]]:
+        matched: list[str] = []
+        candidates: set[str] | None = None
+        for signature in extract_query_signatures(messages):
+            bucket = self._signature_index.get(signature)
+            if not bucket:
+                continue
+            if candidates is None:
+                matched.append(signature)
+                candidates = set(bucket)
+                continue
+            narrowed = candidates.intersection(bucket)
+            if narrowed:
+                matched.append(signature)
+                candidates = narrowed
+        if candidates is None:
+            return tuple(matched), frozenset()
+        return tuple(matched), frozenset(candidates)
+
+    def signature_bucket_sizes(self) -> tuple[int, ...]:
+        """Collision sizes for diagnostics; product identifiers are withheld."""
+        return tuple(len(parent_asins) for parent_asins in self._signature_index.values())
+
+    def _sparse_rows(self, text: str, limit: int) -> list[tuple[str, float]]:
         terms = query_terms(text)
-        if bounded_limit == 0 or not terms:
+        if limit == 0 or not terms:
             return []
-        expression = " OR ".join(f'"{term}"' for term in terms)
+        operator = " OR " if self.query_mode == "any" else " AND "
+        expression = operator.join(f'"{term}"' for term in terms)
+        weights = ", ".join(str(value) for value in (0.0, *self.field_weights, 0.0))
         rows = self.connection.execute(
-            "SELECT parent_asin, bm25(products, 0.0, 6.0, 4.0, 2.5, 2.5, 1.5, 1.0) AS rank "
+            f"SELECT parent_asin, bm25(products, {weights}) AS rank "
             "FROM products WHERE products MATCH ? ORDER BY rank ASC, parent_asin ASC LIMIT ?",
-            (expression, bounded_limit),
+            (expression, limit),
         ).fetchall()
-        return [Candidate(parent_asin=str(row[0]), sparse_score=-float(row[1])) for row in rows]
+        return [(str(parent_asin), -float(rank)) for parent_asin, rank in rows]
+
+    def _popularity_prior(self, parent_asin: str) -> float:
+        return math.log1p(self._rating_numbers[parent_asin]) / self._max_log_rating
+
+    def _rerank_with_popularity(self, rows: list[tuple[str, float]]) -> list[tuple[str, float]]:
+        if self.popularity_strength == 0.0 or len(rows) < 2:
+            return rows
+        scores = [score for _, score in rows]
+        low, high = min(scores), max(scores)
+        span = high - low
+
+        def combined(item: tuple[str, float]) -> tuple[float, float, str]:
+            parent_asin, sparse_score = item
+            relevance = 1.0 if span == 0.0 else (sparse_score - low) / span
+            value = relevance + self.popularity_strength * self._popularity_prior(parent_asin)
+            return (-value, -sparse_score, parent_asin)
+
+        return sorted(rows, key=combined)
+
+    def search(
+        self,
+        text: str,
+        limit: int,
+        *,
+        messages: Iterable[str] = (),
+        excluded_ids: Iterable[str] = (),
+    ) -> list[Candidate]:
+        bounded_limit = max(0, min(int(limit), 500))
+        if bounded_limit == 0:
+            return []
+        excluded = frozenset(excluded_ids)
+        fetch_limit = min(50_000, bounded_limit + len(excluded) + 200)
+        sparse_rows = self._rerank_with_popularity(self._sparse_rows(text, fetch_limit))
+        sparse_scores = dict(sparse_rows)
+
+        ordered: list[tuple[str, float]] = []
+        if self.retrieval_mode == "signature_first":
+            _, exact_ids = self.signature_candidates(messages)
+            if 0 < len(exact_ids) <= self.signature_bucket_limit:
+                sparse_positions = {parent_asin: index for index, (parent_asin, _) in enumerate(sparse_rows)}
+                exact_order = sorted(
+                    exact_ids,
+                    key=lambda parent_asin: (
+                        sparse_positions.get(parent_asin, len(sparse_positions)),
+                        -self._popularity_prior(parent_asin),
+                        parent_asin,
+                    ),
+                )
+                ordered.extend((parent_asin, sparse_scores.get(parent_asin, 0.0)) for parent_asin in exact_order)
+
+        already_ordered = {parent_asin for parent_asin, _ in ordered}
+        ordered.extend(row for row in sparse_rows if row[0] not in already_ordered)
+        return [
+            Candidate(parent_asin=parent_asin, sparse_score=sparse_score)
+            for parent_asin, sparse_score in ordered
+            if parent_asin not in excluded
+        ][:bounded_limit]
