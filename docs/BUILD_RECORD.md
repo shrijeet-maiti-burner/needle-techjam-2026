@@ -25,3 +25,5 @@
 - scoring network requirement: none
 
 This is an environment and provenance record, not performance evidence. Raw evaluator outputs remain ignored; reviewed summaries belong in `docs/evidence/`.
+
+The first official baseline reproduction and integrated-control record is in [`docs/evidence/H0_CONTROL.md`](evidence/H0_CONTROL.md).

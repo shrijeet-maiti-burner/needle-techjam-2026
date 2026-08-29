@@ -34,3 +34,7 @@ independent rerun owner:
 | EXP-008/010/011 | Aryaman + Yazhiniyan | does an optional semantic path improve robustness within offline resource limits? | no-op and lexical-only controls | H40 |
 
 Public TechnicalScore is one technical input, not the architecture selection rule. Robustness, contract safety, resources, reproducibility, and judge-facing evidence remain independent gates.
+
+## Completed records
+
+- [EXP-001 and H0-CONTROL-001, 29 August](evidence/H0_CONTROL.md): official weak baseline reproduced exactly; minimal integrated control completed all 200 sessions. The control is retained without attributing its combined gain or treating public behavior as private validation.
