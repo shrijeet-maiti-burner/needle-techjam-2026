@@ -5,8 +5,11 @@ from pathlib import Path
 
 from needle.catalog import DEFAULT_FIELD_WEIGHTS, CatalogIndex
 from needle.contracts import TurnResponse
-from needle.semantic import NoOpSemanticReranker
+from needle.semantic import LexicalNormalizer, NoOpSemanticReranker
 from needle.state import StateStore
+
+
+LEXICAL_MODES = frozenset({"none", "normalize", "expand"})
 
 
 class Agent:
@@ -26,11 +29,14 @@ class Agent:
         slate_size: int = 10,
         exclude_seen: bool = False,
         override_policy: str = "full_reset",
+        lexical_mode: str = "none",
     ) -> None:
         if not 1 <= int(candidate_pool) <= 500:
             raise ValueError("candidate_pool must be in 1..500")
         if not 1 <= int(slate_size) <= 10:
             raise ValueError("slate_size must be in 1..10")
+        if lexical_mode not in LEXICAL_MODES:
+            raise ValueError(f"unsupported lexical mode: {lexical_mode}")
         self.catalog = CatalogIndex(
             catalog_path,
             retrieval_mode=retrieval_mode,
@@ -42,6 +48,8 @@ class Agent:
         )
         self.state = StateStore(override_policy=override_policy)
         self.semantic = NoOpSemanticReranker()
+        self.lexical = LexicalNormalizer()
+        self.lexical_mode = lexical_mode
         self.candidate_pool = int(candidate_pool)
         self.slate_size = int(slate_size)
         self.exclude_seen = bool(exclude_seen)
@@ -65,13 +73,18 @@ class Agent:
         history_key = (session_id, state.intent_version)
         seen = self._seen_by_version.setdefault(history_key, set())
         excluded = seen if self.exclude_seen else ()
+        retrieval_text = state.retrieval_text
+        if self.lexical_mode == "normalize":
+            retrieval_text = self.lexical.normalize(retrieval_text)
+        elif self.lexical_mode == "expand":
+            retrieval_text = self.lexical.expand_query(retrieval_text)
         sparse = self.catalog.search(
-            state.retrieval_text,
+            retrieval_text,
             self.candidate_pool,
             messages=state.messages,
             excluded_ids=excluded,
         )
-        ranked = self.semantic.rerank(sparse, state.retrieval_text)[:limit]
+        ranked = self.semantic.rerank(sparse, retrieval_text)[:limit]
         seen.update(candidate.parent_asin for candidate in ranked)
         ask_attribute = "other" if turn < 10 else None
         message = (

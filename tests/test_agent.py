@@ -139,6 +139,19 @@ class AgentTest(unittest.TestCase):
 
         self.assertEqual(restarted["recommendations"], first["recommendations"])
 
+    def test_rejects_unknown_lexical_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "lexical mode"):
+            Agent(self.catalog_path, lexical_mode="unknown")
+
+    def test_expansion_adds_retrieval_terms_without_rewriting_state(self) -> None:
+        agent = Agent(self.catalog_path, lexical_mode="expand")
+        agent.reset("expanded", {})
+
+        response = agent.respond("expanded", "sneakers", 1, 10)
+
+        self.assertEqual(response["recommendations"][0]["parent_asin"], "BLUE_SHOES")
+        self.assertEqual(agent.state._sessions["expanded"].retrieval_text, "sneakers")
+
 
 if __name__ == "__main__":
     unittest.main()
