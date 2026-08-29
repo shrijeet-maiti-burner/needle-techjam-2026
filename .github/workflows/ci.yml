@@ -20,6 +20,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: compile
-        run: python -m compileall -q needle starter submission scripts tests
+        run: python -m compileall -q needle starter submission scripts tests robustness
       - name: test
         run: python -m unittest discover -s tests -v
