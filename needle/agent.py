@@ -10,6 +10,7 @@ from needle.state import StateStore
 
 
 LEXICAL_MODES = frozenset({"none", "normalize", "expand"})
+PROFILE_MODES = frozenset({"none", "cold_start_tags"})
 
 
 class Agent:
@@ -30,6 +31,7 @@ class Agent:
         exclude_seen: bool = False,
         override_policy: str = "full_reset",
         lexical_mode: str = "none",
+        profile_mode: str = "none",
     ) -> None:
         if not 1 <= int(candidate_pool) <= 500:
             raise ValueError("candidate_pool must be in 1..500")
@@ -37,6 +39,8 @@ class Agent:
             raise ValueError("slate_size must be in 1..10")
         if lexical_mode not in LEXICAL_MODES:
             raise ValueError(f"unsupported lexical mode: {lexical_mode}")
+        if profile_mode not in PROFILE_MODES:
+            raise ValueError(f"unsupported profile mode: {profile_mode}")
         self.catalog = CatalogIndex(
             catalog_path,
             retrieval_mode=retrieval_mode,
@@ -50,6 +54,7 @@ class Agent:
         self.semantic = NoOpSemanticReranker()
         self.lexical = LexicalNormalizer()
         self.lexical_mode = lexical_mode
+        self.profile_mode = profile_mode
         self.candidate_pool = int(candidate_pool)
         self.slate_size = int(slate_size)
         self.exclude_seen = bool(exclude_seen)
@@ -69,6 +74,7 @@ class Agent:
             "exclude_seen": self.exclude_seen,
             "override_policy": override_policy,
             "lexical_mode": lexical_mode,
+            "profile_mode": profile_mode,
         }
         self._seen_by_version: dict[tuple[str, int], set[str]] = {}
 
@@ -91,6 +97,16 @@ class Agent:
         seen = self._seen_by_version.setdefault(history_key, set())
         excluded = seen if self.exclude_seen else ()
         retrieval_text = state.retrieval_text
+        if self.profile_mode == "cold_start_tags" and turn == 1:
+            raw_tags = state.user_profile.get("preference_tags", ())
+            if isinstance(raw_tags, (list, tuple)):
+                profile_terms = " ".join(
+                    tag.strip()
+                    for tag in raw_tags
+                    if isinstance(tag, str) and tag.strip()
+                )
+                if profile_terms:
+                    retrieval_text = f"{retrieval_text} {profile_terms}".strip()
         if self.lexical_mode == "normalize":
             retrieval_text = self.lexical.normalize(retrieval_text)
         elif self.lexical_mode == "expand":

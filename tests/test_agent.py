@@ -4,6 +4,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from needle.agent import Agent
 from needle.contracts import ALLOWED_ASK_ATTRIBUTES
@@ -142,6 +143,23 @@ class AgentTest(unittest.TestCase):
     def test_rejects_unknown_lexical_mode(self) -> None:
         with self.assertRaisesRegex(ValueError, "lexical mode"):
             Agent(self.catalog_path, lexical_mode="unknown")
+
+    def test_rejects_unknown_profile_mode(self) -> None:
+        with self.assertRaisesRegex(ValueError, "profile mode"):
+            Agent(self.catalog_path, profile_mode="unknown")
+
+    def test_cold_start_profile_tags_affect_only_the_first_query(self) -> None:
+        agent = Agent(self.catalog_path, profile_mode="cold_start_tags")
+        agent.reset("profiled", {"preference_tags": ["warm"]})
+
+        with patch.object(agent.catalog, "search", wraps=agent.catalog.search) as search:
+            first = agent.respond("profiled", "clothing", 1, 1)
+            agent.respond("profiled", "clothing", 2, 1)
+
+        self.assertEqual(first["recommendations"][0]["parent_asin"], "RED_COAT")
+        self.assertEqual(search.call_args_list[0].args[0], "clothing warm")
+        self.assertEqual(search.call_args_list[1].args[0], "clothing clothing")
+        self.assertEqual(agent.state._sessions["profiled"].retrieval_text, "clothing clothing")
 
     def test_expansion_adds_retrieval_terms_without_rewriting_state(self) -> None:
         agent = Agent(self.catalog_path, lexical_mode="expand")
