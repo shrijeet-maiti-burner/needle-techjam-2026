@@ -134,6 +134,39 @@ class CatalogValidationTest(unittest.TestCase):
             ["B_HIGH", "A_LOW"],
         )
 
+    def test_category_prior_reranks_but_does_not_filter(self) -> None:
+        path = self.write_catalog(
+            [
+                {
+                    "parent_asin": "A_SHIRT",
+                    "title": "shirt coat",
+                    "categories": ["Clothing", "Shirts"],
+                },
+                {
+                    "parent_asin": "B_COAT",
+                    "title": "shirt coat",
+                    "categories": ["Clothing", "Coats"],
+                },
+            ]
+        )
+        index = CatalogIndex(path, category_strength=1.0)
+
+        ranked = index.search(
+            "shirt coat",
+            2,
+            messages=["I'm looking for coats, but still exploring."],
+        )
+
+        self.assertEqual(
+            [candidate.parent_asin for candidate in ranked],
+            ["B_COAT", "A_SHIRT"],
+        )
+
+    def test_rejects_invalid_category_strength(self) -> None:
+        path = self.write_catalog([{"parent_asin": "KNOWN", "title": "known"}])
+        with self.assertRaisesRegex(ValueError, "category_strength"):
+            CatalogIndex(path, category_strength=1.1)
+
     def test_external_signature_index_is_catalog_bound(self) -> None:
         path = self.write_catalog(
             [
