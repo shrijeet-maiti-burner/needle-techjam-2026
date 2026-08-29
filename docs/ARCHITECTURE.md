@@ -9,7 +9,8 @@ official evaluator
       |
 starter.agent.Agent
       |
-session state -> fielded sparse index -> no-op semantic boundary -> strict response
+versioned state -> bounded signature promotion -> fielded sparse fallback
+       -> bounded popularity rerank -> no-op semantic boundary -> strict response
 ```
 
 ## Stable H6 interfaces
@@ -19,15 +20,34 @@ session state -> fielded sparse index -> no-op semantic boundary -> strict respo
 - `NoOpSemanticReranker.rerank` proves the optional stage can be bypassed without failure.
 - `Agent.respond` owns the public contract, ten-item cap, deterministic message, and assembly.
 
-The initial repeated-`other` action is a control, not the final question policy or innovation claim. The initial FTS weights are the official weak baseline weights, not an accepted retrieval decision.
+The repeated-`other` action is still a control, not the final question policy or innovation claim. The official FTS weights are retained because both measured alternatives failed their gates.
+
+## Current measured candidate
+
+The development and submission adapters use the immutable primary preset:
+
+- versioned state with sentence-bounded subject preservation on a scoped preference override;
+- exact catalog-signature promotion only for non-empty buckets of at most 100;
+- sparse `OR` fallback with weights `6/4/2.5/2.5/1.5/1`;
+- bounded popularity strength 0.20, slate ten, and no seen-item exclusion;
+- lexical normalization, expansion, fuzzy matching, and model reranking disabled.
+
+The pure sparse preset is the rollback. The signature asset is a catalog-bound
+32,034,816-byte SQLite file and is never built silently by an adapter. The
+development adapter requires the ignored local asset; the submission adapter
+requires the release-bundled asset.
+
+This is a public-development selection, not a freeze. Deterministic surface and
+paraphrase runs still regress materially, and the final asset has not completed
+a clean-bundle rehearsal.
 
 ## Next experiment-driven extensions
 
-1. Athul replaces raw history with versioned explicit constraints and correction/override fixtures.
-2. Shrijeet measures exact signatures, fielded sparse variants, slate sizes, and the bounded target-eligibility prior.
-3. Aryaman supplies a no-network lexical robustness layer first; any model remains optional until public, robustness, license, latency, memory, and packaging gates pass.
-4. Yazhiniyan freezes the evaluator command, run record, scenario slices, resource measurements, and clean-package checks.
-5. EXP-013 and EXP-014 decide whether one constraint-ambiguity representation should control questions and later-rank coverage. Failure removes that controller without breaking the core path.
+1. EXP-013 and EXP-014 decide whether one constraint-ambiguity representation should control questions and later-rank coverage. Failure removes that controller without breaking the core path.
+2. EXP-010 adds a session driver and independent surface/semantic slices rather than more hand-written marker patches.
+3. Any optional model must beat the no-op and lexical controls on public score, perturbation slices, license, offline startup, latency, memory, disk, and clean packaging.
+4. The deliberately failing hard-popularity filter remains to complete EXP-016's diagnostic matrix; it can never become the production policy.
+5. Yazhiniyan independently reproduces the selected runs and owns final clean-package, faithful-trace, and submission checks.
 
 ## Invariants
 
