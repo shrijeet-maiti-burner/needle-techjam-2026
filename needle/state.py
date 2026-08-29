@@ -293,6 +293,8 @@ class SessionState:
 
     def _merge(self, extracted: list[tuple[str, str, Polarity]], turn: int) -> None:
         for attribute, value, polarity in extracted:
+            for contradicted in self._contradicted(attribute, value, polarity):
+                self._supersede(contradicted)
             current = self._active_for(attribute, polarity, value)
             if current is not None and current.value == value:
                 continue  # restated, not a new belief
@@ -308,6 +310,31 @@ class SessionState:
                     supersedes=current.key if current is not None else None,
                 )
             )
+
+    def _contradicted(
+        self, attribute: str, value: str, polarity: Polarity
+    ) -> list[Constraint]:
+        """Active constraints the incoming one directly negates.
+
+        A value and its own exclusion cannot both hold: "no leather" retracts
+        an earlier "leather", and restating "leather" retracts an earlier
+        "no leather". `_active_for` cannot see these because it filters to the
+        same polarity, so without this both stayed ACTIVE at once and the
+        belief state asserted and denied the same value.
+
+        Matching is on attribute AND value, so unrelated exclusions still
+        accumulate: "no black" does not retract "no red", and neither is
+        touched by a positive on some other colour.
+        """
+        return [
+            constraint
+            for constraint in self.constraints
+            if constraint.status is ConstraintStatus.ACTIVE
+            and constraint.intent_version == self.intent_version
+            and constraint.attribute == attribute
+            and constraint.value == value
+            and constraint.polarity is not polarity
+        ]
 
     def _active_for(
         self, attribute: str, polarity: Polarity, value: str
