@@ -13,13 +13,49 @@ EXPLICIT_OVERRIDE_RE = re.compile(
 
 # The released Boundary reply is "I don't have a preference for <attribute>;
 # please use your judgment." It must never become a negative constraint: the
-# simulator is declining to constrain, not excluding a value. Checked before
-# extraction so a no-preference turn cannot manufacture a filter.
+# simulator is declining to constrain, not excluding a value.
+#
+# Scoped to its own clause rather than the whole message, so a mixed turn
+# such as "no preference for color, but cotton is required" still yields the
+# material constraint. Only the declined clause is suppressed.
 NO_PREFERENCE_RE = re.compile(
-    r"\b(?:no preference|don'?t have (?:a|an additional) preference|"
+    r"\b(?:no preference|don'?t have (?:a|an|any|an additional) preference|"
     r"use your judgment|whatever you recommend|not fussed|no strong feelings)\b",
     re.IGNORECASE,
 )
+# A clause ends at the next separator or the end of the message.
+CLAUSE_END_RE = re.compile(r"[;,.]|\band\b|\bbut\b", re.IGNORECASE)
+
+# Attribute names the customer can decline by name.
+ATTRIBUTE_NAME_RE = re.compile(
+    r"\b(material|colou?r|size|style|use[ _-]?case|budget|price|feature|brand|category)\b",
+    re.IGNORECASE,
+)
+ATTRIBUTE_NAME_ALIASES = {
+    "colour": "color",
+    "price": "budget",
+    "use case": "use_case",
+    "use-case": "use_case",
+}
+
+
+def _declined_regions(message: str) -> list[tuple[int, int]]:
+    """Character spans covering each no-preference clause."""
+    regions: list[tuple[int, int]] = []
+    for match in NO_PREFERENCE_RE.finditer(message):
+        end_match = CLAUSE_END_RE.search(message, match.end())
+        regions.append((match.start(), end_match.start() if end_match else len(message)))
+    return regions
+
+
+def _declined_attributes(message: str, regions: list[tuple[int, int]]) -> set[str]:
+    """Attributes named inside a no-preference clause, normalized."""
+    declined: set[str] = set()
+    for start, end in regions:
+        for name in ATTRIBUTE_NAME_RE.finditer(message, start, end):
+            raw = name.group(1).lower().replace("_", " ").replace("-", " ")
+            declined.add(ATTRIBUTE_NAME_ALIASES.get(raw, raw.replace(" ", "_")))
+    return declined
 
 # Negation is only trusted immediately before the matched value. Anything
 # looser stays positive rather than silently creating an exclusion, because a
@@ -129,25 +165,35 @@ def _is_negated(message: str, offset: int) -> bool:
 def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
     """Attribute, value, polarity triples stated in one message.
 
-    Returns nothing for a no-preference reply. That case is deliberately not
-    treated as negation: the customer is declining to constrain the
-    attribute, and turning it into an exclusion would filter the catalog on
-    a belief the customer never expressed.
+    A no-preference clause is suppressed rather than the whole turn. The
+    customer is declining to constrain one attribute, not excluding a value,
+    so turning it into negation would filter the catalog on a belief they
+    never expressed. Suppression covers the declined attribute by name and
+    any value stated inside that clause, while the rest of the message is
+    extracted normally.
     """
-    if NO_PREFERENCE_RE.search(message):
-        return []
+    regions = _declined_regions(message)
+    declined = _declined_attributes(message, regions)
+
+    def inside_declined(offset: int) -> bool:
+        return any(start <= offset < end for start, end in regions)
 
     found: list[tuple[str, str, Polarity]] = []
     for attribute, vocabulary in ATTRIBUTE_VOCABULARY:
+        if attribute in declined:
+            continue
         for value, offset in _find_values(message, vocabulary):
+            if inside_declined(offset):
+                continue
             polarity = Polarity.NEGATIVE if _is_negated(message, offset) else Polarity.POSITIVE
             found.append((attribute, value.lower(), polarity))
 
-    budget = BUDGET_RE.search(message)
-    if budget:
-        amount = next((group for group in budget.groups() if group), None)
-        if amount:
-            found.append(("budget", amount, Polarity.POSITIVE))
+    if "budget" not in declined:
+        budget = BUDGET_RE.search(message)
+        if budget and not inside_declined(budget.start()):
+            amount = next((group for group in budget.groups() if group), None)
+            if amount:
+                found.append(("budget", amount, Polarity.POSITIVE))
     return found
 
 
@@ -191,7 +237,7 @@ class SessionState:
 
     def _merge(self, extracted: list[tuple[str, str, Polarity]], turn: int) -> None:
         for attribute, value, polarity in extracted:
-            current = self._active_for(attribute, polarity)
+            current = self._active_for(attribute, polarity, value)
             if current is not None and current.value == value:
                 continue  # restated, not a new belief
             if current is not None:
@@ -207,19 +253,28 @@ class SessionState:
                 )
             )
 
-    def _active_for(self, attribute: str, polarity: Polarity) -> Constraint | None:
-        # Only positive constraints supersede each other. Two exclusions can
-        # coexist ("not black, not red"), so negatives accumulate.
-        if polarity is Polarity.NEGATIVE:
-            return None
+    def _active_for(
+        self, attribute: str, polarity: Polarity, value: str
+    ) -> Constraint | None:
+        """The active constraint a new one would replace, if any.
+
+        Positive constraints supersede by attribute: a new colour replaces the
+        previous colour. Negatives do not, because "not black" and "not red"
+        are two independent exclusions that must accumulate. A negative
+        therefore matches only its own exact value, which makes restating the
+        same exclusion idempotent instead of appending a duplicate.
+        """
         for constraint in reversed(self.constraints):
             if (
-                constraint.status is ConstraintStatus.ACTIVE
-                and constraint.intent_version == self.intent_version
-                and constraint.attribute == attribute
-                and constraint.polarity is Polarity.POSITIVE
+                constraint.status is not ConstraintStatus.ACTIVE
+                or constraint.intent_version != self.intent_version
+                or constraint.attribute != attribute
+                or constraint.polarity is not polarity
             ):
-                return constraint
+                continue
+            if polarity is Polarity.NEGATIVE and constraint.value != value:
+                continue
+            return constraint
         return None
 
     def _supersede(self, target: Constraint) -> None:

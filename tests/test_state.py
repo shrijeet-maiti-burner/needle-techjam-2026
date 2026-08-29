@@ -57,6 +57,37 @@ class BoundaryTest(unittest.TestCase):
         # Even when a value word appears, a no-preference turn must stay inert.
         self.assertEqual(extract_constraints("I have no preference for black"), [])
 
+    def test_mixed_turn_keeps_constraints_outside_the_declined_clause(self) -> None:
+        # Suppression is clause-scoped, not turn-scoped. Declining one
+        # attribute must not discard an unrelated requirement stated in the
+        # same message.
+        found = extract_constraints("i have no preference for color, but cotton is required")
+        self.assertIn(("material", "cotton", Polarity.POSITIVE), found)
+        self.assertFalse([f for f in found if f[0] == "color"])
+
+    def test_declined_attribute_is_suppressed_even_if_named_later(self) -> None:
+        found = extract_constraints("cotton is required, but I have no preference for color")
+        self.assertIn(("material", "cotton", Polarity.POSITIVE), found)
+        self.assertFalse([f for f in found if f[0] == "color"])
+
+    def test_value_inside_the_declined_clause_is_suppressed(self) -> None:
+        # "black" sits inside the no-preference clause, so it is neither a
+        # requirement nor an exclusion.
+        found = extract_constraints("no preference for black, but I need wool")
+        self.assertIn(("material", "wool", Polarity.POSITIVE), found)
+        self.assertFalse([f for f in found if f[1] == "black"])
+
+    def test_declining_budget_by_name_suppresses_only_budget(self) -> None:
+        found = extract_constraints("no preference on budget, but linen please")
+        self.assertIn(("material", "linen", Polarity.POSITIVE), found)
+        self.assertFalse([f for f in found if f[0] == "budget"])
+
+    def test_mixed_turn_reaches_session_state(self) -> None:
+        state = _state()
+        state.observe("i have no preference for color, but cotton is required", 1)
+        self.assertEqual(_active_map(state).get("material"), "cotton")
+        self.assertEqual(state.excluded_values("color"), ())
+
     def test_no_preference_turn_leaves_earlier_beliefs_untouched(self) -> None:
         state = _state()
         state.observe("I want a cotton shirt", 1)
@@ -104,6 +135,31 @@ class NegationTest(unittest.TestCase):
         state = _state()
         state.observe("not black", 1)
         state.observe("not red either", 2)
+        self.assertEqual(set(state.excluded_values("color")), {"black", "red"})
+
+    def test_restating_the_same_exclusion_is_idempotent(self) -> None:
+        # Distinct exclusions accumulate, but repeating one must not append a
+        # duplicate active record.
+        state = _state()
+        state.observe("not black", 1)
+        state.observe("not black", 2)
+        self.assertEqual(state.excluded_values("color"), ("black",))
+
+    def test_repeated_exclusion_creates_no_duplicate_constraint_record(self) -> None:
+        state = _state()
+        state.observe("not black", 1)
+        state.observe("still not black", 2)
+        active = [
+            c for c in state.active_constraints()
+            if c.attribute == "color" and c.polarity is Polarity.NEGATIVE
+        ]
+        self.assertEqual(len(active), 1)
+
+    def test_idempotent_exclusion_does_not_supersede_a_different_exclusion(self) -> None:
+        state = _state()
+        state.observe("not black", 1)
+        state.observe("not red", 2)
+        state.observe("not black", 3)
         self.assertEqual(set(state.excluded_values("color")), {"black", "red"})
 
     def test_exclusions_are_not_recorded_as_positive_beliefs(self) -> None:
