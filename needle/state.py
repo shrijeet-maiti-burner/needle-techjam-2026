@@ -6,9 +6,59 @@ from enum import Enum
 from typing import Mapping
 
 
+# Retraction verbs, and the things a customer can retract. Split apart so the
+# trigger is a rule about English rather than a list of released templates:
+# a retraction verb aimed at some prior belief, or one of a few standalone
+# idioms that mean the same thing on their own.
+#
+# Deliberately excluded: bare "actually", bare "instead", bare "no". An earlier
+# revision matched bare "instead" and ordinary corrections then fired a full
+# override. A false override is expensive, it bumps intent_version, clears the
+# shown-candidate set, and discards belief, so this errs toward missing an
+# override rather than inventing one.
+_RETRACT = r"(?:ignore|disregard|forget|scratch|scrap|cancel|undo|drop)"
+_PRIOR = (
+    r"(?:"
+    r"that|it|this"
+    r"|(?:the\s+)?last\s+(?:thing|one|bit|request|message)?"
+    r"|what\s+i\s+(?:said|told\s+you|asked\s+for)"
+    r"|my\s+(?:earlier\s+|previous\s+|prior\s+|old\s+|last\s+|initial\s+|first\s+)?"
+    r"(?:preference|request|requirement|requirements|criteria|answer|note)"
+    r"|(?:my\s+)?(?:earlier|previous|prior|old)\s+"
+    r"(?:preference|request|requirement|requirements|criteria)"
+    r")"
+)
 EXPLICIT_OVERRIDE_RE = re.compile(
-    r"\b(?:ignore my earlier preference|ignore what i said|changed my mind|instead i need|actually,? instead)\b",
+    r"(?:"
+    rf"\b{_RETRACT}\s+(?:about\s+|all\s+of\s+)?(?:my\s+)?{_PRIOR}\b"
+    r"|\bchanged?\s+my\s+mind\b"
+    r"|\bnever\s?mind\b"
+    r"|\bstart(?:ing)?\s+(?:over|fresh|again)\b"
+    r"|\bon\s+second\s+thoughts?\b"
+    r"|\bchange\s+of\s+plans?\b"
+    r"|\binstead\s+i\s+need\b"
+    r"|\bactually\s*,?\s*instead\b"
+    r")",
     re.IGNORECASE,
+)
+# A preference retraction specifically, which is what licenses keeping the
+# answers the customer already gave. Narrower than the trigger above: "start
+# over" is an override but says nothing about which belief is being dropped.
+PREFERENCE_OVERRIDE_RE = re.compile(
+    r"(?:"
+    rf"\b{_RETRACT}\s+(?:about\s+|all\s+of\s+)?(?:my\s+)?{_PRIOR}\b"
+    r"|\bchanged?\s+my\s+mind\s+about\s+(?:that|the|my)\s+(?:earlier\s+)?"
+    r"(?:preference|request|requirement)\b"
+    r")",
+    re.IGNORECASE,
+)
+SUBJECT_ANCHOR_RE = re.compile(
+    r"\b(?:i\s*['’]?\s*m|i am)\s+(?:looking for|after)\s+(.+?)(?=[.;])"
+    r"|\bi\s+(?:need|want)\s+(.+?)(?=[.;])",
+    re.IGNORECASE,
+)
+OVERRIDE_POLICIES = frozenset(
+    {"full_reset", "preserve_subject", "retract_stated", "no_reset"}
 )
 
 # The released Boundary reply is "I don't have a preference for <attribute>;
@@ -197,14 +247,30 @@ def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
     return found
 
 
+def extract_subject_anchor(message: str) -> str | None:
+    """Return a sentence-bounded shopping subject.
+
+    A terminator is mandatory. Without one, a preference that followed a
+    stripped full stop would be indistinguishable from the shopping subject;
+    preserving that text across an override would violate the correction.
+    """
+    match = SUBJECT_ANCHOR_RE.search(message)
+    if match is None:
+        return None
+    subject = next((group for group in match.groups() if group), "").strip()
+    return match.group(0).strip() + "." if subject else None
+
+
 @dataclass(slots=True)
 class SessionState:
     session_id: str
     user_profile: dict[str, object]
+    override_policy: str = "full_reset"
     messages: list[str] = field(default_factory=list)
     intent_version: int = 1
     last_turn: int = 0
     constraints: list[Constraint] = field(default_factory=list)
+    subject_anchor: str | None = None
 
     def observe(self, user_message: str, turn: int) -> None:
         if not 1 <= turn <= 10:
@@ -212,10 +278,29 @@ class SessionState:
         if turn <= self.last_turn:
             raise ValueError(f"turn must increase for session {self.session_id}")
 
-        if EXPLICIT_OVERRIDE_RE.search(user_message):
+        override_match = EXPLICIT_OVERRIDE_RE.search(user_message)
+        preference_override = bool(PREFERENCE_OVERRIDE_RE.search(user_message))
+        if override_match:
+            prior_subject = self.subject_anchor
             self.intent_version += 1
-            self.messages.clear()
             self._supersede_all()
+            if self.override_policy == "full_reset":
+                self.messages.clear()
+            elif self.override_policy == "preserve_subject":
+                self.messages[:] = [prior_subject] if preference_override and prior_subject else []
+            elif self.override_policy == "retract_stated":
+                # The customer retracted the preference they stated up front,
+                # not the answers they gave to our questions. Drop the opening
+                # message's trailing preference clause by replacing it with its
+                # own subject anchor, and keep every later reply.
+                if preference_override and prior_subject:
+                    self.messages[:] = [prior_subject, *self.messages[1:]]
+                else:
+                    self.messages.clear()
+
+        subject_anchor = extract_subject_anchor(user_message)
+        if subject_anchor is not None and not (override_match and preference_override):
+            self.subject_anchor = subject_anchor
 
         self._merge(extract_constraints(user_message), turn)
         self.messages.append(user_message)
@@ -237,6 +322,8 @@ class SessionState:
 
     def _merge(self, extracted: list[tuple[str, str, Polarity]], turn: int) -> None:
         for attribute, value, polarity in extracted:
+            for contradicted in self._contradicted(attribute, value, polarity):
+                self._supersede(contradicted)
             current = self._active_for(attribute, polarity, value)
             if current is not None and current.value == value:
                 continue  # restated, not a new belief
@@ -252,6 +339,31 @@ class SessionState:
                     supersedes=current.key if current is not None else None,
                 )
             )
+
+    def _contradicted(
+        self, attribute: str, value: str, polarity: Polarity
+    ) -> list[Constraint]:
+        """Active constraints the incoming one directly negates.
+
+        A value and its own exclusion cannot both hold: "no leather" retracts
+        an earlier "leather", and restating "leather" retracts an earlier
+        "no leather". `_active_for` cannot see these because it filters to the
+        same polarity, so without this both stayed ACTIVE at once and the
+        belief state asserted and denied the same value.
+
+        Matching is on attribute AND value, so unrelated exclusions still
+        accumulate: "no black" does not retract "no red", and neither is
+        touched by a positive on some other colour.
+        """
+        return [
+            constraint
+            for constraint in self.constraints
+            if constraint.status is ConstraintStatus.ACTIVE
+            and constraint.intent_version == self.intent_version
+            and constraint.attribute == attribute
+            and constraint.value == value
+            and constraint.polarity is not polarity
+        ]
 
     def _active_for(
         self, attribute: str, polarity: Polarity, value: str
@@ -329,13 +441,20 @@ class SessionState:
 class StateStore:
     """Session lifecycle boundary. Owns belief state; never ranks or filters."""
 
-    def __init__(self) -> None:
+    def __init__(self, override_policy: str = "full_reset") -> None:
+        if override_policy not in OVERRIDE_POLICIES:
+            raise ValueError(f"unsupported override policy: {override_policy}")
+        self.override_policy = override_policy
         self._sessions: dict[str, SessionState] = {}
 
     def reset(self, session_id: str, user_profile: Mapping[str, object]) -> None:
         if not session_id:
             raise ValueError("session_id must not be empty")
-        self._sessions[session_id] = SessionState(session_id, dict(user_profile))
+        self._sessions[session_id] = SessionState(
+            session_id,
+            dict(user_profile),
+            override_policy=self.override_policy,
+        )
 
     def observe(self, session_id: str, user_message: str, turn: int) -> SessionState:
         try:

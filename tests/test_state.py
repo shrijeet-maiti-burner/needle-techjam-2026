@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import unittest
 
+from needle.diagnostics import surface_noise
 from needle.state import (
     ConstraintStatus, Polarity, SessionState, StateStore, extract_constraints,
+    extract_subject_anchor,
 )
 
 
@@ -177,6 +179,14 @@ class NegationTest(unittest.TestCase):
 
 
 class OverrideTest(unittest.TestCase):
+    def test_extracts_only_the_explicit_shopping_subject(self) -> None:
+        message = "I'm looking for Women Dresses. I used to prefer a loose fit."
+        self.assertEqual(extract_subject_anchor(message), "I'm looking for Women Dresses.")
+
+    def test_extracts_paraphrase_but_rejects_unbounded_subject(self) -> None:
+        self.assertEqual(extract_subject_anchor("I'm after Women Dresses."), "I'm after Women Dresses.")
+        self.assertIsNone(extract_subject_anchor("I M LOOKING FOR WOMEN DRESSES"))
+
     def test_override_increments_intent_version(self) -> None:
         state = _state()
         state.observe("I want black running shoes", 1)
@@ -205,6 +215,56 @@ class OverrideTest(unittest.TestCase):
         ]
         self.assertTrue(any(c.value == "black" for c in superseded))
 
+    def test_preserve_subject_keeps_category_on_preference_override(self) -> None:
+        state = SessionState("s", {}, override_policy="preserve_subject")
+        state.observe("I'm looking for Women Dresses. I prefer black.", 1)
+        state.observe(
+            "Actually, ignore my earlier preference. What I need is: cotton.",
+            2,
+        )
+        self.assertIn("I'm looking for Women Dresses.", state.retrieval_text)
+        self.assertNotIn("black", state.retrieval_text)
+        self.assertIn("cotton", state.retrieval_text)
+
+    def test_preserve_subject_full_resets_on_unscoped_change(self) -> None:
+        state = SessionState("s", {}, override_policy="preserve_subject")
+        state.observe("I'm looking for Women Dresses. I prefer black.", 1)
+        state.observe("Actually, instead I need white shoes.", 2)
+        self.assertNotIn("Women Dresses", state.retrieval_text)
+
+    def test_preserve_subject_handles_preference_override_paraphrase(self) -> None:
+        state = SessionState("s", {}, override_policy="preserve_subject")
+        state.observe("I'm after Women Dresses. I prefer black.", 1)
+        state.observe(
+            "I've changed my mind about that earlier preference. I need cotton now.",
+            2,
+        )
+        self.assertIn("I'm after Women Dresses.", state.retrieval_text)
+        self.assertNotIn("black", state.retrieval_text)
+        self.assertEqual(state.subject_anchor, "I'm after Women Dresses.")
+
+    def test_surface_noise_cannot_preserve_revoked_preference(self) -> None:
+        state = SessionState("s", {}, override_policy="preserve_subject")
+        state.observe(surface_noise("I'm looking for Women Dresses. Pull On closure."), 1)
+        state.observe(
+            surface_noise(
+                "Actually, ignore my earlier preference. What I need is: cotton."
+            ),
+            2,
+        )
+        self.assertNotIn("PULL", state.retrieval_text)
+        self.assertIn("COTTON", state.retrieval_text)
+
+    def test_no_reset_retains_raw_history_as_diagnostic_control(self) -> None:
+        state = SessionState("s", {}, override_policy="no_reset")
+        state.observe("I'm looking for Women Dresses. I prefer black.", 1)
+        state.observe(
+            "Actually, ignore my earlier preference. What I need is: cotton.",
+            2,
+        )
+        self.assertIn("black", state.retrieval_text)
+        self.assertIn("cotton", state.retrieval_text)
+
     def test_pre_override_constraints_are_excluded_from_active_view(self) -> None:
         state = _state()
         state.observe("I want a black shirt", 1)
@@ -224,6 +284,10 @@ class OverrideTest(unittest.TestCase):
 
 
 class LifecycleTest(unittest.TestCase):
+    def test_rejects_unknown_override_policy(self) -> None:
+        with self.assertRaisesRegex(ValueError, "override policy"):
+            StateStore("unknown")
+
     def test_reset_isolates_sessions(self) -> None:
         store = StateStore()
         store.reset("a", {})

@@ -11,9 +11,9 @@ The working thesis is **ask better, remember correctly, rank deliberately**:
 
 This is a hypothesis, not a result. Architecture decisions are accepted only after controlled official-evaluator and robustness experiments.
 
-## Current milestone
+## Current status
 
-H0 began on 29 August 2026 at 12:00 SGT. The first implementation target is a contract-valid end-to-end run by H6. The repository currently provides the minimal integration path and stable owner boundaries; advanced confidence, provenance, ambiguity, and semantic fields are added only when an experiment demands them.
+H0 began on 29 August 2026 at 12:00 SGT. The contract-valid integration path is complete and a measured public-development candidate plus pure-sparse rollback are encoded in `needle/presets.py`. The candidate is not frozen: deterministic wording perturbations still regress, question-policy experiments remain open, and the generated signature asset has not completed final clean-bundle validation.
 
 ## Quick start
 
@@ -21,12 +21,13 @@ Python 3.10 or later is required. The baseline path uses only the standard libra
 
 ```bash
 python scripts/bootstrap.py
+python scripts/build_signature_index.py
 python -m unittest discover -s tests -v
-python scripts/evaluate.py --output results/baseline.json
-python scripts/run_experiment.py --experiment-id H0-CONTROL --network-state enabled
+python scripts/evaluate.py --output results/primary.json
+python scripts/run_experiment.py --experiment-id PRIMARY-CHECK --agent starter.agent:Agent --network-state enabled
 ```
 
-`bootstrap.py` downloads the official participant kit, verifies its pinned SHA-256 digest, and extracts it under the ignored `.artifacts/` directory. `evaluate.py` runs our `starter.agent.Agent` against the unmodified official evaluator and public data.
+`bootstrap.py` downloads the official participant kit, verifies its pinned SHA-256 digest, and extracts it under the ignored `.artifacts/` directory. `build_signature_index.py` creates the ignored catalog-bound development asset. `evaluate.py` runs the measured `starter.agent.Agent` preset against the unmodified official evaluator and public data.
 
 `run_experiment.py` is the decision-grade path: it refuses dirty trees by default and writes an ignored, immutable directory containing the raw result, artifact/config fingerprints, strict-contract report, scenario metrics, latency, environment, and checksums.
 
