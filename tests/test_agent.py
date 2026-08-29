@@ -161,6 +161,20 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(search.call_args_list[1].args[0], "clothing clothing")
         self.assertEqual(agent.state._sessions["profiled"].retrieval_text, "clothing clothing")
 
+    def test_cold_start_profile_does_not_dilute_an_explicit_signature(self) -> None:
+        agent = Agent(self.catalog_path, profile_mode="cold_start_tags")
+        agent.reset("constrained", {"preference_tags": ["warm"]})
+
+        with patch.object(agent.catalog, "search", wraps=agent.catalog.search) as search:
+            agent.respond(
+                "constrained",
+                "I'm looking for a shirt. A key requirement is: soft cotton.",
+                1,
+                1,
+            )
+
+        self.assertNotIn("warm", search.call_args.args[0])
+
     def test_expansion_adds_retrieval_terms_without_rewriting_state(self) -> None:
         agent = Agent(self.catalog_path, lexical_mode="expand")
         agent.reset("expanded", {})

@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from needle.catalog import DEFAULT_FIELD_WEIGHTS, CatalogIndex
+from needle.catalog import DEFAULT_FIELD_WEIGHTS, CatalogIndex, extract_query_signatures
 from needle.contracts import TurnResponse
 from needle.semantic import LexicalNormalizer, NoOpSemanticReranker
 from needle.state import StateStore
@@ -97,7 +97,11 @@ class Agent:
         seen = self._seen_by_version.setdefault(history_key, set())
         excluded = seen if self.exclude_seen else ()
         retrieval_text = state.retrieval_text
-        if self.profile_mode == "cold_start_tags" and turn == 1:
+        if (
+            self.profile_mode == "cold_start_tags"
+            and turn == 1
+            and not extract_query_signatures(state.messages)
+        ):
             raw_tags = state.user_profile.get("preference_tags", ())
             if isinstance(raw_tags, (list, tuple)):
                 profile_terms = " ".join(
