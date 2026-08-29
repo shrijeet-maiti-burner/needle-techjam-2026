@@ -182,9 +182,9 @@ class OverrideTest(unittest.TestCase):
         message = "I'm looking for Women Dresses. I used to prefer a loose fit."
         self.assertEqual(extract_subject_anchor(message), "I'm looking for Women Dresses.")
 
-    def test_extracts_paraphrased_and_unpunctuated_subjects(self) -> None:
+    def test_extracts_paraphrase_but_rejects_unbounded_subject(self) -> None:
         self.assertEqual(extract_subject_anchor("I'm after Women Dresses."), "I'm after Women Dresses.")
-        self.assertEqual(extract_subject_anchor("I M LOOKING FOR WOMEN DRESSES"), "I M LOOKING FOR WOMEN DRESSES.")
+        self.assertIsNone(extract_subject_anchor("I M LOOKING FOR WOMEN DRESSES"))
 
     def test_override_increments_intent_version(self) -> None:
         state = _state()

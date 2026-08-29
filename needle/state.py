@@ -18,8 +18,8 @@ PREFERENCE_OVERRIDE_RE = re.compile(
     re.IGNORECASE,
 )
 SUBJECT_ANCHOR_RE = re.compile(
-    r"\b(?:i\s*['’]?\s*m|i am)\s+(?:looking for|after)\s+(.+?)(?=[.;]|$)"
-    r"|\bi\s+(?:need|want)\s+(.+?)(?=[.;]|$)",
+    r"\b(?:i\s*['’]?\s*m|i am)\s+(?:looking for|after)\s+(.+?)(?=[.;])"
+    r"|\bi\s+(?:need|want)\s+(.+?)(?=[.;])",
     re.IGNORECASE,
 )
 OVERRIDE_POLICIES = frozenset({"full_reset", "preserve_subject", "no_reset"})
@@ -211,7 +211,12 @@ def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
 
 
 def extract_subject_anchor(message: str) -> str | None:
-    """Return an explicit shopping subject without later preference clauses."""
+    """Return a sentence-bounded shopping subject.
+
+    A terminator is mandatory. Without one, a preference that followed a
+    stripped full stop would be indistinguishable from the shopping subject;
+    preserving that text across an override would violate the correction.
+    """
     match = SUBJECT_ANCHOR_RE.search(message)
     if match is None:
         return None
