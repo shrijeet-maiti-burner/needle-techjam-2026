@@ -11,11 +11,15 @@ EXPLICIT_OVERRIDE_RE = re.compile(
     re.IGNORECASE,
 )
 PREFERENCE_OVERRIDE_RE = re.compile(
-    r"\bignore my earlier preference\b",
+    r"\b(?:"
+    r"(?:ignore|disregard|forget)\s+(?:my\s+)?(?:earlier|previous|old)\s+preference"
+    r"|changed my mind about (?:that|the|my)\s+(?:earlier\s+)?preference"
+    r")\b",
     re.IGNORECASE,
 )
 SUBJECT_ANCHOR_RE = re.compile(
-    r"\b(?:i['’]?m|i am)\s+looking for\s+(.+?)(?=[.;]|$)",
+    r"\b(?:i\s*['’]?\s*m|i am)\s+(?:looking for|after)\s+(.+?)(?=[.;]|$)"
+    r"|\bi\s+(?:need|want)\s+(.+?)(?=[.;]|$)",
     re.IGNORECASE,
 )
 OVERRIDE_POLICIES = frozenset({"full_reset", "preserve_subject", "no_reset"})
@@ -211,8 +215,8 @@ def extract_subject_anchor(message: str) -> str | None:
     match = SUBJECT_ANCHOR_RE.search(message)
     if match is None:
         return None
-    subject = match.group(1).strip()
-    return f"I'm looking for {subject}." if subject else None
+    subject = next((group for group in match.groups() if group), "").strip()
+    return match.group(0).strip() + "." if subject else None
 
 
 @dataclass(slots=True)
@@ -232,18 +236,19 @@ class SessionState:
         if turn <= self.last_turn:
             raise ValueError(f"turn must increase for session {self.session_id}")
 
-        if EXPLICIT_OVERRIDE_RE.search(user_message):
+        override_match = EXPLICIT_OVERRIDE_RE.search(user_message)
+        preference_override = bool(PREFERENCE_OVERRIDE_RE.search(user_message))
+        if override_match:
             prior_subject = self.subject_anchor
             self.intent_version += 1
             self._supersede_all()
             if self.override_policy == "full_reset":
                 self.messages.clear()
             elif self.override_policy == "preserve_subject":
-                keep_subject = bool(PREFERENCE_OVERRIDE_RE.search(user_message))
-                self.messages[:] = [prior_subject] if keep_subject and prior_subject else []
+                self.messages[:] = [prior_subject] if preference_override and prior_subject else []
 
         subject_anchor = extract_subject_anchor(user_message)
-        if subject_anchor is not None:
+        if subject_anchor is not None and not (override_match and preference_override):
             self.subject_anchor = subject_anchor
 
         self._merge(extract_constraints(user_message), turn)

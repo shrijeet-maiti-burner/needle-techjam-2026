@@ -182,6 +182,10 @@ class OverrideTest(unittest.TestCase):
         message = "I'm looking for Women Dresses. I used to prefer a loose fit."
         self.assertEqual(extract_subject_anchor(message), "I'm looking for Women Dresses.")
 
+    def test_extracts_paraphrased_and_unpunctuated_subjects(self) -> None:
+        self.assertEqual(extract_subject_anchor("I'm after Women Dresses."), "I'm after Women Dresses.")
+        self.assertEqual(extract_subject_anchor("I M LOOKING FOR WOMEN DRESSES"), "I M LOOKING FOR WOMEN DRESSES.")
+
     def test_override_increments_intent_version(self) -> None:
         state = _state()
         state.observe("I want black running shoes", 1)
@@ -226,6 +230,17 @@ class OverrideTest(unittest.TestCase):
         state.observe("I'm looking for Women Dresses. I prefer black.", 1)
         state.observe("Actually, instead I need white shoes.", 2)
         self.assertNotIn("Women Dresses", state.retrieval_text)
+
+    def test_preserve_subject_handles_preference_override_paraphrase(self) -> None:
+        state = SessionState("s", {}, override_policy="preserve_subject")
+        state.observe("I'm after Women Dresses. I prefer black.", 1)
+        state.observe(
+            "I've changed my mind about that earlier preference. I need cotton now.",
+            2,
+        )
+        self.assertIn("I'm after Women Dresses.", state.retrieval_text)
+        self.assertNotIn("black", state.retrieval_text)
+        self.assertEqual(state.subject_anchor, "I'm after Women Dresses.")
 
     def test_no_reset_retains_raw_history_as_diagnostic_control(self) -> None:
         state = SessionState("s", {}, override_policy="no_reset")
