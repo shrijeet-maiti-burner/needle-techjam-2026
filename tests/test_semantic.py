@@ -34,6 +34,20 @@ class NormalizeTextTest(unittest.TestCase):
         self.assertEqual(normalize_text("NOT leather"), "not leather")
         self.assertIn("without", normalize_text("shoes without laces").split())
 
+    def test_expands_negative_contractions_so_negation_stays_explicit(self) -> None:
+        # apostrophe must not be split to a space; the negation word must survive.
+        self.assertEqual(normalize_text("I don't want leather"), "i do not want leather")
+        self.assertIn("not", normalize_text("won't need wool").split())
+
+    def test_handles_straight_and_curly_apostrophes_identically(self) -> None:
+        straight = normalize_text("I don't want leather")
+        curly = normalize_text("I don’t want leather")
+        self.assertEqual(straight, curly)
+        self.assertIn("not", curly.split())
+
+    def test_non_contraction_apostrophes_are_joined_not_split(self) -> None:
+        self.assertEqual(normalize_text("men's slim-fit shirt"), "mens slim fit shirt")
+
 
 class LexicalNormalizerTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -58,8 +72,9 @@ class LexicalNormalizerTest(unittest.TestCase):
     def test_unknown_tokens_pass_through_unchanged(self) -> None:
         self.assertEqual(self.normalizer.expand_query("crimson gabardine"), "crimson gabardine")
 
-    def test_negation_is_never_altered(self) -> None:
+    def test_negation_survives_normalization_and_expansion(self) -> None:
         self.assertIn("not", self.normalizer.expand_query("not leather").split())
+        self.assertIn("not", self.normalizer.expand_query("I don't want leather sneakers").split())
 
     def test_custom_expansions_replace_the_default_map(self) -> None:
         custom = LexicalNormalizer({"parka": ("coat",)})
@@ -104,6 +119,8 @@ class LexicalRobustnessMatrixTest(unittest.TestCase):
         ("punctuation", "size medium, slim fit", "size medium slim fit"),
         ("synonym", "sneakers", "shoes sneakers"),
         ("word_order", "cotton black shirt", "black shirt cotton"),
+        ("contraction", "I do not want leather", "I don't want leather"),
+        ("curly_apostrophe", "I don't want leather", "I don’t want leather"),
     )
     MEANING_CHANGING = (
         ("negation", "leather", "not leather"),
