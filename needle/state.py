@@ -28,7 +28,9 @@ SUBJECT_ANCHOR_RE = re.compile(
     r"|\bi\s+(?:need|want)\s+(.+?)(?=[.;])",
     re.IGNORECASE,
 )
-OVERRIDE_POLICIES = frozenset({"full_reset", "preserve_subject", "no_reset"})
+OVERRIDE_POLICIES = frozenset(
+    {"full_reset", "preserve_subject", "retract_stated", "no_reset"}
+)
 
 # The released Boundary reply is "I don't have a preference for <attribute>;
 # please use your judgment." It must never become a negative constraint: the
@@ -257,6 +259,15 @@ class SessionState:
                 self.messages.clear()
             elif self.override_policy == "preserve_subject":
                 self.messages[:] = [prior_subject] if preference_override and prior_subject else []
+            elif self.override_policy == "retract_stated":
+                # The customer retracted the preference they stated up front,
+                # not the answers they gave to our questions. Drop the opening
+                # message's trailing preference clause by replacing it with its
+                # own subject anchor, and keep every later reply.
+                if preference_override and prior_subject:
+                    self.messages[:] = [prior_subject, *self.messages[1:]]
+                else:
+                    self.messages.clear()
 
         subject_anchor = extract_subject_anchor(user_message)
         if subject_anchor is not None and not (override_match and preference_override):
