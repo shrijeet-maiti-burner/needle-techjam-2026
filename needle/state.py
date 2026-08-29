@@ -309,10 +309,16 @@ class SessionState:
     # -- constraint bookkeeping ----------------------------------------- #
 
     def _supersede_all(self) -> None:
-        """Targeted invalidation is an open question (EXP-006). Until that
-        evidence exists this mirrors the previous full-reset behavior so the
-        override path stays unchanged, while recording the superseded events
-        rather than discarding them."""
+        """Supersede every active constraint at an override, recording the
+        events rather than discarding them.
+
+        EXP-006 asked whether targeted invalidation beats this. It is closed as
+        not actionable (docs/evidence/EXP_006_SHAPES.md): across 45 well-formed
+        override sessions, 30 public and 15 held out on card shapes the public
+        set omits, `retract_stated` hits 100%, so there is no session a targeted
+        policy could rescue. The remaining misses are on degenerate cards where
+        `old_value` and `new_value` are the same string and there is nothing to
+        invalidate selectively. Reopen only if a well-formed override misses."""
         self.constraints = [
             replace(constraint, status=ConstraintStatus.SUPERSEDED)
             if constraint.status is ConstraintStatus.ACTIVE
