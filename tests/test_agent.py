@@ -149,16 +149,24 @@ class AgentTest(unittest.TestCase):
             Agent(self.catalog_path, profile_mode="unknown")
 
     def test_cold_start_profile_tags_affect_only_the_first_query(self) -> None:
+        control = Agent(self.catalog_path)
+        control.reset("control", {"preference_tags": ["warm"]})
+        control_first = control.respond("control", "clothing", 1, 4)
         agent = Agent(self.catalog_path, profile_mode="cold_start_tags")
         agent.reset("profiled", {"preference_tags": ["warm"]})
 
         with patch.object(agent.catalog, "search", wraps=agent.catalog.search) as search:
-            first = agent.respond("profiled", "clothing", 1, 1)
-            agent.respond("profiled", "clothing", 2, 1)
+            first = agent.respond("profiled", "clothing", 1, 4)
+            agent.respond("profiled", "clothing", 2, 4)
 
         self.assertEqual(first["recommendations"][0]["parent_asin"], "RED_COAT")
-        self.assertEqual(search.call_args_list[0].args[0], "clothing warm")
-        self.assertEqual(search.call_args_list[1].args[0], "clothing clothing")
+        self.assertEqual(
+            {item["parent_asin"] for item in first["recommendations"]},
+            {item["parent_asin"] for item in control_first["recommendations"]},
+        )
+        self.assertEqual(search.call_args_list[0].args[0], "clothing")
+        self.assertEqual(search.call_args_list[1].args[0], "clothing warm")
+        self.assertEqual(search.call_args_list[2].args[0], "clothing clothing")
         self.assertEqual(agent.state._sessions["profiled"].retrieval_text, "clothing clothing")
 
     def test_cold_start_profile_does_not_dilute_an_explicit_signature(self) -> None:
@@ -173,6 +181,7 @@ class AgentTest(unittest.TestCase):
                 1,
             )
 
+        self.assertEqual(search.call_count, 1)
         self.assertNotIn("warm", search.call_args.args[0])
 
     def test_expansion_adds_retrieval_terms_without_rewriting_state(self) -> None:

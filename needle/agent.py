@@ -97,6 +97,7 @@ class Agent:
         seen = self._seen_by_version.setdefault(history_key, set())
         excluded = seen if self.exclude_seen else ()
         retrieval_text = state.retrieval_text
+        profile_terms = ""
         if (
             self.profile_mode == "cold_start_tags"
             and turn == 1
@@ -109,8 +110,6 @@ class Agent:
                     for tag in raw_tags
                     if isinstance(tag, str) and tag.strip()
                 )
-                if profile_terms:
-                    retrieval_text = f"{retrieval_text} {profile_terms}".strip()
         if self.lexical_mode == "normalize":
             retrieval_text = self.lexical.normalize(retrieval_text)
         elif self.lexical_mode == "expand":
@@ -122,6 +121,33 @@ class Agent:
             excluded_ids=excluded,
         )
         ranked = self.semantic.rerank(sparse, retrieval_text)[:limit]
+        if profile_terms and len(ranked) > 1:
+            profile_query = f"{state.retrieval_text} {profile_terms}".strip()
+            if self.lexical_mode == "normalize":
+                profile_query = self.lexical.normalize(profile_query)
+            elif self.lexical_mode == "expand":
+                profile_query = self.lexical.expand_query(profile_query)
+            profile_candidates = self.catalog.search(
+                profile_query,
+                self.candidate_pool,
+                messages=state.messages,
+                excluded_ids=excluded,
+            )
+            profile_position = {
+                candidate.parent_asin: index
+                for index, candidate in enumerate(profile_candidates)
+            }
+            original_position = {
+                candidate.parent_asin: index
+                for index, candidate in enumerate(ranked)
+            }
+            ranked = sorted(
+                ranked,
+                key=lambda candidate: (
+                    profile_position.get(candidate.parent_asin, len(profile_position)),
+                    original_position[candidate.parent_asin],
+                ),
+            )
         seen.update(candidate.parent_asin for candidate in ranked)
         ask_attribute = "other" if turn < 10 else None
         message = (
