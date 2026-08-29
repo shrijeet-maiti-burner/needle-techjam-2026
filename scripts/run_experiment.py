@@ -201,6 +201,9 @@ def main() -> None:
     startup_started = time.perf_counter()
     agent = agent_class(**effective_kwargs)
     startup_seconds = time.perf_counter() - startup_started
+    effective_configuration = getattr(agent, "experiment_configuration", agent_kwargs)
+    if not isinstance(effective_configuration, dict):
+        raise TypeError("agent experiment_configuration must be a dictionary")
     checked_agent = ContractCheckingAgent(agent, catalog_ids)
     evaluation_started = time.perf_counter()
     result = official.evaluate(checked_agent, samples, catalog_ids, categories, products)
@@ -231,9 +234,12 @@ def main() -> None:
         },
         "agent": {
             "specifier": args.agent,
-            "kwargs": agent_kwargs,
-            "configuration_sha256": canonical_sha256({"agent": args.agent, "kwargs": agent_kwargs}),
-            "assets": agent_asset_records(agent_kwargs),
+            "requested_kwargs": agent_kwargs,
+            "effective_configuration": effective_configuration,
+            "configuration_sha256": canonical_sha256(
+                {"agent": args.agent, "effective_configuration": effective_configuration}
+            ),
+            "assets": agent_asset_records(effective_configuration),
         },
         "official_artifacts": {
             "upstream_commit": OFFICIAL_SOURCE_COMMIT,

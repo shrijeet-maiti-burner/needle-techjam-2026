@@ -152,6 +152,19 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(response["recommendations"][0]["parent_asin"], "BLUE_SHOES")
         self.assertEqual(agent.state._sessions["expanded"].retrieval_text, "sneakers")
 
+    def test_exposes_effective_experiment_configuration(self) -> None:
+        agent = Agent(
+            self.catalog_path,
+            popularity_strength=0.20,
+            override_policy="preserve_subject",
+        )
+        self.assertEqual(agent.experiment_configuration["popularity_strength"], 0.20)
+        self.assertEqual(
+            agent.experiment_configuration["override_policy"],
+            "preserve_subject",
+        )
+        self.assertIsNone(agent.experiment_configuration["signature_index_path"])
+
 
 if __name__ == "__main__":
     unittest.main()

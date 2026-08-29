@@ -53,6 +53,23 @@ class Agent:
         self.candidate_pool = int(candidate_pool)
         self.slate_size = int(slate_size)
         self.exclude_seen = bool(exclude_seen)
+        self.experiment_configuration: dict[str, object] = {
+            "retrieval_mode": retrieval_mode,
+            "query_mode": query_mode,
+            "field_weights": list(field_weights),
+            "popularity_strength": float(popularity_strength),
+            "signature_bucket_limit": int(signature_bucket_limit),
+            "signature_index_path": (
+                str(self.catalog.signature_index_path)
+                if self.catalog.signature_index_path is not None
+                else None
+            ),
+            "candidate_pool": self.candidate_pool,
+            "slate_size": self.slate_size,
+            "exclude_seen": self.exclude_seen,
+            "override_policy": override_policy,
+            "lexical_mode": lexical_mode,
+        }
         self._seen_by_version: dict[tuple[str, int], set[str]] = {}
 
     def reset(self, session_id: str, user_profile: dict) -> None:

@@ -21,6 +21,7 @@ indexes/
 # Evaluator outputs are local evidence; only reviewed summaries belong in docs/evidence.
 results/
 results.json
+submission/assets/*.sqlite3
 
 # Local environment and credentials.
 .env
