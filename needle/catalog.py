@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
 import sqlite3
 import unicodedata
-from collections import defaultdict
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
@@ -37,6 +37,7 @@ SEARCH_FIELDS = (
 DEFAULT_FIELD_WEIGHTS = (6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
 RETRIEVAL_MODES = frozenset({"sparse", "signature_first"})
 QUERY_MODES = frozenset({"any", "all"})
+SIGNATURE_INDEX_SCHEMA_VERSION = "1"
 
 STOPWORDS = frozenset(
     {
@@ -164,6 +165,90 @@ def product_signatures(product: dict[str, object]) -> tuple[str, ...]:
     )
 
 
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> dict[str, object]:
+    """Build a catalog-bound exact-signature asset without public labels."""
+
+    catalog = Path(catalog_path).resolve()
+    output = Path(output_path).resolve()
+    if not catalog.is_file():
+        raise FileNotFoundError(f"catalog not found: {catalog}")
+    if output.exists():
+        raise FileExistsError(f"signature index already exists: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_suffix(output.suffix + ".tmp")
+    if temporary.exists():
+        raise FileExistsError(f"temporary signature index already exists: {temporary}")
+
+    connection = sqlite3.connect(temporary)
+    product_count = 0
+    signature_count = 0
+    seen: set[str] = set()
+    try:
+        connection.execute("PRAGMA journal_mode=OFF")
+        connection.execute("PRAGMA synchronous=OFF")
+        connection.execute("PRAGMA temp_store=MEMORY")
+        connection.execute("CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        connection.execute(
+            "CREATE TABLE signatures("
+            "signature TEXT NOT NULL, parent_asin TEXT NOT NULL, "
+            "PRIMARY KEY(signature, parent_asin)) WITHOUT ROWID"
+        )
+        batch: list[tuple[str, str]] = []
+        with catalog.open(encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, start=1):
+                if not line.strip():
+                    continue
+                product = json.loads(line)
+                parent_asin = str(product.get("parent_asin") or "").strip()
+                if not parent_asin:
+                    raise ValueError(f"missing parent_asin at catalog line {line_number}")
+                if parent_asin in seen:
+                    raise ValueError(f"duplicate parent_asin in catalog: {parent_asin}")
+                seen.add(parent_asin)
+                product_count += 1
+                for signature in product_signatures(product):
+                    batch.append((signature, parent_asin))
+                if len(batch) >= 5_000:
+                    connection.executemany("INSERT INTO signatures VALUES (?, ?)", batch)
+                    signature_count += len(batch)
+                    batch.clear()
+        if batch:
+            connection.executemany("INSERT INTO signatures VALUES (?, ?)", batch)
+            signature_count += len(batch)
+        metadata = {
+            "schema_version": SIGNATURE_INDEX_SCHEMA_VERSION,
+            "catalog_sha256": sha256_file(catalog),
+            "product_count": str(product_count),
+            "signature_count": str(signature_count),
+        }
+        connection.executemany("INSERT INTO metadata VALUES (?, ?)", metadata.items())
+        connection.commit()
+        connection.execute("VACUUM")
+    except BaseException:
+        connection.close()
+        if temporary.exists():
+            temporary.unlink()
+        raise
+    connection.close()
+    temporary.replace(output)
+    return {
+        "path": str(output),
+        "sha256": sha256_file(output),
+        "size_bytes": output.stat().st_size,
+        "catalog_sha256": metadata["catalog_sha256"],
+        "product_count": product_count,
+        "signature_count": signature_count,
+    }
+
+
 class CatalogIndex:
     """Validated in-memory lexical index with isolated experiment controls."""
 
@@ -176,6 +261,7 @@ class CatalogIndex:
         field_weights: Sequence[float] = DEFAULT_FIELD_WEIGHTS,
         popularity_strength: float = 0.0,
         signature_bucket_limit: int = 100,
+        signature_index_path: str | Path | None = None,
     ) -> None:
         if retrieval_mode not in RETRIEVAL_MODES:
             raise ValueError(f"unsupported retrieval mode: {retrieval_mode}")
@@ -190,6 +276,8 @@ class CatalogIndex:
             raise ValueError("popularity_strength must be between 0 and 1")
         if not 1 <= int(signature_bucket_limit) <= 50_000:
             raise ValueError("signature_bucket_limit must be in 1..50000")
+        if signature_index_path is not None and retrieval_mode != "signature_first":
+            raise ValueError("signature_index_path requires retrieval_mode='signature_first'")
 
         self.catalog_path = Path(catalog_path)
         if not self.catalog_path.is_file():
@@ -199,12 +287,20 @@ class CatalogIndex:
         self.field_weights = parsed_weights
         self.popularity_strength = float(popularity_strength)
         self.signature_bucket_limit = int(signature_bucket_limit)
+        self.signature_index_path = (
+            Path(signature_index_path).expanduser().resolve()
+            if signature_index_path is not None
+            else None
+        )
         self.connection = sqlite3.connect(":memory:")
+        self._external_signature_connection: sqlite3.Connection | None = None
+        self._signature_count_cache: dict[str, int] = {}
         self.product_count = 0
         self._rating_numbers: dict[str, int] = {}
-        self._signature_index: dict[str, frozenset[str]] = {}
         self._max_log_rating = 1.0
         self._build()
+        if self.signature_index_path is not None:
+            self._open_signature_index()
 
     def _build(self) -> None:
         cursor = self.connection.cursor()
@@ -213,9 +309,15 @@ class CatalogIndex:
             "parent_asin UNINDEXED, title, categories, features, details, store, description, "
             "rating_number UNINDEXED, tokenize='unicode61 remove_diacritics 2')"
         )
+        if self.retrieval_mode == "signature_first" and self.signature_index_path is None:
+            cursor.execute(
+                "CREATE TABLE signatures("
+                "signature TEXT NOT NULL, parent_asin TEXT NOT NULL, "
+                "PRIMARY KEY(signature, parent_asin)) WITHOUT ROWID"
+            )
         seen: set[str] = set()
-        signatures: defaultdict[str, set[str]] = defaultdict(set)
         batch: list[tuple[str, str, str, str, str, str, str, int]] = []
+        signature_batch: list[tuple[str, str]] = []
         with self.catalog_path.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
@@ -241,14 +343,21 @@ class CatalogIndex:
                         rating_number,
                     )
                 )
-                if self.retrieval_mode == "signature_first":
-                    for signature in product_signatures(product):
-                        signatures[signature].add(parent_asin)
+                if self.retrieval_mode == "signature_first" and self.signature_index_path is None:
+                    signature_batch.extend(
+                        (signature, parent_asin)
+                        for signature in product_signatures(product)
+                    )
                 if len(batch) >= 1_000:
                     cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
                     batch.clear()
+                    if signature_batch:
+                        cursor.executemany("INSERT INTO signatures VALUES (?, ?)", signature_batch)
+                        signature_batch.clear()
         if batch:
             cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
+        if signature_batch:
+            cursor.executemany("INSERT INTO signatures VALUES (?, ?)", signature_batch)
         self.connection.commit()
         self.product_count = len(seen)
         if self.product_count == 0:
@@ -257,33 +366,94 @@ class CatalogIndex:
             (math.log1p(value) for value in self._rating_numbers.values()),
             default=1.0,
         ) or 1.0
-        self._signature_index = {
-            signature: frozenset(parent_asins)
-            for signature, parent_asins in signatures.items()
+
+    def _open_signature_index(self) -> None:
+        assert self.signature_index_path is not None
+        if not self.signature_index_path.is_file():
+            raise FileNotFoundError(f"signature index not found: {self.signature_index_path}")
+        uri = f"file:{self.signature_index_path.as_posix()}?mode=ro"
+        connection = sqlite3.connect(uri, uri=True)
+        try:
+            metadata = dict(connection.execute("SELECT key, value FROM metadata"))
+        except sqlite3.DatabaseError:
+            connection.close()
+            raise
+        expected = {
+            "schema_version": SIGNATURE_INDEX_SCHEMA_VERSION,
+            "catalog_sha256": sha256_file(self.catalog_path),
+            "product_count": str(self.product_count),
         }
+        mismatches = [
+            key
+            for key, expected_value in expected.items()
+            if metadata.get(key) != expected_value
+        ]
+        if mismatches:
+            connection.close()
+            raise ValueError(f"signature index metadata mismatch: {', '.join(mismatches)}")
+        connection.execute("PRAGMA query_only=ON")
+        self._external_signature_connection = connection
 
-    def signature_candidates(self, messages: Iterable[str]) -> tuple[tuple[str, ...], frozenset[str]]:
+    @property
+    def _signature_connection(self) -> sqlite3.Connection:
+        return self._external_signature_connection or self.connection
+
+    def _signature_count(self, signature: str) -> int:
+        cached = self._signature_count_cache.get(signature)
+        if cached is not None:
+            return cached
+        row = self._signature_connection.execute(
+            "SELECT COUNT(*) FROM signatures WHERE signature = ?",
+            (signature,),
+        ).fetchone()
+        count = int(row[0]) if row is not None else 0
+        self._signature_count_cache[signature] = count
+        return count
+
+    def _signature_rows(self, signatures: Sequence[str], limit: int) -> list[tuple[str]]:
+        ordered = sorted(dict.fromkeys(signatures), key=lambda value: (self._signature_count(value), value))
+        if not ordered or self._signature_count(ordered[0]) == 0:
+            return []
+        joins = " ".join(
+            f"JOIN signatures AS s{index} "
+            f"ON s{index}.parent_asin = s0.parent_asin AND s{index}.signature = ?"
+            for index in range(1, len(ordered))
+        )
+        query = (
+            f"SELECT s0.parent_asin FROM signatures AS s0 {joins} "
+            "WHERE s0.signature = ? ORDER BY s0.parent_asin ASC LIMIT ?"
+        )
+        return self._signature_connection.execute(
+            query,
+            (*ordered[1:], ordered[0], limit),
+        ).fetchall()
+
+    def signature_candidates(
+        self,
+        messages: Iterable[str],
+        *,
+        limit: int | None = None,
+    ) -> tuple[tuple[str, ...], frozenset[str]]:
+        """Return a bounded intersection over exact catalog signatures.
+
+        Signatures live in a compact SQLite table rather than a duplicate
+        Python object graph. A limit fetches one extra row so callers can
+        distinguish an eligible bucket from one that exceeds their promotion
+        threshold.
+        """
+
+        if self.retrieval_mode != "signature_first":
+            return (), frozenset()
         matched: list[str] = []
-        candidates: set[str] | None = None
         for signature in extract_query_signatures(messages):
-            bucket = self._signature_index.get(signature)
-            if not bucket:
-                continue
-            if candidates is None:
+            proposed = [*matched, signature]
+            if self._signature_rows(proposed, 1):
                 matched.append(signature)
-                candidates = set(bucket)
-                continue
-            narrowed = candidates.intersection(bucket)
-            if narrowed:
-                matched.append(signature)
-                candidates = narrowed
-        if candidates is None:
-            return tuple(matched), frozenset()
-        return tuple(matched), frozenset(candidates)
-
-    def signature_bucket_sizes(self) -> tuple[int, ...]:
-        """Collision sizes for diagnostics; product identifiers are withheld."""
-        return tuple(len(parent_asins) for parent_asins in self._signature_index.values())
+        if not matched:
+            return (), frozenset()
+        fetch_limit = self.product_count if limit is None else max(0, int(limit)) + 1
+        rows = self._signature_rows(matched, fetch_limit)
+        return tuple(matched), frozenset(str(row[0]) for row in rows)
 
     def _sparse_rows(self, text: str, limit: int) -> list[tuple[str, float]]:
         terms = query_terms(text)
@@ -335,7 +505,7 @@ class CatalogIndex:
 
         ordered: list[tuple[str, float]] = []
         if self.retrieval_mode == "signature_first":
-            _, exact_ids = self.signature_candidates(messages)
+            _, exact_ids = self.signature_candidates(messages, limit=self.signature_bucket_limit)
             if 0 < len(exact_ids) <= self.signature_bucket_limit:
                 sparse_positions = {parent_asin: index for index, (parent_asin, _) in enumerate(sparse_rows)}
                 exact_order = sorted(

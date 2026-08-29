@@ -21,6 +21,7 @@ class Agent:
         field_weights: Sequence[float] = DEFAULT_FIELD_WEIGHTS,
         popularity_strength: float = 0.0,
         signature_bucket_limit: int = 100,
+        signature_index_path: str | Path | None = None,
         candidate_pool: int = 200,
         slate_size: int = 10,
         exclude_seen: bool = False,
@@ -36,6 +37,7 @@ class Agent:
             field_weights=field_weights,
             popularity_strength=popularity_strength,
             signature_bucket_limit=signature_bucket_limit,
+            signature_index_path=signature_index_path,
         )
         self.state = StateStore()
         self.semantic = NoOpSemanticReranker()

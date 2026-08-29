@@ -35,6 +35,24 @@ def canonical_sha256(value: object) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+def agent_asset_records(agent_kwargs: dict[str, object]) -> dict[str, object]:
+    records: dict[str, object] = {}
+    for key, value in agent_kwargs.items():
+        if not key.endswith("_path") or not isinstance(value, str):
+            continue
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            path = ROOT / path
+        path = path.resolve()
+        records[key] = {
+            "path": str(path),
+            "exists": path.is_file(),
+            "size_bytes": path.stat().st_size if path.is_file() else None,
+            "sha256": sha256_file(path) if path.is_file() else None,
+        }
+    return records
+
+
 def git(*arguments: str) -> str:
     completed = subprocess.run(
         ["git", *arguments],
@@ -72,6 +90,46 @@ def total_memory_bytes() -> int | None:
         except (ValueError, OSError):
             return None
     return None
+
+
+def peak_process_memory_bytes() -> int | None:
+    if os.name == "nt":
+        class ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.c_ulong),
+                ("page_fault_count", ctypes.c_ulong),
+                ("peak_working_set_size", ctypes.c_size_t),
+                ("working_set_size", ctypes.c_size_t),
+                ("quota_peak_paged_pool_usage", ctypes.c_size_t),
+                ("quota_paged_pool_usage", ctypes.c_size_t),
+                ("quota_peak_non_paged_pool_usage", ctypes.c_size_t),
+                ("quota_non_paged_pool_usage", ctypes.c_size_t),
+                ("pagefile_usage", ctypes.c_size_t),
+                ("peak_pagefile_usage", ctypes.c_size_t),
+            ]
+
+        counters = ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        psapi.GetProcessMemoryInfo.argtypes = (
+            ctypes.c_void_p,
+            ctypes.POINTER(ProcessMemoryCounters),
+            ctypes.c_ulong,
+        )
+        psapi.GetProcessMemoryInfo.restype = ctypes.c_int
+        process = kernel32.GetCurrentProcess()
+        if psapi.GetProcessMemoryInfo(process, ctypes.byref(counters), counters.cb):
+            return int(counters.peak_working_set_size)
+        return None
+    try:
+        import resource
+
+        maximum_rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return int(maximum_rss if sys.platform == "darwin" else maximum_rss * 1024)
+    except (ImportError, ValueError):
+        return None
 
 
 def load_symbol(specifier: str) -> type:
@@ -175,6 +233,7 @@ def main() -> None:
             "specifier": args.agent,
             "kwargs": agent_kwargs,
             "configuration_sha256": canonical_sha256({"agent": args.agent, "kwargs": agent_kwargs}),
+            "assets": agent_asset_records(agent_kwargs),
         },
         "official_artifacts": {
             "upstream_commit": OFFICIAL_SOURCE_COMMIT,
@@ -198,6 +257,7 @@ def main() -> None:
             "total_seconds": round(total_seconds, 6),
             "current_python_traced_bytes": current_traced_bytes,
             "peak_python_traced_bytes": peak_traced_bytes,
+            "peak_process_memory_bytes": peak_process_memory_bytes(),
             "memory_measurement_limit": "tracemalloc excludes some native allocations, including sqlite internals",
         },
         "contract": contract,

@@ -5,7 +5,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from needle.catalog import CatalogIndex, canonical_signature, extract_query_signatures
+from needle.catalog import (
+    CatalogIndex,
+    build_signature_index,
+    canonical_signature,
+    extract_query_signatures,
+)
 
 
 class CatalogValidationTest(unittest.TestCase):
@@ -114,6 +119,28 @@ class CatalogValidationTest(unittest.TestCase):
             [candidate.parent_asin for candidate in with_prior.search("running shoe", 2)],
             ["B_HIGH", "A_LOW"],
         )
+
+    def test_external_signature_index_is_catalog_bound(self) -> None:
+        path = self.write_catalog(
+            [
+                {"parent_asin": "TARGET", "title": "shirt", "features": ["Cloudsoft cotton"]},
+                {"parent_asin": "OTHER", "title": "shirt", "features": ["Polyester"]},
+            ]
+        )
+        index_path = path.parent / "signatures.sqlite3"
+        record = build_signature_index(path, index_path)
+        index = CatalogIndex(
+            path,
+            retrieval_mode="signature_first",
+            signature_index_path=index_path,
+        )
+
+        _, candidates = index.signature_candidates(
+            ["For that, what matters is: Cloudsoft cotton."]
+        )
+
+        self.assertEqual(record["product_count"], 2)
+        self.assertEqual(candidates, {"TARGET"})
 
 
 if __name__ == "__main__":

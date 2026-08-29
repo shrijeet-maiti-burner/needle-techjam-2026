@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 import importlib
 import json
 import math
@@ -50,11 +51,15 @@ def main() -> None:
     sys.path.insert(0, str(ROOT))
     sys.path.insert(1, str(kit_root))
     official = importlib.import_module("evaluator.local_evaluator")
-    from needle.catalog import CatalogIndex
+    from needle.catalog import CatalogIndex, product_signatures
 
     samples = official.load_jsonl(public_set_path)
     _, _, products = official.catalog_index(catalog_path)
     index = CatalogIndex(catalog_path, retrieval_mode="signature_first")
+    signature_counts: defaultdict[str, int] = defaultdict(int)
+    for product in products.values():
+        for signature in product_signatures(product):
+            signature_counts[signature] += 1
     by_depth: dict[int, list[dict[str, object]]] = {depth: [] for depth in range(1, 5)}
     failures: list[dict[str, object]] = []
 
@@ -107,7 +112,7 @@ def main() -> None:
             ),
         }
 
-    all_buckets = index.signature_bucket_sizes()
+    all_buckets = tuple(signature_counts.values())
     result = {
         "catalog_product_count": index.product_count,
         "catalog_signature_buckets": {
