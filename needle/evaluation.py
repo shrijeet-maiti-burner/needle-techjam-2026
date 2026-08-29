@@ -38,6 +38,10 @@ def _percentile(ordered: list[float], probability: float) -> float | None:
     return round(ordered[rank - 1], 6)
 
 
+def _display_keys(keys: set[object]) -> list[str]:
+    return sorted(repr(key) for key in keys)
+
+
 class ContractCheckingAgent:
     """Transparent agent proxy that records strict-contract and latency failures."""
 
@@ -91,14 +95,17 @@ def validate_response(
     unknown_keys = set(response) - allowed_keys
     missing_keys = required_keys - set(response)
     if unknown_keys:
-        violations.append(f"{prefix}: unknown response keys {sorted(unknown_keys)}")
+        violations.append(f"{prefix}: unknown response keys {_display_keys(unknown_keys)}")
     if missing_keys:
-        violations.append(f"{prefix}: missing response keys {sorted(missing_keys)}")
+        violations.append(f"{prefix}: missing response keys {_display_keys(missing_keys)}")
     if not isinstance(response.get("message"), str):
         violations.append(f"{prefix}: message is not a string")
 
     ask_attribute = response.get("ask_attribute")
-    if ask_attribute is not None and ask_attribute not in ALLOWED_ASK_ATTRIBUTES:
+    if ask_attribute is not None and (
+        not isinstance(ask_attribute, str)
+        or ask_attribute not in ALLOWED_ASK_ATTRIBUTES
+    ):
         violations.append(f"{prefix}: invalid ask_attribute {ask_attribute!r}")
 
     recommendations = response.get("recommendations")
@@ -115,7 +122,7 @@ def validate_response(
                 continue
             item_unknown = set(item) - {"parent_asin", "score"}
             if item_unknown:
-                violations.append(f"{location}: unknown keys {sorted(item_unknown)}")
+                violations.append(f"{location}: unknown keys {_display_keys(item_unknown)}")
             parent_asin = item.get("parent_asin")
             if not isinstance(parent_asin, str) or not parent_asin:
                 violations.append(f"{location}: parent_asin is not a non-empty string")
@@ -126,7 +133,11 @@ def validate_response(
             if parent_asin not in catalog_ids:
                 violations.append(f"{location}: unknown parent_asin {parent_asin}")
             score = item.get("score")
-            if "score" in item and (isinstance(score, bool) or not isinstance(score, (int, float))):
+            if "score" in item and (
+                isinstance(score, bool)
+                or not isinstance(score, (int, float))
+                or not math.isfinite(score)
+            ):
                 violations.append(f"{location}: score is not numeric")
 
     usage = response.get("usage")

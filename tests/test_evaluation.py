@@ -41,6 +41,21 @@ class ContractValidationTest(unittest.TestCase):
         self.assertIn("unknown parent_asin", combined)
         self.assertIn("duplicate parent_asin", combined)
 
+    def test_malformed_values_are_recorded_without_crashing_validator(self) -> None:
+        response = {
+            "message": "question",
+            "ask_attribute": ["material"],
+            "recommendations": [
+                {"parent_asin": "KNOWN", "score": float("nan"), 7: "unexpected"},
+            ],
+            9: "unexpected",
+        }
+        combined = "\n".join(validate_response(response, {"KNOWN"}))
+        self.assertIn("invalid ask_attribute", combined)
+        self.assertIn("unknown response keys", combined)
+        self.assertIn("unknown keys", combined)
+        self.assertIn("score is not numeric", combined)
+
     def test_proxy_records_latency_and_response_count(self) -> None:
         proxy = ContractCheckingAgent(FakeAgent(), {"KNOWN"})
         proxy.reset("session", {})
