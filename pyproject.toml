@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "needle-techjam-2026"
+version = "0.1.0"
+description = "Ambiguity-aware conversational shopping agent for TikTok TechJam 2026 Track 4"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["needle*", "starter*", "submission*"]
