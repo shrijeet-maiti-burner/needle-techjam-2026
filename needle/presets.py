@@ -9,7 +9,8 @@ PRIMARY_AGENT_KWARGS: Final[Mapping[str, object]] = MappingProxyType(
         "retrieval_mode": "signature_first",
         "signature_bucket_limit": 100,
         "popularity_strength": 0.20,
-        "override_policy": "preserve_subject",
+        "exclude_seen": True,
+        "override_policy": "retract_stated",
         "lexical_mode": "none",
         "slate_size": 10,
     }
@@ -19,7 +20,8 @@ ROLLBACK_AGENT_KWARGS: Final[Mapping[str, object]] = MappingProxyType(
     {
         "retrieval_mode": "sparse",
         "popularity_strength": 0.20,
-        "override_policy": "preserve_subject",
+        "exclude_seen": True,
+        "override_policy": "retract_stated",
         "lexical_mode": "none",
         "slate_size": 10,
     }

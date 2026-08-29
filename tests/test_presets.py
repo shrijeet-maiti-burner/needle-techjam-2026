@@ -10,7 +10,8 @@ class PresetTest(unittest.TestCase):
         self.assertEqual(PRIMARY_AGENT_KWARGS["retrieval_mode"], "signature_first")
         self.assertEqual(PRIMARY_AGENT_KWARGS["signature_bucket_limit"], 100)
         self.assertEqual(PRIMARY_AGENT_KWARGS["popularity_strength"], 0.20)
-        self.assertEqual(PRIMARY_AGENT_KWARGS["override_policy"], "preserve_subject")
+        self.assertIs(PRIMARY_AGENT_KWARGS["exclude_seen"], True)
+        self.assertEqual(PRIMARY_AGENT_KWARGS["override_policy"], "retract_stated")
         self.assertEqual(PRIMARY_AGENT_KWARGS["lexical_mode"], "none")
         self.assertEqual(PRIMARY_AGENT_KWARGS["slate_size"], 10)
 
