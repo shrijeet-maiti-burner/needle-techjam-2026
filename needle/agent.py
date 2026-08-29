@@ -25,6 +25,7 @@ class Agent:
         candidate_pool: int = 200,
         slate_size: int = 10,
         exclude_seen: bool = False,
+        override_policy: str = "full_reset",
     ) -> None:
         if not 1 <= int(candidate_pool) <= 500:
             raise ValueError("candidate_pool must be in 1..500")
@@ -39,7 +40,7 @@ class Agent:
             signature_bucket_limit=signature_bucket_limit,
             signature_index_path=signature_index_path,
         )
-        self.state = StateStore()
+        self.state = StateStore(override_policy=override_policy)
         self.semantic = NoOpSemanticReranker()
         self.candidate_pool = int(candidate_pool)
         self.slate_size = int(slate_size)

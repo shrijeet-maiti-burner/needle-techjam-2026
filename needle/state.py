@@ -10,6 +10,15 @@ EXPLICIT_OVERRIDE_RE = re.compile(
     r"\b(?:ignore my earlier preference|ignore what i said|changed my mind|instead i need|actually,? instead)\b",
     re.IGNORECASE,
 )
+PREFERENCE_OVERRIDE_RE = re.compile(
+    r"\bignore my earlier preference\b",
+    re.IGNORECASE,
+)
+SUBJECT_ANCHOR_RE = re.compile(
+    r"\b(?:i['’]?m|i am)\s+looking for\s+(.+?)(?=[.;]|$)",
+    re.IGNORECASE,
+)
+OVERRIDE_POLICIES = frozenset({"full_reset", "preserve_subject", "no_reset"})
 
 # The released Boundary reply is "I don't have a preference for <attribute>;
 # please use your judgment." It must never become a negative constraint: the
@@ -197,14 +206,25 @@ def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
     return found
 
 
+def extract_subject_anchor(message: str) -> str | None:
+    """Return an explicit shopping subject without later preference clauses."""
+    match = SUBJECT_ANCHOR_RE.search(message)
+    if match is None:
+        return None
+    subject = match.group(1).strip()
+    return f"I'm looking for {subject}." if subject else None
+
+
 @dataclass(slots=True)
 class SessionState:
     session_id: str
     user_profile: dict[str, object]
+    override_policy: str = "full_reset"
     messages: list[str] = field(default_factory=list)
     intent_version: int = 1
     last_turn: int = 0
     constraints: list[Constraint] = field(default_factory=list)
+    subject_anchor: str | None = None
 
     def observe(self, user_message: str, turn: int) -> None:
         if not 1 <= turn <= 10:
@@ -213,9 +233,18 @@ class SessionState:
             raise ValueError(f"turn must increase for session {self.session_id}")
 
         if EXPLICIT_OVERRIDE_RE.search(user_message):
+            prior_subject = self.subject_anchor
             self.intent_version += 1
-            self.messages.clear()
             self._supersede_all()
+            if self.override_policy == "full_reset":
+                self.messages.clear()
+            elif self.override_policy == "preserve_subject":
+                keep_subject = bool(PREFERENCE_OVERRIDE_RE.search(user_message))
+                self.messages[:] = [prior_subject] if keep_subject and prior_subject else []
+
+        subject_anchor = extract_subject_anchor(user_message)
+        if subject_anchor is not None:
+            self.subject_anchor = subject_anchor
 
         self._merge(extract_constraints(user_message), turn)
         self.messages.append(user_message)
@@ -329,13 +358,20 @@ class SessionState:
 class StateStore:
     """Session lifecycle boundary. Owns belief state; never ranks or filters."""
 
-    def __init__(self) -> None:
+    def __init__(self, override_policy: str = "full_reset") -> None:
+        if override_policy not in OVERRIDE_POLICIES:
+            raise ValueError(f"unsupported override policy: {override_policy}")
+        self.override_policy = override_policy
         self._sessions: dict[str, SessionState] = {}
 
     def reset(self, session_id: str, user_profile: Mapping[str, object]) -> None:
         if not session_id:
             raise ValueError("session_id must not be empty")
-        self._sessions[session_id] = SessionState(session_id, dict(user_profile))
+        self._sessions[session_id] = SessionState(
+            session_id,
+            dict(user_profile),
+            override_policy=self.override_policy,
+        )
 
     def observe(self, session_id: str, user_message: str, turn: int) -> SessionState:
         try:
