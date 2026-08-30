@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 import submission.agent as submission_agent
+import starter.agent as starter_agent
 from needle.presets import PRIMARY_AGENT_KWARGS
 
 
@@ -36,6 +37,14 @@ class SubmissionEntryPoint(unittest.TestCase):
     def test_exports_agent(self) -> None:
         self.assertTrue(hasattr(submission_agent, "Agent"))
         self.assertIn("Agent", submission_agent.__all__)
+
+    def test_starter_prefers_a_present_bundled_asset(self) -> None:
+        expected = (
+            starter_agent.BUNDLED_INDEX
+            if starter_agent.BUNDLED_INDEX.is_file()
+            else starter_agent.DEVELOPMENT_INDEX
+        )
+        self.assertEqual(starter_agent.DEFAULT_INDEX, expected)
 
     def test_constructs_without_the_bundled_asset(self) -> None:
         agent = submission_agent.Agent(catalog_path=self.catalog())

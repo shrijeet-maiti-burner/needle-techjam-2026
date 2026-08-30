@@ -28,6 +28,20 @@ class OverrideTriggerRecall(unittest.TestCase):
         "Drop my earlier criteria, just show me anything cheap.",
     )
 
+    def test_accented_override_is_detected_through_state_store(self) -> None:
+        from needle.state import StateStore
+
+        store = StateStore(override_policy="retract_stated")
+        store.reset("accented", {})
+        store.observe("accented", "I need a blue cotton shirt.", 1)
+        state = store.observe(
+            "accented",
+            "Actuálly, ignôre my earlier preference. I need a red wool coat.",
+            2,
+        )
+
+        self.assertEqual(state.intent_version, 2)
+
     def test_detects_every_retraction_phrasing(self):
         for message in self.OVERRIDES:
             with self.subTest(message=message):

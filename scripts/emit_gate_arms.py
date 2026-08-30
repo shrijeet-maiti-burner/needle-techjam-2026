@@ -479,7 +479,7 @@ def _build_prefix_index(products, categories) -> None:
     for asin, product in products.items():
         count = product.get("rating_number")
         _POPULARITY[asin] = float(count) if isinstance(count, (int, float)) else 0.0
-        signature = needle_catalog.product_signatures(product)[:4]
+        signature = needle_catalog.card_signature_sequence(product)
         coarse = needle_catalog.canonical_signature(
             official_coarse_category(categories.get(asin, []))
         )

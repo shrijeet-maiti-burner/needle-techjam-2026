@@ -23,13 +23,23 @@ from typing import Final, Mapping
 PRIMARY_AGENT_KWARGS: Final[Mapping[str, object]] = MappingProxyType(
     {
         "retrieval_mode": "signature_first",
-        "signature_bucket_limit": 100,
+        "signature_bucket_limit": 500,
         "popularity_strength": 0.30,
         "category_strength": 1.00,
         "exclude_seen": True,
         "override_policy": "retract_stated",
         "lexical_mode": "none",
         "slate_size": 10,
+        "identify_from_disclosures": True,
+        "adaptive_slate": True,
+        "early_slate_size": 1,
+        "full_slate_turn": 5,
+        "full_slate_constraints": 4,
+        "correct_unmatched_terms": True,
+        "correction_scope": "structured",
+        "promote_disclosure_bucket": True,
+        "promotion_bucket_limit": 50000,
+        "promote_opening_category": True,
     }
 )
 

@@ -16,6 +16,7 @@ _ROOT = Path(__file__).resolve().parents[1]
 # signatures in memory when the index is missing or does not match the catalog.
 BUNDLED_INDEX = _ROOT / "submission" / "assets" / "catalog-signatures.sqlite3"
 DEVELOPMENT_INDEX = _ROOT / ".artifacts" / "indexes" / "catalog-signatures.sqlite3"
+DEFAULT_INDEX = BUNDLED_INDEX if BUNDLED_INDEX.is_file() else DEVELOPMENT_INDEX
 
 
 def default_index() -> Path | None:

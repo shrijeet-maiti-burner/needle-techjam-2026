@@ -23,12 +23,25 @@ attribute-specific question and two questions exhaust the customer. Asking also
 costs nothing, because the evaluator scores `recommendations` and may end the
 session before it reads `ask_attribute`.
 
-**Retrieval.** Exact catalog-signature promotion over an FTS5 index, with sparse
-BM25 as the fallback ordering. A soft coverage score for category words in the
-opening request and a bounded popularity prior over `rating_number` rerank but
-never filter candidates. Candidates already shown within an intent version are
-excluded, which turns ten turns of ten slots into up to a hundred distinct
-products rather than repeating the same slate.
+**Retrieval.** Exact full-value and punctuation-delimited clause signatures are
+looked up in a catalog-bound SQLite index, with fielded FTS5 BM25 as the fallback
+ordering. Signature intersections larger than 500 are not promoted. The
+metadata-derived intent-card path separately indexes every category-bound
+disclosure prefix. At each turn, all plausible semicolon parses are unioned and
+the admitted products are ordered by catalog popularity; an over-limit parse
+makes this path decline instead of truncating evidence. A direct answer is used
+only when a category-bound card key is globally unique, every resolving parse
+agrees, and the intent-order safety guards hold. Before turn 5 or four active
+constraints, the agent emits only rank one; it then releases the full slate.
+Candidates actually shown within an intent version are excluded, while withheld
+candidates remain eligible. FTS5, soft category coverage, and the bounded
+`rating_number` prior remain the fallback.
+
+**Surface robustness.** Structural parsers fold accents and normalize
+whitespace. A catalog-derived one-edit corrector operates only on the explicit
+opening category and disclosure clauses. Conservative category variants such
+as `trousers`/`pants` share a category key. Arbitrary customer prose is not
+rewritten and no fixed product identifiers are encoded.
 
 **Intent override.** An explicit override retracts the preference the customer
 stated, not the answers they gave to our questions. The opening message is
@@ -59,51 +72,60 @@ datasets and assets for the final Devpost description.
 | estimated model cost | $0.00 |
 | network access required | no |
 | credentials required | no |
-| per-response latency, p50 | 59.6 ms |
-| per-response latency, p95 | 118.2 ms |
-| per-response latency, p99 | 143.3 ms |
-| per-response latency, max | 156.9 ms |
-| instrumented construction with local index | 5.08 s |
-| peak Python traced memory | 66,086,555 bytes |
-| peak process working set | 478,224,384 bytes |
-| contract violations | 0 of 446 responses |
+| per-response latency, p50 | 2.0 ms |
+| per-response latency, p95 | 42.7 ms |
+| per-response latency, p99 | 95.6 ms |
+| per-response latency, max | 418.6 ms |
+| construction with bundled index | 6.774 s |
+| construction without bundled index | 84.788 s |
+| generated index size | 64,884,736 bytes |
+| generated index SHA-256 | `73c91b4473772532cc22a39918885e00898b8eadbada8544bfad84dd8e9904e4` |
+| complete evaluator peak working set, bundled | 507,654,144 bytes |
+| complete evaluator peak working set, source-only | 594,825,216 bytes |
+| contract violations | 0 of 405 responses |
 
 Measured on the 200 official public sessions, `retrieval_mode=signature_first`,
-`category_strength=1.00`, `popularity_strength=0.30`,
-`override_policy=retract_stated`, `exclude_seen=true`.
+`signature_bucket_limit=500`, `category_strength=1.00`, `popularity_strength=0.30`,
+`override_policy=retract_stated`, `exclude_seen=true`, category-bound disclosure
+promotion and direct identification enabled, and adaptive slate size 1 -> 10.
 
 ## Limitations
 
 These are stated plainly because they bear on how the result should be read.
 
 **The public score is measured; private transfer is not.** Public intent cards
-are deterministically materialised from the target catalog row. A separate
-1,000-target proxy excludes every released ground-truth target and scores
-0.867627, but it deliberately reuses the released simulator and marginal
-profile/scenario distributions. It is evidence against direct target memorising,
-not a private-score estimate.
+are deterministically materialised from the target catalog row. Three separate
+200-target proxies exclude every released ground-truth target and match public
+rating, price-presence, broad-category, profile, and scenario marginals. They
+score 0.979075, 0.965725, and 0.961950. They still reuse the released simulator,
+so they are evidence against direct target memorising, not private-score
+estimates.
 
-**Sensitivity to message wording is measured and real.** Under a perturbation
-harness that rewords the customer's messages while preserving meaning, the
-selected TechnicalScore falls from 0.878039 to 0.746239 on accents, 0.852302 on
-filler, 0.831659 on paraphrase, and 0.792330 on typos. Whitespace and word-order
-slices score 0.866604 and 0.865589. These failures remain open even though the
-soft category prior improves every slice over its no-category control.
+**Sensitivity to message wording is measured and real.** The exact surface has
+HR@10 1.000 and MRR 0.996667. Several perturbation slices still remove targets,
+including filler, paraphrase, single-edit typo, and word order; the larger
+meaning-changing attribute-swap and constraint-drop edits also fail the
+registered zero-removal gate. The exact rates and ranking metrics are retained
+in the dated final evidence record. The gates were not weakened.
 
-**Override detection is the single largest fragility.** If the override trigger
-phrase is not recognised, the intent version never bumps and no override policy
-runs. In that condition the override slice falls to 0.133 hit rate and the
-overall score to 0.7242, identically for every policy.
+**Override handling still depends on a structural trigger.** Accent folding and
+independent paraphrases pass, and later question answers now survive a scoped
+preference override even when the optional opening-subject anchor cannot be
+parsed. A genuinely unrecognised retraction would still leave the old intent
+version active; no model is present to infer it semantically.
 
 **The popularity prior is conditional, not free.** With category strength 1.00,
 popularity 0.55 reaches 0.881183 on the released set but loses to 0.30 on 1,000
 disjoint targets, 0.866666 versus 0.867627. The higher released result is
 rejected rather than reported as the primary.
 
-**Category parsing is soft and bounded.** Failure to recognize an opening
-category removes only that prior; it does not remove candidates. A wrong partial
-parse can still reorder results, so the category prior is not equivalent to a
-verified taxonomy constraint.
+**Disclosure promotion depends on evaluator structure.** It assumes intent
+cards are metadata-derived and clean disclosures retain the released ordering.
+If the private evaluator uses hand-written cards or a different disclosure
+policy, the category-bound path declines or loses its benefit and the
+signature/FTS path must carry the session. An exhaustive public audit records
+117 correct direct identifications and zero wrong; all 386 non-empty promoted
+buckets retain the public target. Neither result proves private behavior.
 
 **Negative constraints are tracked but not enforced.** The belief state records
 exclusions and exposes them, but retrieval does not currently filter on them. A

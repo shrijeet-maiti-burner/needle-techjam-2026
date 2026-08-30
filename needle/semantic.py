@@ -5,7 +5,6 @@ import re
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 
-from needle.catalog import fold_marks
 from needle.contracts import Candidate
 
 
@@ -76,6 +75,20 @@ _NEGATIVE_CONTRACTION_RE = re.compile(
 )
 
 
+def fold_diacritics(text: str) -> str:
+    """Remove Unicode combining marks without changing punctuation or spacing.
+
+    Structural parsers use this narrower transform instead of
+    :func:`normalize_text`: sentence boundaries and character-local negation
+    still matter there, while accents do not change a shopping constraint.
+    """
+
+    decomposed = unicodedata.normalize("NFKD", text)
+    return "".join(
+        character for character in decomposed if not unicodedata.combining(character)
+    )
+
+
 def normalize_text(text: str) -> str:
     """Deterministic, offline text normalization.
 
@@ -85,10 +98,7 @@ def normalize_text(text: str) -> str:
     apostrophes removed (``"men's"`` -> ``"mens"``); case folded; other
     punctuation mapped to spaces; whitespace collapsed. No word is dropped.
     """
-    decomposed = unicodedata.normalize("NFKD", text)
-    without_marks = "".join(
-        character for character in decomposed if not unicodedata.combining(character)
-    )
+    without_marks = fold_diacritics(text)
     unified = without_marks.translate(_APOSTROPHE_VARIANTS)
     expanded = _NEGATIVE_CONTRACTION_RE.sub(
         lambda match: _NEGATIVE_CONTRACTIONS[match.group(1).lower()], unified
@@ -100,6 +110,21 @@ def normalize_text(text: str) -> str:
 
 def _tokens(text: str) -> list[str]:
     return normalize_text(text).split()
+
+
+def normalize_category_text(text: str) -> str:
+    """Canonicalize conservative category spelling and hypernym variants.
+
+    This is intentionally narrower than query expansion: each category token
+    maps to at most the first registered catalog-facing form, so a stated
+    ``trousers`` category can join a ``pants`` category key without injecting
+    synonyms into arbitrary preference text.
+    """
+
+    return " ".join(
+        _SYNONYM_EXPANSIONS.get(token, (token,))[0]
+        for token in _tokens(text)
+    )
 
 
 def fuzzy_match(
@@ -321,7 +346,7 @@ def repair_trigger_text(
     cannot complete a phrase that was not already almost entirely present.
     """
     repaired: list[str] = []
-    for token in _TRIGGER_TOKEN_RE.findall(fold_marks(text)):
+    for token in _TRIGGER_TOKEN_RE.findall(fold_diacritics(text).casefold()):
         if token.isalpha() and len(token) >= min_length and token not in keywords:
             near = [word for word in keywords if _within_one_edit(word, token)]
             if len(near) == 1:

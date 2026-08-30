@@ -6,7 +6,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Mapping
 
-from needle.semantic import repair_trigger_text, trigger_keywords
+from needle.semantic import fold_diacritics, repair_trigger_text, trigger_keywords
 
 
 # Retraction verbs, and the things a customer can retract. Split apart so the
@@ -308,6 +308,7 @@ def extract_subject_anchor(message: str) -> str | None:
     stripped full stop would be indistinguishable from the shopping subject;
     preserving that text across an override would violate the correction.
     """
+    message = fold_diacritics(message)
     match = SUBJECT_ANCHOR_RE.search(message)
     if match is None:
         return None
@@ -366,8 +367,9 @@ class SessionState:
                 # not the answers they gave to our questions. Drop the opening
                 # message's trailing preference clause by replacing it with its
                 # own subject anchor, and keep every later reply.
-                if preference_override and prior_subject:
-                    self.messages[:] = [prior_subject, *self.messages[1:]]
+                if preference_override:
+                    preserved_subject = [prior_subject] if prior_subject else []
+                    self.messages[:] = [*preserved_subject, *self.messages[1:]]
                 else:
                     self.messages.clear()
 

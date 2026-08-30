@@ -9,8 +9,9 @@ official evaluator
       |
 starter.agent.Agent
       |
-versioned state -> bounded signature promotion -> fielded sparse fallback
-       -> soft category/popularity rerank -> seen exclusion
+versioned state -> safe category-bound disclosure ranking/identification
+       -> bounded signature retrieval -> fielded sparse fallback
+       -> soft category/popularity rerank -> adaptive slate + seen exclusion
        -> no-op semantic boundary -> strict response
 ```
 
@@ -32,34 +33,43 @@ measured alternatives failed their gates.
 The development and submission adapters use the immutable primary preset:
 
 - versioned state that retracts the stated opening preference while preserving later answers on a scoped preference override;
-- exact catalog-signature promotion only for non-empty buckets of at most 100;
+- exact full-value and clause-level catalog-signature promotion only for non-empty buckets of at most 500;
+- popularity-ordered category-plus-disclosure buckets, including the opening category bucket, with every plausible semicolon parse unioned before emission;
+- direct identification only for category-bound card keys that are unique in the full catalog, with agreement across plausible semicolon parses;
+- ordered-prefix identification only before intent revision, and unordered identification only after all four disclosure positions are present;
 - sparse `OR` fallback with weights `6/4/2.5/2.5/1.5/1`;
 - soft opening-category coverage strength 1.00 and popularity strength 0.30;
-- seen-item exclusion within each intent version and a ten-item slate;
-- lexical normalization, expansion, fuzzy matching, and model reranking disabled.
+- one high-confidence item before turn 5 or four active constraints, then the full ten-item slate, with seen-item exclusion scoped to items actually emitted in the current intent version;
+- Unicode diacritic folding at token and structural-parser boundaries;
+- catalog-derived one-edit recovery only inside explicit category and disclosure regions;
+- free-text lexical expansion and model reranking disabled.
 
 The pure sparse preset is the rollback and retains the selected safe state and
 soft priors. The optional signature asset is catalog-bound by SHA-256. If it is
 missing, corrupt, or bound to another catalog, construction records the reason
 and rebuilds the equivalent in-memory index rather than aborting the run.
 
-The selected primary measures TechnicalScore 0.878039 on the released set and
-0.867627 on a 1,000-target catalog-disjoint transfer proxy. A second proxy
-varies card shape rather than target identity, drawing targets from the three
-`intent_card` shapes the released set never contains; the primary measures
-0.818531 there. Both proxies are development diagnostics, not private estimates,
-and they disagree about `popularity_strength` (docs/evidence/EXP_006_SHAPES.md).
-A source-only clean bundle reproduces 0.878039 without the optional asset, and
-`scripts/bundle_rehearsal.py` reproduces that check from tracked files alone. Deterministic accents,
-filler, paraphrase, and typo slices still fail the absolute robustness gate, so
-this remains development evidence rather than a private-performance claim.
+The selected primary measures TechnicalScore 0.978500 on the released set,
+with HR@10 1.000, MRR 0.996667, and MTTC 2.025. Three distribution-matched
+200-target panels disjoint from released targets score 0.979075, 0.965725, and
+0.961950. An exhaustive ground-truth audit records 117 correct direct
+identifications and zero wrong ones; across 386 non-empty disclosure-bucket
+promotions, all 386 retain the target. The registered robustness matrix still
+has target-removal failures under several surface and meaning-changing edits.
+This remains development evidence rather than a private-performance claim.
+
+A second proxy varies card shape rather than target identity, drawing targets
+from the three `intent_card` shapes the released set never contains. It exposes
+a different failure surface and disagrees with released-set tuning of
+`popularity_strength` (docs/evidence/EXP_006_SHAPES.md). These proxies are
+development diagnostics, not private-score estimates.
 
 ## Next experiment-driven extensions
 
 1. EXP-013 is closed: question specificity was measured across ten arms and every alternative to repeated `other` lost (docs/evidence/EXP_013.md). EXP-014 may still test later-rank cluster coverage, but only behind the selected deterministic path.
 2. Robustness work targets general normalization and retrieval invariants; more released-template phrase patches are not acceptable evidence.
 3. Any optional model must beat the no-op and lexical controls on released score, disjoint targets, perturbation slices, license, offline startup, latency, memory, disk, and clean packaging.
-4. Final release work rebuilds the optional asset from the exact scoring catalog and repeats the clean extracted-bundle command.
+4. Final release work rebuilds the optional schema-v6 asset from the exact scoring catalog and repeats both source-only and asset-bundled clean extracted-bundle commands.
 
 ## Invariants
 

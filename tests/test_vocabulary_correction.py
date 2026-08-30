@@ -158,6 +158,25 @@ class RetrievalIntegrationTest(unittest.TestCase):
         index.search("watreproof", 10)
         self.assertIn(("watreproof", "waterproof"), index.recovered_terms)
 
+    def test_structured_scope_corrects_explicit_evidence_only(self) -> None:
+        index = CatalogIndex(
+            self._catalog(),
+            correct_unmatched_terms=True,
+            correction_scope="structured",
+        )
+        self.addCleanup(index.close)
+
+        results = index.search(
+            "please watreproof",
+            10,
+            messages=[
+                "I'm looking for hiking boots. A key requirement is: watreproof."
+            ],
+        )
+
+        self.assertTrue(results)
+        self.assertIn(("watreproof", "waterproof"), index.recovered_terms)
+
     def test_agent_exposes_the_flag_in_its_configuration(self) -> None:
         agent = Agent(self._catalog(), correct_unmatched_terms=True)
         self.addCleanup(agent.close)

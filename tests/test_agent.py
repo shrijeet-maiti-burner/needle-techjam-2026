@@ -116,6 +116,95 @@ class AgentTest(unittest.TestCase):
 
         self.assertEqual(len(response["recommendations"]), 1)
 
+    def test_adaptive_slate_marks_only_emitted_products_seen(self) -> None:
+        agent = Agent(
+            self.catalog_path,
+            retrieval_mode="signature_first",
+            adaptive_slate=True,
+            early_slate_size=1,
+            full_slate_turn=5,
+            exclude_seen=True,
+        )
+        agent.reset("adaptive", {})
+
+        response = agent.respond("adaptive", "I'm looking for clothing.", 1, 10)
+
+        self.assertEqual(len(response["recommendations"]), 1)
+        self.assertEqual(len(agent._seen_by_version[("adaptive", 1)]), 1)
+
+    def test_unique_disclosure_identification_emits_only_the_target(self) -> None:
+        agent = Agent(
+            self.catalog_path,
+            retrieval_mode="signature_first",
+            identify_from_disclosures=True,
+            adaptive_slate=True,
+            exclude_seen=True,
+        )
+        agent.reset("identified", {})
+        agent.respond(
+            "identified",
+            "I'm looking for shirts. A key requirement is: cotton.",
+            1,
+            10,
+        )
+
+        response = agent.respond(
+            "identified",
+            "For that, what matters is: color: black; soft cotton.",
+            2,
+            10,
+        )
+
+        self.assertEqual(response["recommendations"], [{"parent_asin": "BLACK_SHIRT"}])
+
+    def test_prefix_promotion_walks_unseen_members_by_popularity(self) -> None:
+        path = Path(self.temporary.name) / "promotion.jsonl"
+        products = [
+            {
+                "parent_asin": "LOW",
+                "title": "cotton shirt",
+                "categories": ["Clothing", "Shirts"],
+                "features": ["cotton weave"],
+                "rating_number": 5,
+            },
+            {
+                "parent_asin": "HIGH",
+                "title": "cotton shirt",
+                "categories": ["Clothing", "Shirts"],
+                "features": ["cotton weave"],
+                "rating_number": 500,
+            },
+        ]
+        path.write_text(
+            "".join(json.dumps(product) + "\n" for product in products),
+            encoding="utf-8",
+        )
+        agent = Agent(
+            path,
+            retrieval_mode="signature_first",
+            promote_disclosure_bucket=True,
+            adaptive_slate=True,
+            early_slate_size=1,
+            exclude_seen=True,
+        )
+        agent.reset("promoted", {})
+
+        first = agent.respond(
+            "promoted",
+            "I'm looking for shirts. A key requirement is: cotton.",
+            1,
+            10,
+        )
+        second = agent.respond(
+            "promoted",
+            "I don't have an additional preference for other.",
+            2,
+            10,
+        )
+
+        self.assertEqual(first["recommendations"], [{"parent_asin": "HIGH"}])
+        self.assertEqual(second["recommendations"], [{"parent_asin": "LOW"}])
+
     def test_sequential_policy_does_not_repeat_candidates(self) -> None:
         agent = Agent(self.catalog_path, slate_size=1, exclude_seen=True)
         agent.reset("sequential", {})
