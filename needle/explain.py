@@ -66,11 +66,13 @@ def turn_record(
     emitted: Sequence[str],
     withheld: bool,
 ) -> dict:
-    """A structured account of one turn, for anything that renders the session.
+    """What this turn did, as the input `message_for` renders.
 
-    Deliberately not part of the response: `evaluation.validate_response`
-    rejects unknown keys, and adding one would fail the official contract. The
-    agent keeps these on the side instead.
+    Ephemeral by design. `needle/lens.py` records the retained, far richer
+    per-turn trace -- constraint provenance, per-attribute expected candidate
+    reduction, per-recommendation matches and conflicts -- and there is no
+    reason for a second, weaker one to exist beside it. This exists only to
+    keep the sentence-building separable from the agent and therefore testable.
     """
     if identified:
         basis, confidence = "identified", "certain"

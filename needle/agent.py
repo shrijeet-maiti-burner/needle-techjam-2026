@@ -45,7 +45,6 @@ class Agent:
         full_slate_turn: int = 5,
         full_slate_constraints: int = 4,
         explain: bool = False,
-        explanation_history: int = 64,
         promote_disclosure_bucket: bool = False,
         promotion_bucket_limit: int = 50_000,
         promote_opening_category: bool = False,
@@ -89,13 +88,6 @@ class Agent:
         self.full_slate_turn = int(full_slate_turn)
         self.full_slate_constraints = int(full_slate_constraints)
         self.explain = bool(explain)
-        if not 1 <= int(explanation_history) <= 10_000:
-            raise ValueError("explanation_history must be in 1..10000")
-        self.explanation_history = int(explanation_history)
-        # Session id -> one record per turn. A side channel, never a response
-        # key: `evaluation.validate_response` rejects unknown keys, so anything
-        # extra in the payload would fail the official contract.
-        self.explanations: dict[str, list[dict]] = {}
         self.promote_disclosure_bucket = bool(promote_disclosure_bucket)
         self.promotion_bucket_limit = int(promotion_bucket_limit)
         self.promote_opening_category = bool(promote_opening_category)
@@ -253,13 +245,6 @@ class Agent:
                 emitted=emitted,
                 withheld=withheld,
             )
-            history = self.explanations.setdefault(session_id, [])
-            history.append(record)
-            if len(self.explanations) > self.explanation_history:
-                # Bounded: a scoring run opens 200 sessions and never reads these
-                # back, so the oldest are dropped rather than grown without limit.
-                for stale in list(self.explanations)[: -self.explanation_history]:
-                    del self.explanations[stale]
             return message_for(record, asking=asking)
         except Exception as error:  # noqa: BLE001 - a dull message beats a lost turn
             self.respond_failures.append(
