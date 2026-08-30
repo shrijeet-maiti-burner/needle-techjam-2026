@@ -72,10 +72,10 @@ datasets and assets for the final Devpost description.
 | estimated model cost | $0.00 |
 | network access required | no |
 | credentials required | no |
-| per-response latency, p50 | 2.0 ms |
-| per-response latency, p95 | 42.7 ms |
-| per-response latency, p99 | 95.6 ms |
-| per-response latency, max | 418.6 ms |
+| per-response latency, p50 | 64.3 ms |
+| per-response latency, p95 | 218.9 ms |
+| per-response latency, p99 | 331.7 ms |
+| per-response latency, max | 733.8 ms |
 | construction with bundled index | 6.774 s |
 | construction without bundled index | 84.788 s |
 | generated index size | 64,884,736 bytes |
