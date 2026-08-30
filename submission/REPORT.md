@@ -114,3 +114,35 @@ one. Wiring them in remains an open measured question rather than an oversight.
 **Boundary sessions pay an unavoidable one-turn tax.** The first question asked
 in a boundary session always returns a deflection. No policy avoids it; it can
 only be paid early.
+
+
+## Demonstrated session
+
+`python3 scripts/demo_session.py --scenario intent_override` prints one full
+multi-turn session. It is a real transcript, not a staged one: the customer
+messages come from the official `local_evaluator`'s own `initial_message`,
+`customer_reply` and override injection, and the hit test is the evaluator's, so
+what is printed is what the scorer saw. `--scenario` selects buying, browsing,
+intent_override or boundary; `--sample` runs a specific `sample_id`.
+
+The override transcript is the one worth reading. It shows the turns the
+evaluator refuses to score before the new intent arrives, which is why that
+slice carries the highest turns-to-conversion by construction rather than
+through any ranking weakness.
+
+## Team contributions
+
+Ownership boundaries are recorded in [docs/OWNERSHIP.md](../docs/OWNERSHIP.md)
+and were enforced through review: each area has one owner, and cross-owner
+changes were raised on the other owner's pull request rather than committed
+directly.
+
+| area | owner | delivered |
+|---|---|---|
+| belief state, override policy, question policy | Athul Krishna Boban | versioned constraint state with correction, negation and supersession (#1); `retract_stated` override policy (#6); contradiction invalidation (#9); retraction-rule override trigger (#10); submission packaging and run-safety (#8); EXP-006/013 closures and the popularity transfer review (#12) |
+| retrieval, ranking, integration | Shrijeet Maiti | reproducible experiment harness (#2); catalog validation and sparse controls, measured primary and rollback paths (#5); transfer-gated primary selection (#11) |
+| robustness, lexical normalization | Aryaman Anand | offline lexical normalizer and robustness fixtures (#3); EXP-010 perturbation library (#4); session-level robustness driver, slice runner and comparison report (#7); query/corpus tokenizer symmetry and resource safety (#13) |
+| evaluation baseline and reruns | Yazhiniyan | <!-- CONFIRM BEFORE SUBMISSION: no merged pull requests are attributable to this owner in the repository history. Replace this line with the actual contribution or remove the row. --> |
+
+Every experiment in `docs/evidence/` names an independent rerun owner, and the
+headline arms were reproduced by a second person before being cited.
