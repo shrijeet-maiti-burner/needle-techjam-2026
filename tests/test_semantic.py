@@ -6,6 +6,7 @@ from needle.contracts import Candidate
 from needle.semantic import (
     LexicalNormalizer,
     NoOpSemanticReranker,
+    fold_diacritics,
     fuzzy_match,
     normalize_text,
 )
@@ -18,6 +19,9 @@ class NoOpSemanticRerankerTest(unittest.TestCase):
 
 
 class NormalizeTextTest(unittest.TestCase):
+    def test_diacritic_fold_preserves_structural_punctuation(self) -> None:
+        self.assertEqual(fold_diacritics("Café; blüe!"), "Cafe; blue!")
+
     def test_folds_case_accents_and_punctuation(self) -> None:
         self.assertEqual(normalize_text("Café-Blue, SIZE/M!"), "cafe blue size m")
 

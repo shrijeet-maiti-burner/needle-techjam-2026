@@ -23,7 +23,7 @@ from typing import Final, Mapping
 PRIMARY_AGENT_KWARGS: Final[Mapping[str, object]] = MappingProxyType(
     {
         "retrieval_mode": "signature_first",
-        "signature_bucket_limit": 100,
+        "signature_bucket_limit": 500,
         "popularity_strength": 0.30,
         "category_strength": 1.00,
         "exclude_seen": True,

@@ -5,11 +5,11 @@ import json
 import math
 import re
 import sqlite3
-import unicodedata
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from needle.contracts import Candidate
+from needle.semantic import fold_diacritics
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -49,7 +49,7 @@ SEARCH_FIELDS = (
 DEFAULT_FIELD_WEIGHTS = (6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
 RETRIEVAL_MODES = frozenset({"sparse", "signature_first"})
 QUERY_MODES = frozenset({"any", "all"})
-SIGNATURE_INDEX_SCHEMA_VERSION = "1"
+SIGNATURE_INDEX_SCHEMA_VERSION = "2"
 
 # Discourse markers and request-frame verbs. `query_terms` drops these from the
 # query, and the same tokenizer runs over the corpus, so this removes a matchable
@@ -157,14 +157,33 @@ def fold_marks(text: str) -> str:
     Pure-ASCII input is returned unchanged, so this cannot alter retrieval for
     text that has no marks to fold.
     """
-    if text.isascii():
-        return text.casefold()
-    normalized = unicodedata.normalize("NFKD", text.casefold())
-    return "".join(character for character in normalized if not unicodedata.combining(character))
+    return fold_diacritics(text).casefold()
 
 
 def canonical_signature(value: object) -> str:
     return " ".join(TOKEN_RE.findall(fold_marks(_clean_constraint(value))))
+
+
+def constraint_signature_fragments(value: object) -> tuple[str, ...]:
+    """Full and clause-level signatures for one catalog constraint value.
+
+    Catalog features often contain comma- or semicolon-separated facts. A
+    customer can state those facts in another order without changing meaning,
+    so independently index each multi-token clause as well as the full value.
+    The original value is always retained; only additional single-token clause
+    splits are omitted because sparse retrieval already covers them.
+    """
+
+    text = _clean_constraint(value)
+    full = canonical_signature(text)
+    clauses = (
+        signature
+        for candidate in re.split(r"[;,]", text)
+        if len((signature := canonical_signature(candidate)).split()) >= 2
+    )
+    return tuple(
+        dict.fromkeys(signature for signature in (full, *clauses) if signature)
+    )
 
 
 def query_terms(text: str, limit: int = 60) -> list[str]:
@@ -179,7 +198,7 @@ def query_terms(text: str, limit: int = 60) -> list[str]:
 def extract_category_terms(messages: Iterable[str]) -> frozenset[str]:
     """High-precision category words from the opening shopping request."""
 
-    first = next(iter(messages), "")
+    first = fold_diacritics(next(iter(messages), ""))
     match = CATEGORY_REQUEST_RE.search(first)
     if match is None:
         return frozenset()
@@ -189,13 +208,14 @@ def extract_category_terms(messages: Iterable[str]) -> frozenset[str]:
 def extract_query_signatures(messages: Iterable[str]) -> tuple[str, ...]:
     """Extract catalog-grounded fragments from released-style dialogue.
 
-    This deliberately recognizes only explicit value-bearing clauses and the
-    small material/color vocabulary. It is a high-precision experiment arm,
-    not a general semantic parser; sparse retrieval remains the fallback.
+    Explicit markers, bounded material/color values and punctuation-delimited
+    clauses become lookup proposals. Only proposals present in the catalog's
+    signature index can affect ranking; sparse retrieval remains the fallback.
     """
 
     signatures: list[str] = []
     for message in messages:
+        message = fold_diacritics(message)
         marker = SIGNATURE_MARKER_RE.search(message)
         if marker:
             # The released customer separates constraints with semicolons,
@@ -218,6 +238,12 @@ def extract_query_signatures(messages: Iterable[str]) -> tuple[str, ...]:
         color = COLOR_RE.search(message)
         if color:
             signatures.append(canonical_signature(f"color: {color.group(1)}"))
+        for clause in re.split(r"[;,]", message):
+            if SIGNATURE_MARKER_RE.search(clause):
+                continue
+            signature = canonical_signature(clause)
+            if 2 <= len(signature.split()) <= 20:
+                signatures.append(signature)
     return tuple(dict.fromkeys(signatures))
 
 
@@ -239,7 +265,7 @@ def product_signatures(product: dict[str, object]) -> tuple[str, ...]:
         dict.fromkeys(
             signature
             for value in values
-            if (signature := canonical_signature(value))
+            for signature in constraint_signature_fragments(value)
         )
     )
 
@@ -548,6 +574,29 @@ class CatalogIndex:
         self._signature_count_cache[signature] = count
         return count
 
+    def _precache_signature_counts(self, signatures: Sequence[str]) -> None:
+        """Populate signature cardinalities in bounded SQLite batches."""
+
+        missing = list(
+            dict.fromkeys(
+                signature
+                for signature in signatures
+                if signature not in self._signature_count_cache
+            )
+        )
+        for offset in range(0, len(missing), 500):
+            batch = missing[offset:offset + 500]
+            placeholders = ", ".join("?" for _ in batch)
+            rows = self._signature_connection.execute(
+                "SELECT signature, COUNT(*) FROM signatures "
+                f"WHERE signature IN ({placeholders}) GROUP BY signature",
+                batch,
+            ).fetchall()
+            counts = {str(signature): int(count) for signature, count in rows}
+            self._signature_count_cache.update(
+                (signature, counts.get(signature, 0)) for signature in batch
+            )
+
     def _signature_rows(self, signatures: Sequence[str], limit: int) -> list[tuple[str]]:
         ordered = sorted(dict.fromkeys(signatures), key=lambda value: (self._signature_count(value), value))
         if not ordered or self._signature_count(ordered[0]) == 0:
@@ -583,7 +632,9 @@ class CatalogIndex:
         if self.retrieval_mode != "signature_first":
             return (), frozenset()
         matched: list[str] = []
-        for signature in extract_query_signatures(messages):
+        signatures = extract_query_signatures(messages)
+        self._precache_signature_counts(signatures)
+        for signature in signatures:
             proposed = [*matched, signature]
             if self._signature_rows(proposed, 1):
                 matched.append(signature)

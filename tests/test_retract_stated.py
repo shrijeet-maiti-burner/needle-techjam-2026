@@ -27,6 +27,21 @@ class RetractStatedSemantics(unittest.TestCase):
         self.assertIn("mesh upper", text)
         self.assertIn("89.99", text)
 
+    def test_answers_survive_when_the_subject_surface_is_unparseable(self):
+        store = StateStore("retract_stated")
+        store.reset("no-anchor", {})
+        store.observe(
+            "no-anchor",
+            "I'm briefly looking for running shoes. color: black",
+            1,
+        )
+        store.observe("no-anchor", REPLY1, 2)
+
+        state = store.observe("no-anchor", OVERRIDE, 3)
+
+        self.assertNotIn("color: black", state.retrieval_text.lower())
+        self.assertIn("mesh upper", state.retrieval_text.lower())
+
     def test_shopping_subject_survives(self):
         text = self._run("retract_stated").retrieval_text.lower()
         self.assertIn("running shoes", text)

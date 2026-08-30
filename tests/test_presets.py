@@ -8,7 +8,7 @@ from needle.presets import PRIMARY_AGENT_KWARGS, ROLLBACK_AGENT_KWARGS
 class PresetTest(unittest.TestCase):
     def test_primary_is_the_measured_signature_configuration(self) -> None:
         self.assertEqual(PRIMARY_AGENT_KWARGS["retrieval_mode"], "signature_first")
-        self.assertEqual(PRIMARY_AGENT_KWARGS["signature_bucket_limit"], 100)
+        self.assertEqual(PRIMARY_AGENT_KWARGS["signature_bucket_limit"], 500)
         self.assertEqual(PRIMARY_AGENT_KWARGS["popularity_strength"], 0.30)
         self.assertEqual(PRIMARY_AGENT_KWARGS["category_strength"], 1.00)
         self.assertIs(PRIMARY_AGENT_KWARGS["exclude_seen"], True)

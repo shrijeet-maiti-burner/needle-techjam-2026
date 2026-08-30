@@ -9,11 +9,31 @@ from needle.catalog import (
     CatalogIndex,
     build_signature_index,
     canonical_signature,
+    constraint_signature_fragments,
+    extract_category_terms,
     extract_query_signatures,
+    query_terms,
 )
 
 
 class CatalogValidationTest(unittest.TestCase):
+    def test_constraint_fragments_are_order_independent_units(self) -> None:
+        self.assertEqual(
+            constraint_signature_fragments("98% Polyester, 2% Spandex"),
+            ("98 polyester 2 spandex", "98 polyester", "2 spandex"),
+        )
+
+    def test_query_parsing_is_accent_stable(self) -> None:
+        self.assertEqual(query_terms("blüe café coat"), ["blue", "cafe", "coat"])
+        self.assertEqual(
+            extract_category_terms(["I'm lôoking for côats."]),
+            {"coats"},
+        )
+        self.assertEqual(
+            extract_query_signatures(["What mátters is: Clôudfoam cushioning."]),
+            ("cloudfoam cushioning",),
+        )
+
     def test_extracts_sentence_bounded_need_paraphrases(self) -> None:
         self.assertEqual(
             extract_query_signatures(
@@ -90,6 +110,29 @@ class CatalogValidationTest(unittest.TestCase):
         )
 
         self.assertEqual(matched, ("cloudfoam cushioning", "color blue"))
+        self.assertEqual(candidates, {"TARGET"})
+
+    def test_clause_signature_survives_reordered_disclosure(self) -> None:
+        path = self.write_catalog(
+            [
+                {
+                    "parent_asin": "TARGET",
+                    "title": "pants",
+                    "features": ["98% Polyester, 2% Spandex"],
+                },
+                {
+                    "parent_asin": "DISTRACTOR",
+                    "title": "pants",
+                    "features": ["100% Polyester"],
+                },
+            ]
+        )
+        index = CatalogIndex(path, retrieval_mode="signature_first")
+
+        _, candidates = index.signature_candidates(
+            ["2% Spandex, honestly, 98% Polyester, what matters is polyester"]
+        )
+
         self.assertEqual(candidates, {"TARGET"})
 
     def test_semicolon_inside_feature_cannot_empty_a_valid_bucket(self) -> None:
