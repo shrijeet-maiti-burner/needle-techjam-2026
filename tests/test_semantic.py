@@ -146,3 +146,62 @@ class LexicalRobustnessMatrixTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QueryCorpusSymmetryTest(unittest.TestCase):
+    """The FTS5 products table is built `unicode61 remove_diacritics 2`, so the
+    corpus stores `cafe` for `café`. `TOKEN_RE` matches ASCII only, so an
+    unfolded query term breaks *at* the accent instead of past it."""
+
+    def test_folding_is_a_no_op_for_ascii(self) -> None:
+        """Guards the public score: ASCII text must tokenize byte-identically."""
+        from needle.catalog import fold_marks, query_terms
+
+        for text in (
+            "I'm looking for running shoes.",
+            "For that, what matters is: Cloudsoft cotton; budget around $29.99.",
+            "Actually, ignore my earlier preference. I need white sneakers.",
+        ):
+            self.assertEqual(fold_marks(text), text.casefold())
+            self.assertEqual(query_terms(text), query_terms(text.casefold()))
+
+    def test_accented_terms_survive_tokenization(self) -> None:
+        from needle.catalog import query_terms
+
+        self.assertEqual(query_terms("cótton shirt"), ["cotton", "shirt"])
+        self.assertEqual(query_terms("naïve dress"), ["naive", "dress"])
+        self.assertEqual(query_terms("Café Blue"), ["cafe", "blue"])
+
+    def test_accented_and_plain_queries_agree(self) -> None:
+        from needle.catalog import query_terms
+
+        for plain, accented in (
+            ("cotton shirt", "cótton shírt"),
+            ("running shoes", "rúnning shoés"),
+            ("leather wallet", "leáther wallet"),
+        ):
+            self.assertEqual(query_terms(plain), query_terms(accented))
+
+    def test_signature_and_query_folding_agree(self) -> None:
+        """Both retrieval routes must fold identically or they disagree on
+        which products a disclosed constraint refers to."""
+        from needle.catalog import canonical_signature, query_terms
+
+        for text in ("cótton", "Café Blue", "naïve", "cotton"):
+            self.assertEqual(" ".join(query_terms(text)) or canonical_signature(text),
+                             canonical_signature(text))
+
+    def test_folding_never_emits_fts5_metacharacters(self) -> None:
+        """Terms are interpolated into a MATCH expression; only alphanumerics
+        may survive or the query becomes injectable."""
+        from needle.catalog import query_terms
+
+        hostile = 'cótton" OR products MATCH "x* NEAR/2 ^a $b (c) -d'
+        for term in query_terms(hostile):
+            self.assertTrue(term.isalnum(), f"{term!r} is not alphanumeric")
+
+    def test_folding_is_idempotent(self) -> None:
+        from needle.catalog import fold_marks
+
+        for text in ("Café", "naïve", "plain ascii", "", "ÅNGSTRÖM"):
+            self.assertEqual(fold_marks(fold_marks(text)), fold_marks(text))

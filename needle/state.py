@@ -6,6 +6,8 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Mapping
 
+from needle.semantic import repair_trigger_text, trigger_keywords
+
 
 # Retraction verbs, and the things a customer can retract. Split apart so the
 # trigger is a rule about English rather than a list of released templates:
@@ -53,63 +55,6 @@ PREFERENCE_OVERRIDE_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
-# A single typo destroys the override rule: "earliier preference" and
-# "prefference" both leave EXPLICIT_OVERRIDE_RE unmatched, and a missed override
-# is the most expensive miss in the system, so the strict pattern gets a
-# tolerant fallback rather than being loosened. It stays conservative by
-# demanding the same two halves the strict rule demands, a retraction verb and a
-# reference to a prior belief, each within one edit; a message carrying only one
-# of them still does not fire. Words shorter than five characters are matched
-# exactly, since at that length one edit reaches too many unrelated words.
-_RETRACT_WORDS = ("ignore", "disregard", "forget", "scratch", "scrap", "cancel", "undo", "drop")
-_PRIOR_WORDS = (
-    "preference", "preferences", "request", "requirement", "requirements",
-    "criteria", "earlier", "previous", "prior",
-)
-_WORD_RE = re.compile(r"[a-z']+")
-
-
-def _within_one_edit(candidate: str, target: str) -> bool:
-    """One substitution, insertion, deletion, or adjacent transposition.
-
-    Damerau-Levenshtein rather than plain Levenshtein: a swap of neighbouring
-    letters ("ignroe") is one of the four classic single-character slips and is
-    two substitutions under plain edit distance, so leaving it out misses a
-    typo class the perturbation library actually generates.
-    """
-    if candidate == target:
-        return True
-    if len(target) < 5 or abs(len(candidate) - len(target)) > 1:
-        return False
-    if len(candidate) == len(target):
-        differences = [index for index, (a, b) in enumerate(zip(candidate, target)) if a != b]
-        if len(differences) == 1:
-            return True
-        if len(differences) == 2:
-            first, second = differences
-            return (
-                second == first + 1
-                and candidate[first] == target[second]
-                and candidate[second] == target[first]
-            )
-        return False
-    shorter, longer = (candidate, target) if len(candidate) < len(target) else (target, candidate)
-    for index in range(len(longer)):
-        if shorter == longer[:index] + longer[index + 1:]:
-            return True
-    return False
-
-
-def _has_fuzzy(tokens: list[str], vocabulary: tuple[str, ...]) -> bool:
-    return any(_within_one_edit(token, word) for token in tokens for word in vocabulary)
-
-
-def looks_like_retraction(message: str) -> bool:
-    """Override trigger, tolerant to one typo per word. Fallback only."""
-    tokens = _WORD_RE.findall(message.casefold())
-    return _has_fuzzy(tokens, _RETRACT_WORDS) and _has_fuzzy(tokens, _PRIOR_WORDS)
-
-
 SUBJECT_ANCHOR_RE = re.compile(
     r"\b(?:i\s*['’]?\s*m|i am)\s+(?:looking for|after)\s+(.+?)(?=[.;])"
     r"|\bi\s+(?:need|want)\s+(.+?)(?=[.;])",
@@ -145,6 +90,11 @@ ATTRIBUTE_NAME_ALIASES = {
     "use case": "use_case",
     "use-case": "use_case",
 }
+
+
+# Derived from the patterns themselves, so a pattern that gains a phrase
+# cannot silently fall out of surface-repair coverage.
+_TRIGGER_KEYWORDS = trigger_keywords(EXPLICIT_OVERRIDE_RE, PREFERENCE_OVERRIDE_RE)
 
 
 def _declined_regions(message: str) -> list[tuple[int, int]]:
@@ -382,26 +332,17 @@ class SessionState:
         if turn <= self.last_turn:
             raise ValueError(f"turn must increase for session {self.session_id}")
 
-        # Fold once, here, so every rule below reads the same text. All of them
-        # are ASCII patterns run against the raw message, and the override rule
-        # is the expensive one to lose: an accent anywhere in "Actually, ignore
-        # my earlier preference" leaves `EXPLICIT_OVERRIDE_RE` unmatched, the
-        # retracted constraints active, and the session chasing a preference the
-        # customer already withdrew. Measured on the accents slice, that single
-        # miss was the entire gate failure: intent_override HR 0.267 against
-        # 1.000 while every other scenario was untouched.
-        #
-        # The fold is length-preserving, so the offsets `_declined_regions`,
-        # `inside_declined` and `_is_negated` work in stay valid, and the folded
-        # text is what goes into `self.messages`, so retrieval and signature
-        # extraction see the same normalization the belief state did.
-        user_message = fold_marks_in_place(user_message)
-
+        # Both triggers are consumed as booleans, never for their spans, so a
+        # surface-repaired copy is safe to match against here. `subject_anchor`
+        # and the no-preference clause logic keep using the raw message,
+        # because those do depend on offsets.
         override_match = EXPLICIT_OVERRIDE_RE.search(user_message)
         preference_override = bool(PREFERENCE_OVERRIDE_RE.search(user_message))
-        if not override_match and looks_like_retraction(user_message):
-            override_match = True
-            preference_override = True
+        if not override_match:
+            probe = repair_trigger_text(user_message, _TRIGGER_KEYWORDS)
+            override_match = EXPLICIT_OVERRIDE_RE.search(probe)
+            if override_match:
+                preference_override = bool(PREFERENCE_OVERRIDE_RE.search(probe))
         if override_match:
             prior_subject = self.subject_anchor
             self.intent_version += 1
@@ -431,10 +372,16 @@ class SessionState:
     # -- constraint bookkeeping ----------------------------------------- #
 
     def _supersede_all(self) -> None:
-        """Targeted invalidation is an open question (EXP-006). Until that
-        evidence exists this mirrors the previous full-reset behavior so the
-        override path stays unchanged, while recording the superseded events
-        rather than discarding them."""
+        """Supersede every active constraint at an override, recording the
+        events rather than discarding them.
+
+        EXP-006 asked whether targeted invalidation beats this. It is closed as
+        not actionable (docs/evidence/EXP_006_SHAPES.md): across 45 well-formed
+        override sessions, 30 public and 15 held out on card shapes the public
+        set omits, `retract_stated` hits 100%, so there is no session a targeted
+        policy could rescue. The remaining misses are on degenerate cards where
+        `old_value` and `new_value` are the same string and there is nothing to
+        invalidate selectively. Reopen only if a well-formed override misses."""
         self.constraints = [
             replace(constraint, status=ConstraintStatus.SUPERSEDED)
             if constraint.status is ConstraintStatus.ACTIVE

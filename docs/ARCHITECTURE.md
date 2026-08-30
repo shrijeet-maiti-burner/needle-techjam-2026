@@ -44,14 +44,19 @@ missing, corrupt, or bound to another catalog, construction records the reason
 and rebuilds the equivalent in-memory index rather than aborting the run.
 
 The selected primary measures TechnicalScore 0.878039 on the released set and
-0.867627 on a 1,000-target catalog-disjoint transfer proxy. A source-only clean
-bundle reproduces 0.878039 without the optional asset. Deterministic accents,
+0.867627 on a 1,000-target catalog-disjoint transfer proxy. A second proxy
+varies card shape rather than target identity, drawing targets from the three
+`intent_card` shapes the released set never contains; the primary measures
+0.818531 there. Both proxies are development diagnostics, not private estimates,
+and they disagree about `popularity_strength` (docs/evidence/EXP_006_SHAPES.md).
+A source-only clean bundle reproduces 0.878039 without the optional asset, and
+`scripts/bundle_rehearsal.py` reproduces that check from tracked files alone. Deterministic accents,
 filler, paraphrase, and typo slices still fail the absolute robustness gate, so
 this remains development evidence rather than a private-performance claim.
 
 ## Next experiment-driven extensions
 
-1. EXP-013 and EXP-014 may still test question specificity and later-rank cluster coverage, but only behind the selected deterministic path.
+1. EXP-013 is closed: question specificity was measured across ten arms and every alternative to repeated `other` lost (docs/evidence/EXP_013.md). EXP-014 may still test later-rank cluster coverage, but only behind the selected deterministic path.
 2. Robustness work targets general normalization and retrieval invariants; more released-template phrase patches are not acceptable evidence.
 3. Any optional model must beat the no-op and lexical controls on released score, disjoint targets, perturbation slices, license, offline startup, latency, memory, disk, and clean packaging.
 4. Final release work rebuilds the optional asset from the exact scoring catalog and repeats the clean extracted-bundle command.

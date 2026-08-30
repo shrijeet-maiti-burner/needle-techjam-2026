@@ -31,6 +31,7 @@ class Agent:
         exclude_seen: bool = False,
         override_policy: str = "full_reset",
         lexical_mode: str = "none",
+        correct_unmatched_terms: bool = False,
     ) -> None:
         if not 1 <= int(candidate_pool) <= 500:
             raise ValueError("candidate_pool must be in 1..500")
@@ -47,6 +48,7 @@ class Agent:
             category_strength=category_strength,
             signature_bucket_limit=signature_bucket_limit,
             signature_index_path=signature_index_path,
+            correct_unmatched_terms=correct_unmatched_terms,
         )
         self.state = StateStore(override_policy=override_policy)
         self.semantic = NoOpSemanticReranker()
@@ -72,8 +74,23 @@ class Agent:
             "exclude_seen": self.exclude_seen,
             "override_policy": override_policy,
             "lexical_mode": lexical_mode,
+            "correct_unmatched_terms": bool(correct_unmatched_terms),
         }
         self._seen_by_version: dict[tuple[str, int], set[str]] = {}
+        # Degradations are recorded rather than raised; an empty list is the
+        # assertion that every turn took the normal path.
+        self.respond_failures: list[str] = []
+
+    def close(self) -> None:
+        """Release catalog resources. Idempotent; the official harness never
+        calls it, but experiment runners and tests construct many agents."""
+        self.catalog.close()
+
+    def __enter__(self) -> "Agent":
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        self.close()
 
     def reset(self, session_id: str, user_profile: dict) -> None:
         self.state.reset(session_id, user_profile)
@@ -88,8 +105,78 @@ class Agent:
         turn: int,
         top_k: int,
     ) -> TurnResponse:
+        """Answer one turn. Never raises.
+
+        `local_evaluator.evaluate` wraps this in `except Exception` and
+        substitutes an empty response, so an escaping exception costs more than
+        the turn: `ask_attribute` becomes None, the simulated customer replies
+        "Ask me about one specific attribute", and no constraint is disclosed
+        for the rest of the session. On turn one that forfeits the session.
+
+        The strict turn/lifecycle invariants stay in `StateStore`, where they
+        catch real ordering bugs. Here they are downgraded to a degraded answer:
+        retrieval is retried against the raw message alone, and only a total
+        failure yields an empty slate. `respond_failures` records what happened
+        so a silent degradation is still visible to the experiment record.
+        """
+        try:
+            return self._respond(session_id, user_message, turn, top_k)
+        except Exception as error:  # noqa: BLE001 - a valid turn beats any raise
+            self.respond_failures.append(
+                f"session={session_id} turn={turn!r}: {type(error).__name__}: {error}"
+            )
+            return self._degraded_response(user_message, turn, top_k)
+
+    def _degraded_response(self, user_message: object, turn: object, top_k: object) -> TurnResponse:
+        """Best-effort contract-valid turn used when the normal path fails."""
+        recommendations: list[dict[str, str]] = []
+        try:
+            limit = self._bounded_limit(top_k)
+            if limit and isinstance(user_message, str):
+                candidates = self.catalog.search(user_message, limit)
+                recommendations = [
+                    {"parent_asin": candidate.parent_asin} for candidate in candidates[:limit]
+                ]
+        except Exception:  # noqa: BLE001 - the empty slate below is still valid
+            recommendations = []
+        ask_attribute = "other" if self._safe_turn(turn) < 10 else None
+        return {
+            "message": (
+                "Could you tell me one more thing about what you are looking for?"
+                if ask_attribute
+                else "These are the closest catalog matches I have."
+            ),
+            "ask_attribute": ask_attribute,
+            "recommendations": recommendations,
+            "usage": {"prompt_tokens": 0, "completion_tokens": 0},
+        }
+
+    @staticmethod
+    def _safe_turn(turn: object) -> int:
+        """Turn number for messaging only; unusable values keep the question on."""
+        try:
+            return int(turn)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 1
+
+    def _bounded_limit(self, top_k: object) -> int:
+        try:
+            requested = int(top_k)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            # The contract says ten; a harness passing something unusable
+            # should still get a full, valid slate rather than nothing.
+            requested = 10
+        return max(0, min(requested, self.slate_size, 10))
+
+    def _respond(
+        self,
+        session_id: str,
+        user_message: str,
+        turn: int,
+        top_k: int,
+    ) -> TurnResponse:
         state = self.state.observe(session_id, user_message, turn)
-        limit = max(0, min(int(top_k), self.slate_size, 10))
+        limit = self._bounded_limit(top_k)
         history_key = (session_id, state.intent_version)
         seen = self._seen_by_version.setdefault(history_key, set())
         excluded = seen if self.exclude_seen else ()
@@ -106,7 +193,7 @@ class Agent:
         )
         ranked = self.semantic.rerank(sparse, retrieval_text)[:limit]
         seen.update(candidate.parent_asin for candidate in ranked)
-        ask_attribute = "other" if turn < 10 else None
+        ask_attribute = "other" if self._safe_turn(turn) < 10 else None
         message = (
             "What else matters most for the item you want?"
             if ask_attribute

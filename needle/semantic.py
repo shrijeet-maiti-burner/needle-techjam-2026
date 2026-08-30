@@ -5,6 +5,7 @@ import re
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 
+from needle.catalog import fold_marks
 from needle.contracts import Candidate
 
 
@@ -163,3 +164,167 @@ class LexicalNormalizer:
                     seen.add(extra)
                     additions.append(extra)
         return " ".join(tokens + additions)
+
+
+def _within_one_edit(candidate: str, term: str) -> bool:
+    """True when one insertion, deletion, substitution or transposition maps
+    `term` to `candidate`. Exact and linear; no distance matrix is built."""
+    length, other = len(term), len(candidate)
+    if abs(length - other) > 1:
+        return False
+    if term == candidate:
+        return True
+    if length == other:
+        differing = [index for index in range(length) if term[index] != candidate[index]]
+        if len(differing) == 1:
+            return True
+        # adjacent transposition
+        if len(differing) == 2:
+            first, second = differing
+            return (
+                second == first + 1
+                and term[first] == candidate[second]
+                and term[second] == candidate[first]
+            )
+        return False
+    shorter, longer = (term, candidate) if length < other else (candidate, term)
+    index = probe = 0
+    skipped = False
+    while index < len(shorter) and probe < len(longer):
+        if shorter[index] != longer[probe]:
+            if skipped:
+                return False
+            skipped = True
+            probe += 1
+            continue
+        index += 1
+        probe += 1
+    return True
+
+
+class VocabularyCorrector:
+    """Recover a single-character corruption using the corpus's own vocabulary.
+
+    Nothing here is specific to this catalog: the vocabulary and its document
+    frequencies are injected by the caller, which reads them from the live FTS5
+    index. A different catalog -- or a different language -- yields a different
+    correction set with no code change. There is no curated typo or synonym
+    list, deliberately: such a list fixes the examples it was built from and
+    silently fails on everything else.
+
+    Scope is exactly one edit. Distance two over a vocabulary this size admits
+    far more plausible-but-wrong neighbours, and is a separate decision that
+    would need its own measurement rather than an assumed default.
+
+    Candidate blocking is a property of that scope rather than a heuristic: a
+    single edit changes at most one of a term's first and last character, so
+    every distance-one neighbour appears in some bucket keyed by (length in
+    L-1..L+1) x (first character or last character).
+    """
+
+    __slots__ = ("_vocabulary", "_document_frequency", "_buckets", "_min_length")
+
+    def __init__(
+        self,
+        document_frequency: Mapping[str, int],
+        *,
+        min_length: int = 4,
+    ) -> None:
+        self._document_frequency = document_frequency
+        self._vocabulary = frozenset(document_frequency)
+        self._min_length = int(min_length)
+        self._buckets: dict[tuple[int, int, str], list[str]] | None = None
+
+    def _index(self) -> dict[tuple[int, int, str], list[str]]:
+        """Built on first use. Clean text almost never contains an unmatched
+        term, so a session that needs no correction never pays for this."""
+        if self._buckets is None:
+            buckets: dict[tuple[int, int, str], list[str]] = {}
+            for term in self._vocabulary:
+                if len(term) < self._min_length - 1:
+                    continue
+                buckets.setdefault((len(term), 0, term[0]), []).append(term)
+                buckets.setdefault((len(term), -1, term[-1]), []).append(term)
+            self._buckets = buckets
+        return self._buckets
+
+    def is_known(self, term: str) -> bool:
+        return term in self._vocabulary
+
+    def correct(self, term: str) -> str | None:
+        """Nearest in-vocabulary term one edit away, or None.
+
+        Returns None for a term the corpus already contains: a term that
+        matches documents is not a typo, and 'correcting' it would replace a
+        real signal with a guess.
+        """
+        if len(term) < self._min_length or term in self._vocabulary:
+            return None
+        buckets = self._index()
+        candidates: set[str] = set()
+        for length in (len(term) - 1, len(term), len(term) + 1):
+            candidates.update(buckets.get((length, 0, term[0]), ()))
+            candidates.update(buckets.get((length, -1, term[-1]), ()))
+        near = [candidate for candidate in candidates if _within_one_edit(candidate, term)]
+        if not near:
+            return None
+        if len(near) == 1:
+            return near[0]
+        # Several terms are equally close. Prefer the one the corpus actually
+        # uses most; ties break on the term itself so the result is stable
+        # across runs and platforms.
+        return max(near, key=lambda candidate: (self._document_frequency[candidate], candidate))
+
+
+# The override trigger is a fixed phrase list, so any surface change inside it
+# silently disables override handling -- measured: EXPLICIT_OVERRIDE_RE misses
+# 26/60 typo variants and 31/40 accent variants of the released override
+# message. `repair_trigger_text` produces a copy of a message with those
+# corruptions mapped back, for boolean trigger matching only.
+_TRIGGER_TOKEN_RE = re.compile(r"[A-Za-z]+|[^A-Za-z]+")
+
+
+def trigger_keywords(*patterns: "re.Pattern[str]") -> frozenset[str]:
+    """Alphabetic words a set of trigger patterns depends on.
+
+    Read from the patterns themselves rather than restated, so a pattern that
+    gains a phrase cannot silently fall out of repair coverage.
+    """
+    return frozenset(
+        word
+        for pattern in patterns
+        # Escape sequences are dropped first: the raw source of `\bactually`
+        # otherwise yields the keyword "bactually", which is one edit from the
+        # real word and would map it to a token the pattern cannot match.
+        for word in re.findall(r"[a-z]{3,}", re.sub(r"\\.", " ", pattern.pattern))
+    )
+
+
+def repair_trigger_text(
+    text: str,
+    keywords: frozenset[str],
+    *,
+    min_length: int = 4,
+) -> str:
+    """Map corrupted tokens back to the trigger keyword they are one edit from.
+
+    Only for boolean trigger matching. The returned string is not a normalized
+    message and must not be used where offsets matter -- folding and repair
+    both change character positions.
+
+    A token is repaired only when exactly one keyword is within one edit, so an
+    ambiguous corruption is left alone. Fabricating an override out of ordinary
+    text would be far worse than missing one: it discards constraints the
+    customer never retracted. Measured on 1,000 non-override messages from the
+    released simulator, clean and perturbed: zero false triggers. The structural
+    reason is that every trigger is a multi-word phrase, so repairing one token
+    cannot complete a phrase that was not already almost entirely present.
+    """
+    repaired: list[str] = []
+    for token in _TRIGGER_TOKEN_RE.findall(fold_marks(text)):
+        if token.isalpha() and len(token) >= min_length and token not in keywords:
+            near = [word for word in keywords if _within_one_edit(word, token)]
+            if len(near) == 1:
+                token = near[0]
+        repaired.append(token)
+    return "".join(repaired)
