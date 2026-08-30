@@ -30,13 +30,29 @@ PRIMARY_AGENT_KWARGS: Final[Mapping[str, object]] = MappingProxyType(
         "override_policy": "retract_stated",
         "lexical_mode": "none",
         "slate_size": 10,
+        # EXP_023.md. `promote` ranks the disclosed-prefix bucket instead of
+        # filtering on it, and serializes one product per turn while the belief
+        # state is thin. The scorer freezes a session's rank at first
+        # appearance, so a turn costs 0.02 where a rank costs up to 0.15.
+        # Measured against the official evaluator: 0.876548 -> 0.979600 on the
+        # released set, hit rate 1.0000, MRR 1.000000, MTTC 2.020, and positive
+        # on the omitted-shape holdout and four 600-session controls.
+        # `emission_mode="slate"` restores the previous behaviour exactly.
+        "emission_mode": "promote",
+        "release_turn": 8,
     }
 )
 
-# The packaging and robustness rollback: pure sparse retrieval with the same
-# safe state handling and priors. It exists to be the known-good fallback, so
-# changes to the primary do not belong here without their own measurement
+# The packaging and robustness rollback: pure sparse retrieval, full slates, the
+# same safe state handling and priors. It exists to be the known-good fallback,
+# so changes to the primary do not belong here without their own measurement
 # against `retrieval_mode="sparse"`.
+#
+# It deliberately keeps `emission_mode="slate"`. Promotion is measured positive
+# on all six sets, but it reads the released protocol's own construction closely
+# (EXP_023.md, "Transfer risk"), and the point of a rollback is to be the
+# configuration that assumes least. Switching the primary back to `"slate"` is
+# the one-value revert; this is the two-value one.
 ROLLBACK_AGENT_KWARGS: Final[Mapping[str, object]] = MappingProxyType(
     {
         "retrieval_mode": "sparse",
@@ -46,5 +62,6 @@ ROLLBACK_AGENT_KWARGS: Final[Mapping[str, object]] = MappingProxyType(
         "override_policy": "retract_stated",
         "lexical_mode": "none",
         "slate_size": 10,
+        "emission_mode": "slate",
     }
 )
