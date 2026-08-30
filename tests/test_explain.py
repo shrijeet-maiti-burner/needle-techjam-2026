@@ -64,7 +64,10 @@ class ClaimTest(unittest.TestCase):
         message = message_for(
             record(wanted=["a", "b", "c", "d", "e"], candidates=4), asking=True
         )
-        self.assertIn("2 more", message)
+        # "+2" rather than "2 more": the summary is interpolated into sentences
+        # in seven languages, and an English word inside a Japanese sentence is
+        # exactly the kind of half-translation needle/language.py refuses.
+        self.assertIn("+2", message)
 
     def test_a_malformed_record_still_yields_a_usable_sentence(self) -> None:
         for broken in ({}, {"category": None}, {"wanted": None, "candidates": "x"}):

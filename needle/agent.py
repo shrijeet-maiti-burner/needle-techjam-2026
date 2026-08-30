@@ -11,6 +11,7 @@ from needle.catalog import (
 )
 from needle.contracts import TurnResponse
 from needle.explain import message_for, turn_record
+from needle.language import detect as detect_language
 from needle.questions import build_facet_index, clarifying_options
 from needle.semantic import LexicalNormalizer, NoOpSemanticReranker
 from needle.state import Polarity, StateStore
@@ -99,6 +100,11 @@ class Agent:
         # Built on first question rather than at construction: about 1.4s and
         # under 3MB, and a run that never asks one never pays for it.
         self._facets: dict[str, tuple[str, str]] | None = None
+        # Language is a property of the conversation, not of one message. A
+        # customer who opens in Spanish and then types a bare "leather" is still
+        # speaking Spanish, so the opening decides and later turns only revise
+        # it when they positively indicate something else.
+        self._language_by_session: dict[str, str] = {}
         self.promote_disclosure_bucket = bool(promote_disclosure_bucket)
         self.promotion_bucket_limit = int(promotion_bucket_limit)
         self.promote_opening_category = bool(promote_opening_category)
@@ -154,6 +160,7 @@ class Agent:
         for key in stale_keys:
             del self._seen_by_version[key]
         self._opening_category_by_session.pop(session_id, None)
+        self._language_by_session.pop(session_id, None)
 
     def respond(
         self,
@@ -208,6 +215,13 @@ class Agent:
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
 
+    def _session_language(self, session_id: str, user_message: str) -> str:
+        """The language to answer in, sticky across the conversation."""
+        detected = detect_language(user_message)
+        if detected != "en" or session_id not in self._language_by_session:
+            self._language_by_session[session_id] = detected
+        return self._language_by_session[session_id]
+
     def _options_for(
         self, candidate_ids: Sequence[str], already_said: Sequence[str]
     ) -> tuple[str, tuple[tuple[str, int], ...]]:
@@ -230,6 +244,7 @@ class Agent:
         candidates: int | None,
         candidate_ids: Sequence[str] = (),
         sampled: bool = False,
+        language: str = "en",
         identified: bool,
         emitted: Sequence[str],
         withheld: bool,
@@ -270,6 +285,7 @@ class Agent:
                 emitted=emitted,
                 withheld=withheld,
                 sampled=sampled,
+                language=language,
             )
             if asking:
                 record["options"] = self._options_for(candidate_ids, record["wanted"])
@@ -402,6 +418,7 @@ class Agent:
                 emitted=recommendation_ids,
                 withheld=len(recommendation_ids) < limit,
                 asking=ask_attribute is not None,
+                language=self._session_language(session_id, user_message),
             )
         return {
             "message": message,

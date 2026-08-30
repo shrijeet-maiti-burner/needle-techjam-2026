@@ -27,6 +27,9 @@ from __future__ import annotations
 
 from typing import Sequence
 
+from needle.language import DEFAULT as DEFAULT_LANGUAGE
+from needle.language import phrases
+
 # How many disclosed values to name before summarising. Reading a sentence with
 # six clauses in it is worse than reading "and 3 more".
 _NAMED_VALUES = 3
@@ -38,16 +41,16 @@ def _readable(value: str) -> str:
     return text[:60].rstrip() + "..." if len(text) > 60 else text
 
 
-def _join(values: Sequence[str]) -> str:
+def _join(values: Sequence[str], joiner: str = "and") -> str:
     named = [_readable(value) for value in values[:_NAMED_VALUES]]
     remainder = len(values) - len(named)
     if remainder > 0:
-        named.append(f"{remainder} more")
+        named.append(f"+{remainder}")
     if not named:
         return ""
     if len(named) == 1:
         return named[0]
-    return ", ".join(named[:-1]) + " and " + named[-1]
+    return ", ".join(named[:-1]) + f" {joiner} " + named[-1]
 
 
 def _category(category: str) -> str:
@@ -66,6 +69,7 @@ def turn_record(
     emitted: Sequence[str],
     withheld: bool,
     sampled: bool = False,
+    language: str = DEFAULT_LANGUAGE,
 ) -> dict:
     """What this turn did, as the input `message_for` renders.
 
@@ -84,6 +88,7 @@ def turn_record(
         basis, confidence = "ranking", "exploring"
     return {
         "options": ("", ()),
+        "language": str(language or DEFAULT_LANGUAGE),
         "sampled": bool(sampled),
         "turn": int(turn),
         "category": _category(category),
@@ -111,12 +116,17 @@ def message_for(record: dict, *, asking: bool) -> str:
 
 
 def _message_for(record: dict, *, asking: bool) -> str:
+    # Fixed templates per language, so the sentence is the customer's and the
+    # product names interpolated into it stay the catalog's. See
+    # needle/language.py for what that does and does not claim.
+    say = phrases(record.get("language") or DEFAULT_LANGUAGE)
     category = record.get("category") or "items"
     wanted = list(record.get("wanted") or ())
     unwanted = list(record.get("unwanted") or ())
     candidates = record.get("candidates")
     facet, options = record.get("options") or ("", ())
     if asking and facet and options:
+        facet = say.get(facet, facet)
         # The choices are the values the remaining products actually carry, so
         # an option is never offered that nothing satisfies.
         #
@@ -127,42 +137,39 @@ def _message_for(record: dict, *, asking: bool) -> str:
             offered = ", ".join(value for value, _ in options)
         else:
             offered = ", ".join(f"{value} ({count})" for value, count in options)
-        tail = f" Which {facet}? {offered} -- or say anything else that matters."
+        question = say["choose"].format(facet=facet)
+        tail = f" {question} {offered} -- {say['or_other']}."
     else:
-        tail = " What else matters?" if asking else ""
+        tail = f" {say['ask']}" if asking else ""
 
-    if unwanted:
-        ruled_out = f" I have ruled out {_join(unwanted)}."
-    else:
-        ruled_out = ""
+    ruled_out = (
+        " " + say["ruled_out"].format(values=_join(unwanted, say["and"])) if unwanted else ""
+    )
 
     if record.get("identified") or (candidates == 1 and wanted):
-        return (
-            f"One candidate left in {category} on {_join(wanted)}, so that is what "
-            f"I am showing.{ruled_out}"
-        ).strip()
+        head = say["single"].format(category=category, values=_join(wanted, say["and"]))
+        return f"{head}{ruled_out}".strip()
 
     if not wanted:
-        return (
-            f"Starting from {category}. Tell me the one thing that matters most "
-            f"and I will narrow it down.{ruled_out}"
-        ).strip()
+        return f"{say['start'].format(category=category)}{ruled_out}".strip()
 
     if isinstance(candidates, int) and candidates > 1:
-        shown = "the most reviewed" if record.get("withheld") else "the closest"
         # Two separate claims, each exactly true: the bucket holds this many
         # products, and these are the values disclosed so far. Phrasing it as
         # "N items match X" would be looser than the state supports, because the
         # bucket unions several plausible parses of the same clause and is not
         # keyed on X alone.
-        return (
-            f"Down to {candidates} candidates in {category}, going on "
-            f"{_join(wanted)}. Showing {shown}.{ruled_out}{tail}"
-        ).strip()
+        head = say["narrow"].format(
+            count=candidates, category=category, values=_join(wanted, say["and"])
+        )
+        return f"{head}{ruled_out}{tail}".strip()
 
-    return (
-        f"Going on {_join(wanted)} in {category}.{ruled_out}{tail}"
-    ).strip()
+    # The count is unknown here, so it is not claimed: `narrow` would print
+    # "1 candidates" for a set whose size was never established.
+    head = say["going_on"].format(
+        category=category, values=_join(wanted, say["and"])
+    )
+    return f"{head}{ruled_out}{tail}".strip()
 
 
 __all__ = ["turn_record", "message_for"]
