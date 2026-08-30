@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Needle Lens</title>
+  <style>
+    :root {
+      --ink: #f4f0e8;
+      --muted: #9faaa3;
+      --dim: #68736d;
+      --panel: #121816;
+      --panel-2: #171f1c;
+      --line: #29332f;
+      --lime: #c9ff64;
+      --aqua: #55e8cf;
+      --amber: #ffbf57;
+      --red: #ff7e76;
+      --bg: #080c0b;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 77% -10%, rgba(85, 232, 207, .11), transparent 30rem),
+        radial-gradient(circle at -10% 25%, rgba(201, 255, 100, .07), transparent 28rem),
+        var(--bg);
+      font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    button, select { font: inherit; }
+
+    .shell { width: min(1500px, calc(100% - 32px)); margin: 0 auto; padding: 24px 0 40px; }
+
+    header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 8px 2px 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow, .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    .eyebrow { color: var(--aqua); font-size: 11px; letter-spacing: .15em; text-transform: uppercase; }
+    h1 { margin: 5px 0 0; font-size: clamp(30px, 5vw, 58px); line-height: .95; letter-spacing: -.055em; }
+    h1 span { color: var(--lime); }
+    .header-note { max-width: 470px; color: var(--muted); text-align: right; }
+    .header-note strong { color: var(--ink); font-weight: 600; }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(180px, 1fr) minmax(210px, 1.4fr) auto auto auto;
+      gap: 10px;
+      padding: 16px 0;
+    }
+
+    select, button {
+      min-height: 42px;
+      color: var(--ink);
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 0 12px;
+    }
+
+    button { cursor: pointer; transition: border-color .15s, color .15s, transform .15s; }
+    button:hover { color: var(--lime); border-color: var(--lime); }
+    button:active { transform: translateY(1px); }
+    button.primary { color: #10160d; background: var(--lime); border-color: var(--lime); font-weight: 750; }
+    button:disabled { cursor: wait; opacity: .55; }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      border: 1px solid var(--line);
+      background: rgba(18, 24, 22, .72);
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+
+    .metric { padding: 12px 14px; border-right: 1px solid var(--line); }
+    .metric:last-child { border-right: 0; }
+    .metric .label { color: var(--dim); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+    .metric .value { margin-top: 4px; font-size: 18px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .good { color: var(--lime); }
+    .warn { color: var(--amber); }
+    .bad { color: var(--red); }
+
+    .grid { display: grid; grid-template-columns: 1.13fr .9fr .9fr; gap: 14px; }
+    .grid + .grid { margin-top: 14px; grid-template-columns: 1.28fr .72fr; }
+    .panel { min-width: 0; background: linear-gradient(145deg, rgba(23,31,28,.97), rgba(16,22,20,.97)); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+    .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 47px; padding: 0 15px; border-bottom: 1px solid var(--line); }
+    .panel-head h2 { margin: 0; font-size: 12px; letter-spacing: .1em; text-transform: uppercase; }
+    .badge { padding: 3px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-size: 10px; white-space: nowrap; }
+    .panel-body { padding: 14px; }
+
+    .turns { max-height: 550px; overflow: auto; }
+    .turn { position: relative; padding: 0 0 18px 24px; border-left: 1px solid var(--line); }
+    .turn:last-child { padding-bottom: 0; }
+    .turn::before { content: ""; position: absolute; left: -5px; top: 4px; width: 9px; height: 9px; border-radius: 50%; background: var(--panel-2); border: 2px solid var(--aqua); }
+    .turn.hit::before { border-color: var(--lime); background: var(--lime); }
+    .turn-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 7px; color: var(--muted); font-size: 11px; }
+    .bubble { padding: 10px 12px; border-radius: 3px 10px 10px; background: #202925; }
+    .agent-bubble { margin-top: 7px; padding: 9px 11px; border-left: 2px solid var(--lime); color: var(--muted); background: rgba(201,255,100,.04); }
+    .rec-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+    .rec { padding: 3px 7px; color: var(--aqua); background: #0c1210; border: 1px solid #2e4540; border-radius: 5px; font-size: 10px; }
+
+    .funnel-row { margin-bottom: 16px; }
+    .funnel-label { display: flex; justify-content: space-between; gap: 10px; margin-bottom: 5px; color: var(--muted); font-size: 11px; }
+    .track { height: 8px; background: #0a0f0d; border-radius: 99px; overflow: hidden; }
+    .fill { height: 100%; min-width: 3px; border-radius: inherit; background: linear-gradient(90deg, var(--aqua), var(--lime)); }
+
+    .certificate { display: grid; gap: 9px; }
+    .certificate .state { padding: 13px; background: #0c1210; border: 1px solid var(--line); border-radius: 9px; }
+    .certificate .state-name { margin: 4px 0 8px; color: var(--lime); font-size: 20px; font-weight: 740; letter-spacing: -.02em; }
+    .kv { display: flex; justify-content: space-between; gap: 16px; padding: 7px 0; border-bottom: 1px dotted var(--line); color: var(--muted); }
+    .kv:last-child { border-bottom: 0; }
+    .kv strong { color: var(--ink); text-align: right; font-weight: 600; }
+    .basis { padding: 11px; color: var(--muted); border-left: 2px solid var(--aqua); background: rgba(85,232,207,.035); }
+
+    .tabs { display: flex; gap: 6px; }
+    .tab { min-height: 30px; padding: 0 9px; font-size: 10px; }
+    .tab.active { color: #10160d; background: var(--aqua); border-color: var(--aqua); }
+    .ledger { max-height: 350px; overflow: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { color: var(--dim); font-size: 9px; letter-spacing: .1em; text-align: left; text-transform: uppercase; }
+    th, td { padding: 8px 7px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    td.status-active { color: var(--lime); }
+    td.status-superseded { color: var(--red); text-decoration: line-through; }
+
+    .policy { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .policy-card { padding: 13px; border: 1px solid var(--line); border-radius: 9px; background: #0c1210; }
+    .policy-card h3 { margin: 5px 0 8px; font-size: 18px; }
+    .policy-card p { margin: 0; color: var(--muted); font-size: 12px; }
+    .shadow-row { display: grid; grid-template-columns: 1fr 52px; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+    .shadow-row:last-child { border: 0; }
+
+    .footnote { display: flex; justify-content: space-between; gap: 20px; margin-top: 14px; color: var(--dim); font-size: 11px; }
+    .empty { padding: 28px 12px; color: var(--dim); text-align: center; }
+    .error { padding: 14px; color: var(--red); border: 1px solid rgba(255,126,118,.35); background: rgba(255,126,118,.06); border-radius: 9px; }
+
+    @media (max-width: 1000px) {
+      .grid, .grid + .grid { grid-template-columns: 1fr; }
+      .metrics { grid-template-columns: repeat(3, 1fr); }
+      .metric:nth-child(3) { border-right: 0; }
+      .metric:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
+    }
+
+    @media (max-width: 680px) {
+      .shell { width: min(100% - 20px, 1500px); padding-top: 12px; }
+      header { align-items: flex-start; flex-direction: column; }
+      .header-note { text-align: left; }
+      .toolbar { grid-template-columns: 1fr 1fr; }
+      .toolbar select { grid-column: span 2; }
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .metric { border-bottom: 1px solid var(--line); }
+      .metric:nth-child(2n) { border-right: 0; }
+      .policy { grid-template-columns: 1fr; }
+      .footnote { flex-direction: column; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <div class="eyebrow">needle / runtime observability</div>
+        <h1>decision <span>lens</span></h1>
+      </div>
+      <div class="header-note">
+        <strong>Target-blind runtime certificate.</strong> Every count and decision below is emitted by the same agent call that produced the scored slate. Ground truth is revealed only after a hit.
+      </div>
+    </header>
+
+    <section class="toolbar" aria-label="replay controls">
+      <select id="scenario" aria-label="scenario"></select>
+      <select id="sample" aria-label="public sample"></select>
+      <button id="previous" type="button">previous</button>
+      <button id="next" type="button">next</button>
+      <button id="run" class="primary" type="button">run official replay</button>
+    </section>
+
+    <section class="metrics" aria-label="session metrics">
+      <div class="metric"><div class="label">replay</div><div class="value" id="m-scenario">—</div></div>
+      <div class="metric"><div class="label">first hit</div><div class="value" id="m-turn">—</div></div>
+      <div class="metric"><div class="label">rank</div><div class="value" id="m-rank">—</div></div>
+      <div class="metric"><div class="label">session score</div><div class="value" id="m-score">—</div></div>
+      <div class="metric"><div class="label">total latency</div><div class="value" id="m-latency">—</div></div>
+      <div class="metric"><div class="label">model tokens</div><div class="value good">0</div></div>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <div class="panel-head"><h2>official conversation replay</h2><span class="badge" id="target-badge">target hidden</span></div>
+        <div class="panel-body turns" id="turns"><div class="empty">select a public session and run the replay</div></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head"><h2>candidate funnel</h2><span class="badge">catalog-derived</span></div>
+        <div class="panel-body" id="funnel"><div class="empty">waiting for a turn</div></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head"><h2>ambiguity certificate</h2><span class="badge">no target access</span></div>
+        <div class="panel-body certificate" id="certificate"><div class="empty">waiting for a turn</div></div>
+      </article>
+    </section>
+
+    <section class="grid">
+      <article class="panel">
+        <div class="panel-head">
+          <h2>belief ledger + interpretation lattice</h2>
+          <div class="tabs">
+            <button class="tab active" data-view="ledger" type="button">ledger</button>
+            <button class="tab" data-view="parses" type="button">parses</button>
+            <button class="tab" data-view="evidence" type="button">evidence</button>
+          </div>
+        </div>
+        <div class="panel-body ledger" id="detail"><div class="empty">waiting for a turn</div></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head"><h2>question decision</h2><span class="badge">policy separation</span></div>
+        <div class="panel-body policy" id="policy"><div class="empty">waiting for a turn</div></div>
+      </article>
+    </section>
+
+    <div class="footnote">
+      <span>official public simulator · frozen 50,000-product catalog · network disabled</span>
+      <span>the human-shopping shadow is explanatory and never changes the scored policy</span>
+    </div>
+  </main>
+
+  <script>
+    const state = { index: null, data: null, turn: 0, view: "ledger" };
+    const $ = (id) => document.getElementById(id);
+    const text = (tag, value, className = "") => {
+      const node = document.createElement(tag);
+      node.textContent = value;
+      if (className) node.className = className;
+      return node;
+    };
+    const clear = (node) => { while (node.firstChild) node.removeChild(node.firstChild); };
+    const human = (value) => String(value ?? "—").replaceAll("_", " ");
+
+    function setOptions(select, rows, valueKey, label) {
+      clear(select);
+      rows.forEach((row) => {
+        const option = document.createElement("option");
+        option.value = typeof row === "string" ? row : row[valueKey];
+        option.textContent = label(row);
+        select.appendChild(option);
+      });
+    }
+
+    function syncSamples(preferred) {
+      const rows = state.index.scenarios[$("scenario").value] || [];
+      setOptions($("sample"), rows, "sample_id", (row) => `${row.sample_id} · ${human(row.difficulty)}`);
+      if (rows.some((row) => row.sample_id === preferred)) $("sample").value = preferred;
+    }
+
+    function metric(id, value, tone = "") {
+      const node = $(id);
+      node.textContent = value;
+      node.className = `value ${tone}`;
+    }
+
+    function renderTurns() {
+      const root = $("turns");
+      clear(root);
+      state.data.turns.forEach((item, index) => {
+        const turn = document.createElement("section");
+        turn.className = `turn ${item.hit ? "hit" : ""}`;
+        turn.tabIndex = 0;
+        turn.addEventListener("click", () => { state.turn = index; renderTurn(); });
+        const meta = text("div", `turn ${item.turn} · ${item.latency_ms.toFixed(1)} ms${item.scorable ? " · scorable" : " · pre-override"}`, "turn-meta mono");
+        turn.appendChild(meta);
+        turn.appendChild(text("div", item.customer_message, "bubble"));
+        turn.appendChild(text("div", item.response.message, "agent-bubble"));
+        const recs = document.createElement("div");
+        recs.className = "rec-row";
+        item.response.recommendations.forEach((rec, rank) => recs.appendChild(text("span", `${rank + 1}  ${rec.parent_asin}`, "rec mono")));
+        turn.appendChild(recs);
+        root.appendChild(turn);
+      });
+      root.lastElementChild?.scrollIntoView({ block: "nearest" });
+    }
+
+    function renderFunnel(trace) {
+      const root = $("funnel");
+      clear(root);
+      const max = Math.max(...trace.candidate_funnel.map((row) => row.count), 1);
+      trace.candidate_funnel.forEach((row) => {
+        const wrap = document.createElement("div");
+        wrap.className = "funnel-row";
+        const label = document.createElement("div");
+        label.className = "funnel-label";
+        label.append(text("span", human(row.stage)), text("strong", row.count.toLocaleString(), "mono"));
+        const track = document.createElement("div");
+        track.className = "track";
+        const fill = document.createElement("div");
+        fill.className = "fill";
+        fill.style.width = `${Math.max(1.5, 100 * Math.log10(row.count + 1) / Math.log10(max + 1))}%`;
+        track.appendChild(fill);
+        wrap.append(label, track);
+        root.appendChild(wrap);
+      });
+    }
+
+    function addKV(root, key, value) {
+      const row = document.createElement("div");
+      row.className = "kv";
+      row.append(text("span", key), text("strong", value));
+      root.appendChild(row);
+    }
+
+    function renderCertificate(trace) {
+      const root = $("certificate");
+      clear(root);
+      const cert = trace.ambiguity_certificate;
+      const box = document.createElement("div");
+      box.className = "state";
+      box.appendChild(text("div", "current state", "eyebrow"));
+      box.appendChild(text("div", human(cert.status), "state-name"));
+      addKV(box, "candidate set", cert.candidate_count.toLocaleString());
+      addKV(box, "plausible parses", cert.plausible_parse_count);
+      addKV(box, "entropy ceiling", `${cert.residual_max_entropy_bits.toFixed(2)} bits`);
+      addKV(box, "safe uniqueness claim", cert.safe_to_claim_unique ? "yes" : "no");
+      root.appendChild(box);
+      root.appendChild(text("div", cert.selection_basis, "basis"));
+      addKV(root, "decision path", human(trace.decision.path));
+      addKV(root, "intent version", `v${trace.intent_version}`);
+      addKV(root, "opening category", trace.category_evidence || "none observed");
+    }
+
+    function makeTable(headers, rows) {
+      const table = document.createElement("table");
+      const head = document.createElement("thead");
+      const hr = document.createElement("tr");
+      headers.forEach((header) => hr.appendChild(text("th", header)));
+      head.appendChild(hr);
+      const body = document.createElement("tbody");
+      rows.forEach((cells) => {
+        const row = document.createElement("tr");
+        cells.forEach((cell) => {
+          const td = text("td", cell.value ?? cell);
+          if (cell.className) td.className = cell.className;
+          row.appendChild(td);
+        });
+        body.appendChild(row);
+      });
+      table.append(head, body);
+      return table;
+    }
+
+    function renderDetail(trace) {
+      const root = $("detail");
+      clear(root);
+      if (state.view === "ledger") {
+        const events = trace.belief_ledger.events;
+        if (!events.length) return root.appendChild(text("div", "no explicit constraints observed yet", "empty"));
+        root.appendChild(makeTable(
+          ["turn", "version", "attribute", "value", "polarity", "status"],
+          events.map((event) => [
+            event.turn, `v${event.intent_version}`, human(event.attribute), event.value, event.polarity,
+            { value: event.status, className: `status-${event.status}` },
+          ]),
+        ));
+      } else if (state.view === "parses") {
+        const parses = trace.interpretation_lattice.parses;
+        if (!parses.length) return root.appendChild(text("div", trace.interpretation_lattice.decline_reason || "no parse", "empty"));
+        root.appendChild(makeTable(
+          ["parse", "mode", "candidate count", "safe"],
+          parses.map((parse, index) => [
+            `p${index + 1}: ${parse.signatures.join(" → ") || "category only"}`,
+            human(parse.mode), parse.candidate_count ?? "> safety limit", parse.over_limit ? "no" : "yes",
+          ]),
+        ));
+      } else {
+        const evidence = trace.recommendation_evidence;
+        if (!evidence.length) return root.appendChild(text("div", "no recommendation evidence", "empty"));
+        root.appendChild(makeTable(
+          ["rank", "product", "matched active evidence", "catalog excerpt"],
+          evidence.map((item) => [
+            item.rank,
+            `${item.title || "untitled"}\n${item.parent_asin}`,
+            item.matched_active_constraints.join(", ") || "category / popularity prior",
+            item.catalog_excerpt || "no excerpt",
+          ]),
+        ));
+      }
+    }
+
+    function renderPolicy(trace) {
+      const root = $("policy");
+      clear(root);
+      const q = trace.question_policy;
+      const scored = document.createElement("section");
+      scored.className = "policy-card";
+      scored.append(text("div", "scored policy", "eyebrow"), text("h3", q.scored_policy || "stop asking"), text("p", q.scored_policy_basis));
+      const shadow = document.createElement("section");
+      shadow.className = "policy-card";
+      shadow.append(text("div", "human-shopping shadow", "eyebrow"), text("h3", "presupposition-safe evoi"), text("p", "diagnostic only · unknown is an explicit answer group"));
+      q.human_shadow_board.slice(0, 5).forEach((row) => {
+        const line = document.createElement("div");
+        line.className = "shadow-row";
+        line.append(text("span", `${human(row.attribute)} · ${(100 * row.catalog_coverage).toFixed(0)}% covered`), text("strong", row.shadow_value.toFixed(3), "mono"));
+        shadow.appendChild(line);
+      });
+      root.append(scored, shadow);
+    }
+
+    function renderTurn() {
+      if (!state.data?.turns.length) return;
+      const item = state.data.turns[state.turn];
+      renderFunnel(item.trace);
+      renderCertificate(item.trace);
+      renderDetail(item.trace);
+      renderPolicy(item.trace);
+    }
+
+    function renderSession() {
+      const result = state.data.result;
+      metric("m-scenario", human(state.data.scenario_type));
+      metric("m-turn", result.first_hit_turn ?? "miss", result.hit ? "good" : "bad");
+      metric("m-rank", result.rank ?? "—", result.rank === 1 ? "good" : "warn");
+      metric("m-score", result.session_score.toFixed(3), result.hit ? "good" : "bad");
+      const latency = state.data.turns.reduce((sum, turn) => sum + turn.latency_ms, 0);
+      metric("m-latency", `${latency.toFixed(1)} ms`);
+      $("target-badge").textContent = result.hit ? `revealed after hit · ${result.target.parent_asin}` : "target not found";
+      $("target-badge").className = `badge ${result.hit ? "good" : "bad"}`;
+      state.turn = Math.max(0, state.data.turns.length - 1);
+      renderTurns();
+      renderTurn();
+    }
+
+    async function run() {
+      const button = $("run");
+      button.disabled = true;
+      button.textContent = "replaying…";
+      try {
+        const response = await fetch(`/api/session?sample_id=${encodeURIComponent($("sample").value)}`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || `request failed: ${response.status}`);
+        state.data = payload;
+        renderSession();
+      } catch (error) {
+        clear($("turns"));
+        $("turns").appendChild(text("div", error.message, "error"));
+      } finally {
+        button.disabled = false;
+        button.textContent = "run official replay";
+      }
+    }
+
+    function shift(delta) {
+      const select = $("sample");
+      select.selectedIndex = (select.selectedIndex + delta + select.options.length) % select.options.length;
+      run();
+    }
+
+    document.querySelectorAll(".tab").forEach((button) => button.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach((tab) => tab.classList.remove("active"));
+      button.classList.add("active");
+      state.view = button.dataset.view;
+      renderTurn();
+    }));
+    $("scenario").addEventListener("change", () => syncSamples());
+    $("run").addEventListener("click", run);
+    $("previous").addEventListener("click", () => shift(-1));
+    $("next").addEventListener("click", () => shift(1));
+
+    fetch("/api/samples")
+      .then((response) => response.json())
+      .then((index) => {
+        state.index = index;
+        const scenarios = Object.keys(index.scenarios).sort();
+        setOptions($("scenario"), scenarios, "", (value) => human(value));
+        const preferredScenario = scenarios.find((value) => index.scenarios[value].some((sample) => sample.sample_id === index.default_sample));
+        $("scenario").value = preferredScenario || scenarios[0];
+        syncSamples(index.default_sample);
+        run();
+      })
+      .catch((error) => { $("turns").textContent = error.message; });
+  </script>
+</body>
+</html>
