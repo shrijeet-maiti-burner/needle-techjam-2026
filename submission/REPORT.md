@@ -27,9 +27,18 @@ session before it reads `ask_attribute`.
 looked up in a catalog-bound SQLite index, with fielded FTS5 BM25 as the fallback
 ordering. Signature buckets larger than 500 are not promoted. A soft coverage
 score for opening-category words and a bounded popularity prior over
-`rating_number` rerank but never filter candidates. Candidates already shown
-within an intent version are excluded, which turns ten turns of ten slots into
-up to a hundred distinct products rather than repeating the same slate.
+`rating_number` rerank but never filter candidates. Category-bound card keys can
+identify a product directly only when the key is globally unique, every
+plausible disclosure parse agrees, and the intent-order safety guards hold.
+Before turn 5 or four active constraints, the agent emits only rank one; it then
+releases the full slate. Candidates actually shown within an intent version are
+excluded, while withheld candidates remain eligible.
+
+**Surface robustness.** Structural parsers fold accents and normalize
+whitespace. A catalog-derived one-edit corrector operates only on the explicit
+opening category and disclosure clauses. Conservative category variants such
+as `trousers`/`pants` share a category key. Arbitrary customer prose is not
+rewritten and no fixed product identifiers are encoded.
 
 **Intent override.** An explicit override retracts the preference the customer
 stated, not the answers they gave to our questions. The opening message is
@@ -60,21 +69,22 @@ datasets and assets for the final Devpost description.
 | estimated model cost | $0.00 |
 | network access required | no |
 | credentials required | no |
-| per-response latency, p50 | 96.5 ms |
-| per-response latency, p95 | 203.8 ms |
-| per-response latency, p99 | 238.3 ms |
-| per-response latency, max | 281.1 ms |
-| construction with bundled index | 5.125 s |
-| construction without bundled index | 40.614 s |
-| construction peak working set, bundled | 196,231,168 bytes |
-| construction peak working set, source-only | 263,766,016 bytes |
-| complete evaluator peak working set, bundled | 423,079,936 bytes |
-| release bundle size | 50,221,823 bytes |
-| contract violations | 0 of 429 responses |
+| per-response latency, p50 | 31.2 ms |
+| per-response latency, p95 | 106.7 ms |
+| per-response latency, p99 | 131.6 ms |
+| per-response latency, max | 478.7 ms |
+| construction with bundled index | 7.561 s |
+| construction without bundled index | 83.755 s |
+| generated index size | 57,683,968 bytes |
+| generated index SHA-256 | `c3142af7d33e2ef1b6eaca66d112d6a372b5cf47546883aa6bfc4916d058b5c2` |
+| complete evaluator peak working set, bundled | 509,960,192 bytes |
+| complete evaluator peak working set, source-only | 608,514,048 bytes |
+| contract violations | 0 of 525 responses |
 
 Measured on the 200 official public sessions, `retrieval_mode=signature_first`,
 `signature_bucket_limit=500`, `category_strength=1.00`, `popularity_strength=0.30`,
-`override_policy=retract_stated`, `exclude_seen=true`.
+`override_policy=retract_stated`, `exclude_seen=true`, category-bound direct
+identification enabled, and adaptive slate size 1 -> 10.
 
 ## Limitations
 
@@ -84,16 +94,17 @@ These are stated plainly because they bear on how the result should be read.
 are deterministically materialised from the target catalog row. Three separate
 200-target proxies exclude every released ground-truth target and match public
 rating, price-presence, broad-category, profile, and scenario marginals. They
-score 0.884987, 0.886981, and 0.892706. They still reuse the released simulator,
+score 0.961692, 0.952900, and 0.947439. They still reuse the released simulator,
 so they are evidence against direct target memorising, not private-score
 estimates.
 
 **Sensitivity to message wording is measured and real.** The exact surface has
-HR@10 0.995 and MRR 0.710089. Accent perturbations are now byte-identical on all
-reported metrics; filler preserves HR@10 and loses 0.004535 MRR; compound
-paraphrase reaches HR@10 0.985 and MRR 0.666165. Single-edit typos remain the
-largest failure at HR@10 0.905 and MRR 0.618657. The measured typo-recovery arm
-did not improve these figures and was removed.
+HR@10 0.995 and MRR 0.967778. Casing, whitespace, punctuation, accents,
+synonym, filler, politeness, contraction, number-format, and override-
+paraphrase slices remove no targets. Paraphrase, single-edit typo, and word
+order each remove one previously retained target, reaching HR@10 0.990 with
+MRR 0.888790, 0.951562, and 0.933298 respectively. Two meaning-changing card
+edits also fail the registered zero-removal gate. The gates were not weakened.
 
 **Override handling still depends on a structural trigger.** Accent folding and
 independent paraphrases pass, and later question answers now survive a scoped
@@ -106,10 +117,12 @@ popularity 0.55 reaches 0.881183 on the released set but loses to 0.30 on 1,000
 disjoint targets, 0.866666 versus 0.867627. The higher released result is
 rejected rather than reported as the primary.
 
-**Category parsing is soft and bounded.** Failure to recognize an opening
-category removes only that prior; it does not remove candidates. A wrong partial
-parse can still reorder results, so the category prior is not equivalent to a
-verified taxonomy constraint.
+**Direct identification depends on evaluator structure.** It assumes intent
+cards are metadata-derived and disclosures retain the released ordering. If the
+private evaluator uses hand-written cards or a different disclosure policy,
+the unique-key path declines or loses its benefit and the signature/FTS path
+must carry the session. An exhaustive public audit records 179 correct direct
+identifications and zero wrong, but this cannot prove private behavior.
 
 **Negative constraints are tracked but not enforced.** The belief state records
 exclusions and exposes them, but retrieval does not currently filter on them. A

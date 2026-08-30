@@ -9,7 +9,12 @@ from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from needle.contracts import Candidate
-from needle.semantic import fold_diacritics
+from needle.semantic import (
+    fold_diacritics,
+    normalize_category_text,
+    repair_trigger_text,
+    trigger_keywords,
+)
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]+", re.IGNORECASE)
@@ -37,6 +42,11 @@ CATEGORY_REQUEST_RE = re.compile(
     r"\b(?:looking\s+for|need|want)\s+(?:an?\s+)?(.+?)(?=[,.;!?]|$)",
     re.IGNORECASE,
 )
+_CATEGORY_REQUEST_START_RE = re.compile(
+    r"\b(?:looking\s+for|need|want)\s+(?:an?\s+)?",
+    re.IGNORECASE,
+)
+_SIGNATURE_MARKER_KEYWORDS = trigger_keywords(SIGNATURE_MARKER_RE)
 
 SEARCH_FIELDS = (
     "title",
@@ -49,7 +59,8 @@ SEARCH_FIELDS = (
 DEFAULT_FIELD_WEIGHTS = (6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
 RETRIEVAL_MODES = frozenset({"sparse", "signature_first"})
 QUERY_MODES = frozenset({"any", "all"})
-SIGNATURE_INDEX_SCHEMA_VERSION = "2"
+CORRECTION_SCOPES = frozenset({"all", "structured"})
+SIGNATURE_INDEX_SCHEMA_VERSION = "5"
 
 # Discourse markers and request-frame verbs. `query_terms` drops these from the
 # query, and the same tokenizer runs over the corpus, so this removes a matchable
@@ -198,11 +209,18 @@ def query_terms(text: str, limit: int = 60) -> list[str]:
 def extract_category_terms(messages: Iterable[str]) -> frozenset[str]:
     """High-precision category words from the opening shopping request."""
 
-    first = fold_diacritics(next(iter(messages), ""))
-    match = CATEGORY_REQUEST_RE.search(first)
-    if match is None:
-        return frozenset()
-    return frozenset(query_terms(match.group(1), limit=12))
+    signature = opening_category_signature(next(iter(messages), ""))
+    return frozenset(query_terms(signature, limit=12))
+
+
+def _signature_marker(message: str) -> re.Match[str] | None:
+    """Strict disclosure marker, then a one-edit surface repair fallback."""
+
+    match = SIGNATURE_MARKER_RE.search(message)
+    if match is not None:
+        return match
+    repaired = repair_trigger_text(message, _SIGNATURE_MARKER_KEYWORDS)
+    return SIGNATURE_MARKER_RE.search(repaired)
 
 
 def extract_query_signatures(messages: Iterable[str]) -> tuple[str, ...]:
@@ -215,8 +233,8 @@ def extract_query_signatures(messages: Iterable[str]) -> tuple[str, ...]:
 
     signatures: list[str] = []
     for message in messages:
-        message = fold_diacritics(message)
-        marker = SIGNATURE_MARKER_RE.search(message)
+        message = _structural_text(message)
+        marker = _signature_marker(message)
         if marker:
             # The released customer separates constraints with semicolons,
             # but catalog features can contain them too. Only the first span
@@ -270,6 +288,174 @@ def product_signatures(product: dict[str, object]) -> tuple[str, ...]:
     )
 
 
+def card_signature_sequence(product: dict[str, object]) -> tuple[str, ...]:
+    """Ordered signatures used by a metadata-derived intent card.
+
+    This deliberately keeps compound feature strings whole. Clause fragments
+    are useful retrieval keys, but inserting them here would change the order
+    of the catalog evidence and invalidate prefix identification.
+    """
+
+    searchable = " ".join(_text(product.get(field)) for field in SEARCH_FIELDS)
+    values: list[object] = [
+        *_flatten_values(product.get("features")),
+        *_flatten_values(product.get("details")),
+    ]
+    material = MATERIAL_RE.search(searchable)
+    if material:
+        values.insert(0, material.group(1).lower())
+    color = COLOR_RE.search(searchable)
+    if color:
+        values.insert(1, f"color: {color.group(1).lower()}")
+    if product.get("price") not in (None, ""):
+        values.append(f"budget around ${product['price']}")
+    cleaned = tuple(
+        dict.fromkeys(
+            value
+            for raw_value in values
+            if (value := _clean_constraint(raw_value))
+        )
+    )
+    # De-duplication happens on the raw cleaned strings before canonicalisation,
+    # matching intent-card construction. Case variants can therefore become
+    # repeated canonical signatures, and those repeats carry positional evidence.
+    return tuple(canonical_signature(value) for value in cleaned)[:4]
+
+
+def coarse_category_signature(values: object) -> str:
+    """Canonical suffix category stated by the official conversation surface."""
+
+    excluded = {
+        "clothing",
+        "clothing shoes & jewelry",
+        "clothing, shoes & jewelry",
+    }
+    cleaned: list[str] = []
+    for value in values if isinstance(values, list) else []:
+        for part in str(value).split(","):
+            part = part.strip()
+            if part and part.casefold() not in excluded:
+                cleaned.append(part)
+    category = " ".join(cleaned[-2:]) if cleaned else "clothing item"
+    return canonical_signature(normalize_category_text(category))
+
+
+def opening_category_signature(message: str) -> str:
+    """Category phrase explicitly stated in an opening shopping request."""
+
+    text = _structural_text(message)
+    starts = list(_CATEGORY_REQUEST_START_RE.finditer(text))
+    if not starts:
+        return ""
+    # Politeness wrappers can nest a second request ("show me ... I'm looking
+    # for trousers"). The final request is the most specific user phrase.
+    value = re.split(r"[,.;!?]", text[starts[-1].end():], maxsplit=1)[0]
+    return canonical_signature(normalize_category_text(value))
+
+
+def _structural_text(message: str) -> str:
+    """Fold accents and collapse whitespace while preserving punctuation."""
+
+    return " ".join(fold_diacritics(message).split())
+
+
+def _card_lookup_key(
+    signatures: Iterable[str],
+    *,
+    category: str,
+    unordered: bool = False,
+) -> bytes:
+    """Compact collision-resistant key for a category-bound card disclosure."""
+
+    values = tuple(signatures)
+    if unordered:
+        values = tuple(sorted(frozenset(values)))
+    payload = "\0".join(("set" if unordered else "prefix", category, *values))
+    return hashlib.sha256(payload.encode("utf-8")).digest()
+
+
+def _card_keys(product: dict[str, object]) -> tuple[bytes, ...]:
+    category = coarse_category_signature(product.get("categories"))
+    sequence = card_signature_sequence(product)
+    keys = [
+        _card_lookup_key(sequence[:length], category=category)
+        for length in range(1, len(sequence) + 1)
+    ]
+    if sequence:
+        keys.append(_card_lookup_key(sequence, category=category, unordered=True))
+    return tuple(dict.fromkeys(keys))
+
+
+def disclosed_signature_sequences(
+    messages: Iterable[str],
+    *,
+    cap: int = 64,
+) -> tuple[tuple[str, ...], ...]:
+    """Enumerate plausible ordered constraint parses from conversation text.
+
+    A reply may join two constraints with a semicolon, while a single catalog
+    feature may itself contain semicolons. Both parses are retained. A caller
+    may identify a product only when every resolving parse agrees.
+    """
+
+    sequences: list[tuple[str, ...]] = [()]
+    for raw_message in messages:
+        message = _structural_text(raw_message)
+        marker = _signature_marker(message)
+        parses: list[tuple[str, ...]] = [()]
+        if marker:
+            clause = re.sub(
+                r"\s+now\s*[.!?]*\s*$",
+                "",
+                marker.group(1),
+                flags=re.IGNORECASE,
+            )
+            raw_parses: list[tuple[str, ...]] = [(clause,)]
+            raw_parses.extend(
+                (clause[:position], clause[position + 1:])
+                for position, character in enumerate(clause)
+                if character == ";"
+            )
+            parses = []
+            for raw_parse in raw_parses:
+                signed = tuple(
+                    signature
+                    for part in raw_parse
+                    if (signature := canonical_signature(part))
+                )
+                if signed and signed not in parses:
+                    parses.append(signed)
+            if not parses:
+                parses = [()]
+
+        expanded: list[tuple[str, ...]] = []
+        for prefix in sequences:
+            for parse in parses:
+                combined = prefix + parse
+                if combined not in expanded:
+                    expanded.append(combined)
+        # Truncating the ambiguity set would make "all parses agree" false.
+        # Decline direct identification when the bounded parser cannot retain
+        # every reading; the normal ranker remains available.
+        if len(expanded) > cap:
+            return ()
+        sequences = expanded
+    return tuple(sequence for sequence in sequences if sequence)
+
+
+def structured_query_terms(messages: Iterable[str]) -> list[str]:
+    """Terms from explicit category and constraint-bearing message regions."""
+
+    message_list = tuple(messages)
+    terms = query_terms(opening_category_signature(message_list[0])) if message_list else []
+    for raw_message in message_list:
+        message = _structural_text(raw_message)
+        marker = _signature_marker(message)
+        if marker is not None:
+            terms.extend(query_terms(marker.group(1)))
+    return list(dict.fromkeys(terms))
+
+
 def sha256_file(path: str | Path) -> str:
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
@@ -306,7 +492,12 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
             "signature TEXT NOT NULL, parent_asin TEXT NOT NULL, "
             "PRIMARY KEY(signature, parent_asin)) WITHOUT ROWID"
         )
+        connection.execute(
+            "CREATE TABLE card_keys("
+            "key BLOB PRIMARY KEY, parent_asin TEXT NOT NULL) WITHOUT ROWID"
+        )
         batch: list[tuple[str, str]] = []
+        card_key_owners: dict[bytes, str | None] = {}
         with catalog.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
@@ -321,6 +512,12 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
                 product_count += 1
                 for signature in product_signatures(product):
                     batch.append((signature, parent_asin))
+                for key in _card_keys(product):
+                    owner = card_key_owners.get(key)
+                    if owner is None and key not in card_key_owners:
+                        card_key_owners[key] = parent_asin
+                    elif owner != parent_asin:
+                        card_key_owners[key] = None
                 if len(batch) >= 5_000:
                     connection.executemany("INSERT INTO signatures VALUES (?, ?)", batch)
                     signature_count += len(batch)
@@ -328,11 +525,21 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
         if batch:
             connection.executemany("INSERT INTO signatures VALUES (?, ?)", batch)
             signature_count += len(batch)
+        card_keys = [
+            (key, owner)
+            for key, owner in card_key_owners.items()
+            if owner is not None
+        ]
+        connection.executemany(
+            "INSERT INTO card_keys VALUES (?, ?)",
+            card_keys,
+        )
         metadata = {
             "schema_version": SIGNATURE_INDEX_SCHEMA_VERSION,
             "catalog_sha256": sha256_file(catalog),
             "product_count": str(product_count),
             "signature_count": str(signature_count),
+            "card_key_count": str(len(card_keys)),
         }
         connection.executemany("INSERT INTO metadata VALUES (?, ?)", metadata.items())
         connection.commit()
@@ -351,6 +558,7 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
         "catalog_sha256": metadata["catalog_sha256"],
         "product_count": product_count,
         "signature_count": signature_count,
+        "card_key_count": len(card_keys),
     }
 
 
@@ -369,6 +577,7 @@ class CatalogIndex:
         signature_bucket_limit: int = 100,
         signature_index_path: str | Path | None = None,
         correct_unmatched_terms: bool = False,
+        correction_scope: str = "all",
     ) -> None:
         if retrieval_mode not in RETRIEVAL_MODES:
             raise ValueError(f"unsupported retrieval mode: {retrieval_mode}")
@@ -387,6 +596,8 @@ class CatalogIndex:
             raise ValueError("signature_bucket_limit must be in 1..50000")
         if signature_index_path is not None and retrieval_mode != "signature_first":
             raise ValueError("signature_index_path requires retrieval_mode='signature_first'")
+        if correction_scope not in CORRECTION_SCOPES:
+            raise ValueError(f"unsupported correction scope: {correction_scope}")
 
         self.catalog_path = Path(catalog_path)
         if not self.catalog_path.is_file():
@@ -403,6 +614,7 @@ class CatalogIndex:
             else None
         )
         self.correct_unmatched_terms = bool(correct_unmatched_terms)
+        self.correction_scope = correction_scope
         self._corrector: object | None = None
         # (term, replacement-or-None) for every unmatched term seen. Read by
         # the experiment record; never consulted by ranking.
@@ -476,9 +688,14 @@ class CatalogIndex:
                 "signature TEXT NOT NULL, parent_asin TEXT NOT NULL, "
                 "PRIMARY KEY(signature, parent_asin)) WITHOUT ROWID"
             )
+            cursor.execute(
+                "CREATE TABLE card_keys("
+                "key BLOB PRIMARY KEY, parent_asin TEXT NOT NULL) WITHOUT ROWID"
+            )
         seen: set[str] = set()
         batch: list[tuple[str, str, str, str, str, str, str, int]] = []
         signature_batch: list[tuple[str, str]] = []
+        card_key_owners: dict[bytes, str | None] = {}
         with self.catalog_path.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
@@ -493,7 +710,10 @@ class CatalogIndex:
                 rating_number = max(0, int(product.get("rating_number") or 0))
                 self._rating_numbers[parent_asin] = rating_number
                 self._category_terms[parent_asin] = frozenset(
-                    query_terms(_text(product.get("categories")), limit=30)
+                    query_terms(
+                        normalize_category_text(_text(product.get("categories"))),
+                        limit=30,
+                    )
                 )
                 batch.append(
                     (
@@ -512,6 +732,12 @@ class CatalogIndex:
                         (signature, parent_asin)
                         for signature in product_signatures(product)
                     )
+                    for key in _card_keys(product):
+                        owner = card_key_owners.get(key)
+                        if owner is None and key not in card_key_owners:
+                            card_key_owners[key] = parent_asin
+                        elif owner != parent_asin:
+                            card_key_owners[key] = None
                 if len(batch) >= 1_000:
                     cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
                     batch.clear()
@@ -522,6 +748,16 @@ class CatalogIndex:
             cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
         if signature_batch:
             cursor.executemany("INSERT INTO signatures VALUES (?, ?)", signature_batch)
+        if self.retrieval_mode == "signature_first" and self.signature_index_path is None:
+            cursor.executemany(
+                "INSERT INTO card_keys VALUES (?, ?)",
+                (
+                    (key, owner)
+                    for key, owner in card_key_owners.items()
+                    if owner is not None
+                ),
+            )
+            card_key_owners.clear()
         self.connection.commit()
         self.product_count = len(seen)
         if self.product_count == 0:
@@ -644,6 +880,67 @@ class CatalogIndex:
         rows = self._signature_rows(matched, fetch_limit)
         return tuple(matched), frozenset(str(row[0]) for row in rows)
 
+    def _unique_card_lookup(
+        self,
+        disclosed: tuple[str, ...],
+        *,
+        category: str = "",
+        unordered: bool = False,
+    ) -> str | None:
+        """Return a catalog id only when one fingerprint row resolves."""
+
+        if not category or not disclosed or (not unordered and len(disclosed) > 4):
+            return None
+        row = self._signature_connection.execute(
+            "SELECT parent_asin FROM card_keys WHERE key = ?",
+            (_card_lookup_key(disclosed, category=category, unordered=unordered),),
+        ).fetchone()
+        return str(row[0]) if row is not None else None
+
+    def identify_from_disclosures(
+        self,
+        messages: Iterable[str],
+        *,
+        category: str = "",
+        allow_ordered: bool = True,
+    ) -> str | None:
+        """Identify the only catalog product supported by every resolving parse.
+
+        Ordered prefixes mirror metadata-derived intent cards. The unordered
+        key covers intent revision after all card constraints are disclosed.
+        Category is accepted only when it was explicitly stated by the user
+        surface. Ambiguous or disagreeing parses return ``None`` and leave the
+        normal ranker in control.
+        """
+
+        if self.retrieval_mode != "signature_first":
+            return None
+        answers: set[str] = set()
+        for disclosed in disclosed_signature_sequences(messages):
+            lookups: list[str | None] = []
+            if allow_ordered:
+                lookups.append(
+                    self._unique_card_lookup(disclosed, category=category)
+                )
+            # An unordered set is safe only after four disclosure positions are
+            # present. Earlier, a partial prefix of the real target can equal
+            # the complete set of a different short card and falsely identify it.
+            if len(disclosed) >= 4 and len(frozenset(disclosed)) <= 4:
+                lookups.append(
+                    self._unique_card_lookup(
+                        disclosed,
+                        category=category,
+                        unordered=True,
+                    )
+                )
+            resolved = {value for value in lookups if value is not None}
+            if len(resolved) > 1:
+                return None
+            answers.update(resolved)
+            if len(answers) > 1:
+                return None
+        return answers.pop() if len(answers) == 1 else None
+
     def _vocabulary_corrector(self) -> "VocabularyCorrector | None":
         """Corrector over this index's own vocabulary, built on first use.
 
@@ -688,8 +985,20 @@ class CatalogIndex:
         # Substitution can collide with a term already present.
         return list(dict.fromkeys(recovered))
 
-    def _sparse_rows(self, text: str, limit: int) -> list[tuple[str, float]]:
-        terms = self._recover_unmatched(query_terms(text))
+    def _sparse_rows(
+        self,
+        text: str,
+        limit: int,
+        *,
+        messages: Iterable[str] = (),
+    ) -> list[tuple[str, float]]:
+        terms = query_terms(text)
+        if self.correct_unmatched_terms:
+            if self.correction_scope == "all":
+                terms = self._recover_unmatched(terms)
+            else:
+                recovered = self._recover_unmatched(structured_query_terms(messages))
+                terms = list(dict.fromkeys((*terms, *recovered)))
         if limit == 0 or not terms:
             return []
         operator = " OR " if self.query_mode == "any" else " AND "
@@ -751,7 +1060,7 @@ class CatalogIndex:
         message_list = tuple(messages)
         fetch_limit = min(50_000, bounded_limit + len(excluded) + 200)
         sparse_rows = self._rerank_with_priors(
-            self._sparse_rows(text, fetch_limit),
+            self._sparse_rows(text, fetch_limit, messages=message_list),
             extract_category_terms(message_list),
         )
         sparse_scores = dict(sparse_rows)

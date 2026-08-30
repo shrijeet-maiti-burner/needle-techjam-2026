@@ -9,8 +9,9 @@ official evaluator
       |
 starter.agent.Agent
       |
-versioned state -> bounded signature promotion -> fielded sparse fallback
-       -> soft category/popularity rerank -> seen exclusion
+versioned state -> safe category-bound card identification
+       -> bounded signature promotion -> fielded sparse fallback
+       -> soft category/popularity rerank -> adaptive slate + seen exclusion
        -> no-op semantic boundary -> strict response
 ```
 
@@ -33,23 +34,28 @@ The development and submission adapters use the immutable primary preset:
 
 - versioned state that retracts the stated opening preference while preserving later answers on a scoped preference override;
 - exact full-value and clause-level catalog-signature promotion only for non-empty buckets of at most 500;
+- direct identification only for category-bound card keys that are unique in the full catalog, with agreement across plausible semicolon parses;
+- ordered-prefix identification only before intent revision, and unordered identification only after all four disclosure positions are present;
 - sparse `OR` fallback with weights `6/4/2.5/2.5/1.5/1`;
 - soft opening-category coverage strength 1.00 and popularity strength 0.30;
-- seen-item exclusion within each intent version and a ten-item slate;
+- one high-confidence item before turn 5 or four active constraints, then the full ten-item slate, with seen-item exclusion scoped to items actually emitted in the current intent version;
 - Unicode diacritic folding at token and structural-parser boundaries;
-- lexical expansion, fuzzy typo matching, and model reranking disabled.
+- catalog-derived one-edit recovery only inside explicit category and disclosure regions;
+- free-text lexical expansion and model reranking disabled.
 
 The pure sparse preset is the rollback and retains the selected safe state and
 soft priors. The optional signature asset is catalog-bound by SHA-256. If it is
 missing, corrupt, or bound to another catalog, construction records the reason
 and rebuilds the equivalent in-memory index rather than aborting the run.
 
-The selected primary measures TechnicalScore 0.887527 on the released set.
-Three distribution-matched 200-target panels disjoint from released targets
-score 0.884987, 0.886981, and 0.892706. Source-only and asset-bundled clean
-archives reproduce 0.887527. Accent and filler slices preserve HR@10 exactly;
-compound paraphrase loses 0.010 HR and typo loses 0.090 HR. This remains
-development evidence rather than a private-performance claim.
+The selected primary measures TechnicalScore 0.955233 on the released set,
+with HR@10 0.995, MRR 0.967778, and MTTC 2.630. Three distribution-matched
+200-target panels disjoint from released targets score 0.961692, 0.952900, and
+0.947439. An exhaustive ground-truth audit records 179 correct direct
+identifications and zero wrong ones. The registered robustness matrix still
+fails paraphrase, typo, and word-order target-retention gates by one target
+each, plus two meaning-changing card-edit gates. This remains development
+evidence rather than a private-performance claim.
 
 A second proxy varies card shape rather than target identity, drawing targets
 from the three `intent_card` shapes the released set never contains. It exposes
@@ -62,7 +68,7 @@ development diagnostics, not private-score estimates.
 1. EXP-013 is closed: question specificity was measured across ten arms and every alternative to repeated `other` lost (docs/evidence/EXP_013.md). EXP-014 may still test later-rank cluster coverage, but only behind the selected deterministic path.
 2. Robustness work targets general normalization and retrieval invariants; more released-template phrase patches are not acceptable evidence.
 3. Any optional model must beat the no-op and lexical controls on released score, disjoint targets, perturbation slices, license, offline startup, latency, memory, disk, and clean packaging.
-4. Final release work rebuilds the optional asset from the exact scoring catalog and repeats the clean extracted-bundle command.
+4. Final release work rebuilds the optional schema-v5 asset from the exact scoring catalog and repeats both source-only and asset-bundled clean extracted-bundle commands.
 
 ## Invariants
 

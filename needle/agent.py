@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from needle.catalog import DEFAULT_FIELD_WEIGHTS, CatalogIndex
+from needle.catalog import DEFAULT_FIELD_WEIGHTS, CatalogIndex, opening_category_signature
 from needle.contracts import TurnResponse
 from needle.semantic import LexicalNormalizer, NoOpSemanticReranker
 from needle.state import StateStore
@@ -32,6 +32,12 @@ class Agent:
         override_policy: str = "full_reset",
         lexical_mode: str = "none",
         correct_unmatched_terms: bool = False,
+        correction_scope: str = "all",
+        identify_from_disclosures: bool = False,
+        adaptive_slate: bool = False,
+        early_slate_size: int = 1,
+        full_slate_turn: int = 5,
+        full_slate_constraints: int = 4,
     ) -> None:
         if not 1 <= int(candidate_pool) <= 500:
             raise ValueError("candidate_pool must be in 1..500")
@@ -39,6 +45,12 @@ class Agent:
             raise ValueError("slate_size must be in 1..10")
         if lexical_mode not in LEXICAL_MODES:
             raise ValueError(f"unsupported lexical mode: {lexical_mode}")
+        if not 1 <= int(early_slate_size) <= 10:
+            raise ValueError("early_slate_size must be in 1..10")
+        if not 1 <= int(full_slate_turn) <= 10:
+            raise ValueError("full_slate_turn must be in 1..10")
+        if not 1 <= int(full_slate_constraints) <= 20:
+            raise ValueError("full_slate_constraints must be in 1..20")
         self.catalog = CatalogIndex(
             catalog_path,
             retrieval_mode=retrieval_mode,
@@ -49,6 +61,7 @@ class Agent:
             signature_bucket_limit=signature_bucket_limit,
             signature_index_path=signature_index_path,
             correct_unmatched_terms=correct_unmatched_terms,
+            correction_scope=correction_scope,
         )
         self.state = StateStore(override_policy=override_policy)
         self.semantic = NoOpSemanticReranker()
@@ -57,6 +70,11 @@ class Agent:
         self.candidate_pool = int(candidate_pool)
         self.slate_size = int(slate_size)
         self.exclude_seen = bool(exclude_seen)
+        self.identify_from_disclosures = bool(identify_from_disclosures)
+        self.adaptive_slate = bool(adaptive_slate)
+        self.early_slate_size = int(early_slate_size)
+        self.full_slate_turn = int(full_slate_turn)
+        self.full_slate_constraints = int(full_slate_constraints)
         self.experiment_configuration: dict[str, object] = {
             "retrieval_mode": retrieval_mode,
             "query_mode": query_mode,
@@ -75,8 +93,15 @@ class Agent:
             "override_policy": override_policy,
             "lexical_mode": lexical_mode,
             "correct_unmatched_terms": bool(correct_unmatched_terms),
+            "correction_scope": correction_scope,
+            "identify_from_disclosures": self.identify_from_disclosures,
+            "adaptive_slate": self.adaptive_slate,
+            "early_slate_size": self.early_slate_size,
+            "full_slate_turn": self.full_slate_turn,
+            "full_slate_constraints": self.full_slate_constraints,
         }
         self._seen_by_version: dict[tuple[str, int], set[str]] = {}
+        self._opening_category_by_session: dict[str, str] = {}
         # Degradations are recorded rather than raised; an empty list is the
         # assertion that every turn took the normal path.
         self.respond_failures: list[str] = []
@@ -97,6 +122,7 @@ class Agent:
         stale_keys = [key for key in self._seen_by_version if key[0] == session_id]
         for key in stale_keys:
             del self._seen_by_version[key]
+        self._opening_category_by_session.pop(session_id, None)
 
     def respond(
         self,
@@ -177,22 +203,52 @@ class Agent:
     ) -> TurnResponse:
         state = self.state.observe(session_id, user_message, turn)
         limit = self._bounded_limit(top_k)
+        if turn == 1:
+            self._opening_category_by_session[session_id] = opening_category_signature(
+                user_message
+            )
         history_key = (session_id, state.intent_version)
         seen = self._seen_by_version.setdefault(history_key, set())
         excluded = seen if self.exclude_seen else ()
         retrieval_text = state.retrieval_text
+        category_evidence = self._opening_category_by_session.get(session_id, "")
+        if category_evidence:
+            retrieval_text = f"{retrieval_text} {category_evidence}"
         if self.lexical_mode == "normalize":
             retrieval_text = self.lexical.normalize(retrieval_text)
         elif self.lexical_mode == "expand":
             retrieval_text = self.lexical.expand_query(retrieval_text)
-        sparse = self.catalog.search(
-            retrieval_text,
-            self.candidate_pool,
-            messages=state.messages,
-            excluded_ids=excluded,
+        identified = (
+            self.catalog.identify_from_disclosures(
+                state.messages,
+                category=self._opening_category_by_session.get(session_id, ""),
+                allow_ordered=state.intent_version == 1,
+            )
+            if self.identify_from_disclosures and limit
+            else None
         )
-        ranked = self.semantic.rerank(sparse, retrieval_text)[:limit]
-        seen.update(candidate.parent_asin for candidate in ranked)
+        if identified is not None:
+            recommendation_ids = [identified]
+        else:
+            sparse = self.catalog.search(
+                retrieval_text,
+                self.candidate_pool,
+                messages=state.messages,
+                excluded_ids=excluded,
+            )
+            output_limit = limit
+            if (
+                self.adaptive_slate
+                and turn < self.full_slate_turn
+                and len(state.active_constraints()) < self.full_slate_constraints
+            ):
+                output_limit = min(output_limit, self.early_slate_size)
+            ranked = self.semantic.rerank(sparse, retrieval_text)[:output_limit]
+            recommendation_ids = [candidate.parent_asin for candidate in ranked]
+        # Only serialized products were shown. Withheld products must remain
+        # eligible on the next turn or an adaptive slate can blacklist its own
+        # eventual rank-one answer.
+        seen.update(recommendation_ids)
         ask_attribute = "other" if self._safe_turn(turn) < 10 else None
         message = (
             "What else matters most for the item you want?"
@@ -203,8 +259,8 @@ class Agent:
             "message": message,
             "ask_attribute": ask_attribute,
             "recommendations": [
-                {"parent_asin": candidate.parent_asin}
-                for candidate in ranked
+                {"parent_asin": parent_asin}
+                for parent_asin in recommendation_ids
             ],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }

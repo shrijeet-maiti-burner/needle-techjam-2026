@@ -30,6 +30,13 @@ PRIMARY_AGENT_KWARGS: Final[Mapping[str, object]] = MappingProxyType(
         "override_policy": "retract_stated",
         "lexical_mode": "none",
         "slate_size": 10,
+        "identify_from_disclosures": True,
+        "adaptive_slate": True,
+        "early_slate_size": 1,
+        "full_slate_turn": 5,
+        "full_slate_constraints": 4,
+        "correct_unmatched_terms": True,
+        "correction_scope": "structured",
     }
 )
 

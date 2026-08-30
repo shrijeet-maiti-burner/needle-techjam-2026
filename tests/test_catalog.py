@@ -9,7 +9,9 @@ from needle.catalog import (
     CatalogIndex,
     build_signature_index,
     canonical_signature,
+    card_signature_sequence,
     constraint_signature_fragments,
+    disclosed_signature_sequences,
     extract_category_terms,
     extract_query_signatures,
     query_terms,
@@ -17,6 +19,16 @@ from needle.catalog import (
 
 
 class CatalogValidationTest(unittest.TestCase):
+    def test_card_sequence_keeps_compound_values_whole(self) -> None:
+        product = {
+            "parent_asin": "TARGET",
+            "features": ["98% Polyester, 2% Spandex", "Pull On closure"],
+        }
+        self.assertEqual(
+            card_signature_sequence(product),
+            ("polyester", "98 polyester 2 spandex", "pull on closure"),
+        )
+
     def test_constraint_fragments_are_order_independent_units(self) -> None:
         self.assertEqual(
             constraint_signature_fragments("98% Polyester, 2% Spandex"),
@@ -46,6 +58,31 @@ class CatalogValidationTest(unittest.TestCase):
         self.assertEqual(
             extract_query_signatures(["The important detail is Pull On closure."]),
             ("pull on closure",),
+        )
+
+    def test_signature_markers_tolerate_tabs_and_expanded_spaces(self) -> None:
+        self.assertEqual(
+            extract_query_signatures(
+                ["For\tthat,  what\tmatters  is:\tLeather\tlining."]
+            ),
+            ("leather lining", "leather", "for that"),
+        )
+
+    def test_signature_marker_tolerates_one_edit_surface_noise(self) -> None:
+        self.assertTrue(
+            {"cotton", "100 cotton"}.issubset(
+                extract_query_signatures(
+                    ["For that, what matterrs is: cotton; 100% Cotton."]
+                )
+            )
+        )
+
+    def test_nested_request_uses_the_final_category_phrase(self) -> None:
+        self.assertEqual(
+            extract_category_terms(
+                ["Show me what I'm looking for: I'm looking for Men Trousers."]
+            ),
+            {"men", "pants"},
         )
 
     def write_catalog(self, products: list[dict]) -> Path:
@@ -111,6 +148,99 @@ class CatalogValidationTest(unittest.TestCase):
 
         self.assertEqual(matched, ("cloudfoam cushioning", "color blue"))
         self.assertEqual(candidates, {"TARGET"})
+
+    def test_unique_card_identification_uses_explicit_category(self) -> None:
+        path = self.write_catalog(
+            [
+                {
+                    "parent_asin": "SHIRT",
+                    "categories": ["Clothing", "Shirts"],
+                    "features": ["Cloudfoam cushioning"],
+                },
+                {
+                    "parent_asin": "SHOE",
+                    "categories": ["Clothing", "Shoes"],
+                    "features": ["Cloudfoam cushioning"],
+                },
+            ]
+        )
+        index = CatalogIndex(path, retrieval_mode="signature_first")
+        messages = ["For that, what matters is: Cloudfoam cushioning."]
+
+        self.assertIsNone(index.identify_from_disclosures(messages))
+        self.assertEqual(
+            index.identify_from_disclosures(messages, category="shirts"),
+            "SHIRT",
+        )
+        self.assertIsNone(
+            index.identify_from_disclosures(
+                messages,
+                category="shirts",
+                allow_ordered=False,
+            )
+        )
+
+    def test_disagreeing_semicolon_parses_decline_identification(self) -> None:
+        path = self.write_catalog(
+            [
+                {
+                    "parent_asin": "WHOLE",
+                    "categories": ["Clothing", "Shirts"],
+                    "features": ["Alpha Beta; Gamma Delta"],
+                },
+                {
+                    "parent_asin": "SPLIT",
+                    "categories": ["Clothing", "Shirts"],
+                    "features": ["Alpha Beta", "Gamma Delta"],
+                },
+            ]
+        )
+        index = CatalogIndex(path, retrieval_mode="signature_first")
+
+        self.assertIsNone(
+            index.identify_from_disclosures(
+                ["For that, what matters is: Alpha Beta; Gamma Delta."],
+                category="shirts",
+            )
+        )
+
+    def test_excess_parse_ambiguity_declines_identification(self) -> None:
+        messages = [
+            f"For that, what matters is: value {index}; alternative {index}."
+            for index in range(7)
+        ]
+
+        self.assertEqual(disclosed_signature_sequences(messages), ())
+
+    def test_partial_prefix_cannot_match_another_products_complete_set(self) -> None:
+        path = self.write_catalog(
+            [
+                {
+                    "parent_asin": "TARGET",
+                    "categories": ["Clothing", "Wallets"],
+                    "features": ["Leather lining"],
+                    "details": {"Color": "Red"},
+                },
+                {
+                    "parent_asin": "SAME_CATEGORY",
+                    "categories": ["Clothing", "Wallets"],
+                    "features": ["Leather strap"],
+                },
+                {
+                    "parent_asin": "SHORT_CARD",
+                    "categories": ["Clothing", "Gloves"],
+                    "features": ["Leather"],
+                },
+            ]
+        )
+        index = CatalogIndex(path, retrieval_mode="signature_first")
+
+        self.assertIsNone(
+            index.identify_from_disclosures(
+                ["A key requirement is: leather."],
+                category="wallets",
+            )
+        )
 
     def test_clause_signature_survives_reordered_disclosure(self) -> None:
         path = self.write_catalog(

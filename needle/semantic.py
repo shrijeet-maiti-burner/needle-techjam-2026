@@ -112,6 +112,21 @@ def _tokens(text: str) -> list[str]:
     return normalize_text(text).split()
 
 
+def normalize_category_text(text: str) -> str:
+    """Canonicalize conservative category spelling and hypernym variants.
+
+    This is intentionally narrower than query expansion: each category token
+    maps to at most the first registered catalog-facing form, so a stated
+    ``trousers`` category can join a ``pants`` category key without injecting
+    synonyms into arbitrary preference text.
+    """
+
+    return " ".join(
+        _SYNONYM_EXPANSIONS.get(token, (token,))[0]
+        for token in _tokens(text)
+    )
+
+
 def fuzzy_match(
     term: str,
     vocabulary: Iterable[str],
