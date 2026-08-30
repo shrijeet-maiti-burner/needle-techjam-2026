@@ -1,0 +1,927 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Needle Storefront</title>
+  <style>
+    /* Shares the Needle Lens palette so the two surfaces read as one product.
+       The lens is a diagnostics grid; this is a reading surface, so the scale
+       is larger, the column is narrower and the accents are quieter. */
+    :root {
+      --ink: #f4f0e8;
+      --muted: #9faaa3;
+      --dim: #68736d;
+      --panel: #121816;
+      --panel-2: #171f1c;
+      --line: #29332f;
+      --line-soft: #1f2724;
+      --lime: #c9ff64;
+      --aqua: #55e8cf;
+      --amber: #ffbf57;
+      --red: #ff7e76;
+      --bg: #080c0b;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body { height: 100%; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 80% -12%, rgba(85, 232, 207, .10), transparent 32rem),
+        radial-gradient(circle at -8% 20%, rgba(201, 255, 100, .06), transparent 30rem),
+        var(--bg);
+      font: 15px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    button, input, textarea, select { font: inherit; color: inherit; }
+    .mono { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+
+    /* ---------- shell ---------- */
+
+    .shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 20px;
+      width: min(1280px, calc(100% - 32px));
+      height: 100%;
+      margin: 0 auto;
+      padding: 18px 0 0;
+    }
+    @media (min-width: 1080px) {
+      .shell { grid-template-columns: minmax(0, 1fr) 336px; }
+    }
+
+    .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--line);
+    }
+    .brand { display: flex; align-items: baseline; gap: 11px; }
+    .brand h1 {
+      margin: 0;
+      font-size: 25px;
+      letter-spacing: -.035em;
+      font-weight: 700;
+    }
+    .brand h1 span { color: var(--lime); }
+    .eyebrow {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10px;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      color: var(--aqua);
+      padding: 3px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+    }
+    .header-facts {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      color: var(--dim);
+      font-size: 11.5px;
+    }
+    .header-facts b { color: var(--muted); font-weight: 600; }
+
+    /* ---------- notices ---------- */
+
+    .notice {
+      margin-top: 12px;
+      padding: 10px 13px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      font-size: 12.5px;
+      color: var(--muted);
+    }
+    .notice.warn { border-color: rgba(255, 191, 87, .45); background: rgba(255, 191, 87, .07); }
+    .notice.warn b { color: var(--amber); }
+    .notice[hidden] { display: none; }
+
+    /* ---------- thread ---------- */
+
+    .thread {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      padding: 20px 4px 8px;
+      /* Deliberately not `smooth`. Assigning scrollTop under smooth behaviour
+         animates toward the height read at assignment time, and a turn's
+         layout is still settling then, so the thread lands part-way down and
+         stays there. The observer below pins it instead. */
+      overflow-anchor: none;
+    }
+    .thread-inner { width: min(780px, 100%); margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
+
+    /* empty state */
+    .opening { padding: 26px 2px 8px; }
+    .opening h2 { margin: 0 0 8px; font-size: 21px; letter-spacing: -.02em; }
+    .opening p { margin: 0 0 18px; color: var(--muted); max-width: 54ch; }
+    .chips { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      transition: border-color .14s, color .14s, transform .14s;
+    }
+    .chip:hover { color: var(--lime); border-color: var(--lime); }
+    .chip:active { transform: translateY(1px); }
+
+    /* messages */
+    .row { display: flex; }
+    .row.user { justify-content: flex-end; }
+    .bubble {
+      max-width: 86%;
+      padding: 11px 15px;
+      border-radius: 14px 5px 14px 14px;
+      background: rgba(201, 255, 100, .10);
+      border: 1px solid rgba(201, 255, 100, .22);
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .agent { display: flex; flex-direction: column; gap: 12px; }
+    .agent-meta {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      flex-wrap: wrap;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10.5px;
+      letter-spacing: .05em;
+      color: var(--dim);
+      text-transform: uppercase;
+    }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--aqua); flex: none; }
+    .tag {
+      padding: 2px 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      text-transform: none;
+      letter-spacing: .02em;
+    }
+    .tag.bad { color: var(--red); border-color: rgba(255, 126, 118, .5); }
+    .tag.warn { color: var(--amber); border-color: rgba(255, 191, 87, .5); }
+
+    .agent-message {
+      padding-left: 13px;
+      border-left: 2px solid var(--lime);
+      color: var(--ink);
+      overflow-wrap: anywhere;
+    }
+
+    /* ---------- product cards ---------- */
+
+    .slate { display: grid; gap: 10px; }
+    @media (min-width: 720px) {
+      .slate.multi { grid-template-columns: 1fr 1fr; }
+    }
+
+    .card {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 13px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(155deg, rgba(23, 31, 28, .95), rgba(16, 22, 20, .95));
+      min-width: 0;
+    }
+    .card.spotlight { border-color: rgba(201, 255, 100, .34); background: linear-gradient(155deg, rgba(30, 40, 27, .95), rgba(16, 22, 20, .95)); }
+
+    .card-top { display: flex; gap: 10px; align-items: flex-start; }
+    .rank {
+      flex: none;
+      min-width: 22px; height: 22px;
+      display: grid; place-items: center;
+      border-radius: 6px;
+      background: var(--panel-2);
+      border: 1px solid var(--line);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .card.spotlight .rank { background: var(--lime); border-color: var(--lime); color: #10160d; font-weight: 700; }
+    .card-title {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.35;
+      letter-spacing: -.005em;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      overflow-wrap: anywhere;
+    }
+    .card-facts {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .price { color: var(--lime); font-weight: 650; font-variant-numeric: tabular-nums; }
+    .price.absent { color: var(--dim); font-weight: 400; }
+    .stars { color: var(--amber); }
+    .crumb {
+      font-size: 11px;
+      color: var(--dim);
+      overflow-wrap: anywhere;
+    }
+
+    .evidence { display: flex; flex-wrap: wrap; gap: 5px; }
+    .ev {
+      padding: 2px 7px;
+      border-radius: 5px;
+      font-size: 10.5px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      color: var(--aqua);
+      background: rgba(85, 232, 207, .07);
+      border: 1px solid rgba(85, 232, 207, .26);
+      white-space: nowrap;
+    }
+    .ev.stale {
+      color: var(--amber);
+      background: rgba(255, 191, 87, .07);
+      border-color: rgba(255, 191, 87, .34);
+      border-style: dashed;
+    }
+    .ev .where { color: var(--dim); }
+
+    details.more { margin-top: 2px; }
+    details.more summary {
+      cursor: pointer;
+      font-size: 11.5px;
+      color: var(--dim);
+      list-style: none;
+    }
+    details.more summary::-webkit-details-marker { display: none; }
+    details.more summary:hover { color: var(--muted); }
+    details.more ul { margin: 8px 0 0; padding-left: 17px; color: var(--muted); font-size: 12px; }
+    details.more li { margin-bottom: 3px; overflow-wrap: anywhere; }
+    details.more .asin { margin-top: 8px; color: var(--dim); font-size: 11px; }
+
+    .empty-slate { color: var(--dim); font-size: 12.5px; font-style: italic; }
+
+    /* thinking */
+    .thinking { display: flex; gap: 5px; padding: 4px 0 4px 13px; border-left: 2px solid var(--line); }
+    .thinking i {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--dim);
+      animation: pulse 1.15s infinite ease-in-out;
+    }
+    .thinking i:nth-child(2) { animation-delay: .16s; }
+    .thinking i:nth-child(3) { animation-delay: .32s; }
+    @keyframes pulse { 0%, 80%, 100% { opacity: .25; } 40% { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { .thinking i { animation: none; opacity: .6; } }
+
+    /* ---------- composer ---------- */
+
+    .composer-wrap { padding: 12px 4px 18px; }
+    .composer {
+      width: min(780px, 100%);
+      margin: 0 auto;
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+      padding: 10px 10px 10px 14px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--panel);
+      transition: border-color .15s;
+    }
+    .composer:focus-within { border-color: rgba(201, 255, 100, .45); }
+    .composer textarea {
+      flex: 1;
+      min-height: 24px;
+      max-height: 168px;
+      padding: 4px 0;
+      border: 0;
+      outline: none;
+      resize: none;
+      background: transparent;
+      overflow-y: auto;
+    }
+    .composer textarea::placeholder { color: var(--dim); }
+
+    button.send {
+      flex: none;
+      height: 36px;
+      padding: 0 17px;
+      border-radius: 9px;
+      border: 1px solid var(--lime);
+      background: var(--lime);
+      color: #10160d;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity .15s, transform .15s;
+    }
+    button.send:hover:not(:disabled) { opacity: .88; }
+    button.send:active:not(:disabled) { transform: translateY(1px); }
+    button.send:disabled { opacity: .4; cursor: not-allowed; }
+
+    .composer-hint {
+      width: min(780px, 100%);
+      margin: 7px auto 0;
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      color: var(--dim);
+      font-size: 11px;
+    }
+
+    /* ---------- rail ---------- */
+
+    .rail { display: none; min-height: 0; overflow-y: auto; padding-bottom: 18px; }
+    @media (min-width: 1080px) { .rail { display: block; } }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: linear-gradient(155deg, rgba(23, 31, 28, .95), rgba(16, 22, 20, .95));
+      overflow: hidden;
+    }
+    .panel + .panel { margin-top: 12px; }
+    .panel-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 11px 13px;
+      border-bottom: 1px solid var(--line);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10px;
+      letter-spacing: .13em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .panel-body { padding: 13px; }
+    .panel-body .none { color: var(--dim); font-size: 12.5px; font-style: italic; }
+
+    .belief-group + .belief-group { margin-top: 13px; }
+    .belief-label { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+    .bchip {
+      display: inline-flex; gap: 5px; align-items: baseline;
+      padding: 3px 8px; margin: 0 4px 4px 0;
+      border-radius: 6px;
+      font-size: 12px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      overflow-wrap: anywhere;
+    }
+    .bchip .attr { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
+    .bchip.want { color: var(--lime); border-color: rgba(201, 255, 100, .3); }
+    .bchip.excl { color: var(--red); border-color: rgba(255, 126, 118, .3); }
+    .bchip.gone { color: var(--dim); text-decoration: line-through; }
+
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+    .stat .label { font-size: 10px; letter-spacing: .11em; text-transform: uppercase; color: var(--dim); }
+    .stat .value { margin-top: 2px; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .stat .value.good { color: var(--lime); }
+
+    button.ghost {
+      width: 100%;
+      height: 36px;
+      border-radius: 9px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      cursor: pointer;
+      color: var(--muted);
+      transition: border-color .15s, color .15s;
+    }
+    button.ghost:hover { color: var(--lime); border-color: var(--lime); }
+
+    .kv { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 3px 0; }
+    .kv span:first-child { color: var(--dim); }
+    .kv span:last-child { color: var(--muted); text-align: right; overflow-wrap: anywhere; }
+
+    .sr-only {
+      position: absolute; width: 1px; height: 1px;
+      padding: 0; margin: -1px; overflow: hidden;
+      clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="main">
+      <header>
+        <div class="brand">
+          <h1>Needle <span>Storefront</span></h1>
+          <span class="eyebrow">live agent</span>
+        </div>
+        <div class="header-facts">
+          <div><b id="fact-products">—</b> products</div>
+          <div><b id="fact-index">—</b> index</div>
+          <div><b id="fact-turn">turn 0</b></div>
+        </div>
+      </header>
+
+      <div class="notice warn" id="deviation" hidden></div>
+
+      <div class="thread" id="thread" aria-live="polite" aria-label="Conversation">
+        <div class="thread-inner" id="thread-inner">
+          <div class="opening" id="opening">
+            <h2>What are you shopping for?</h2>
+            <p>
+              Every reply comes from the selected primary agent reading the released
+              catalog — the same configuration the score is measured on. No model, no
+              network, no invented products.
+            </p>
+            <div class="chips" id="suggestions"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="composer-wrap">
+        <form class="composer" id="composer">
+          <label class="sr-only" for="input">Message</label>
+          <textarea id="input" rows="1" placeholder="Describe what you are looking for…" autocomplete="off"></textarea>
+          <button class="send" id="send" type="submit">Send</button>
+        </form>
+        <div class="composer-hint">
+          <span>Enter to send · Shift+Enter for a new line</span>
+          <span id="latency-hint"></span>
+        </div>
+      </div>
+    </div>
+
+    <aside class="rail">
+      <div class="panel">
+        <div class="panel-head"><span>What I have understood</span><span id="intent-version">v1</span></div>
+        <div class="panel-body" id="beliefs"><div class="none">Nothing disclosed yet.</div></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><span>Session</span></div>
+        <div class="panel-body">
+          <div class="stat-grid">
+            <div class="stat"><div class="label">Turn</div><div class="value" id="stat-turn">0</div></div>
+            <div class="stat"><div class="label">Last turn</div><div class="value good" id="stat-latency">—</div></div>
+          </div>
+          <div style="margin-top:13px">
+            <button class="ghost" id="reset" type="button">Start a new conversation</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head"><span>Configuration</span></div>
+        <div class="panel-body" id="config-body"></div>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+  (() => {
+    "use strict";
+
+    const el = {
+      thread: document.getElementById("thread"),
+      inner: document.getElementById("thread-inner"),
+      opening: document.getElementById("opening"),
+      suggestions: document.getElementById("suggestions"),
+      composer: document.getElementById("composer"),
+      input: document.getElementById("input"),
+      send: document.getElementById("send"),
+      reset: document.getElementById("reset"),
+      beliefs: document.getElementById("beliefs"),
+      intentVersion: document.getElementById("intent-version"),
+      deviation: document.getElementById("deviation"),
+      configBody: document.getElementById("config-body"),
+      statTurn: document.getElementById("stat-turn"),
+      statLatency: document.getElementById("stat-latency"),
+      factProducts: document.getElementById("fact-products"),
+      factIndex: document.getElementById("fact-index"),
+      factTurn: document.getElementById("fact-turn"),
+      latencyHint: document.getElementById("latency-hint"),
+    };
+
+    let sessionId = null;
+    let config = null;
+    let pending = false;
+    let lastIntentVersion = 1;
+
+    /* ---------- dom helpers ----------
+       Everything user- or catalog-supplied goes in through textContent. The
+       catalog is a data file rather than a trusted template, and the message
+       box accepts anything, so no path here builds markup from either. */
+
+    function node(tag, className, text) {
+      const element = document.createElement(tag);
+      if (className) element.className = className;
+      if (text !== undefined && text !== null) element.textContent = String(text);
+      return element;
+    }
+
+    function clear(element) {
+      while (element.firstChild) element.removeChild(element.firstChild);
+    }
+
+    const numberFormat = new Intl.NumberFormat();
+
+    function formatPrice(value) {
+      if (typeof value !== "number" || !isFinite(value) || value <= 0) return null;
+      return "$" + value.toFixed(2);
+    }
+
+    function stars(rating) {
+      if (typeof rating !== "number" || !isFinite(rating)) return null;
+      const rounded = Math.round(rating * 2) / 2;
+      let out = "";
+      for (let i = 1; i <= 5; i += 1) {
+        out += i <= rounded ? "★" : (i - 0.5 === rounded ? "⯪" : "☆");
+      }
+      return out;
+    }
+
+    /* Keeping the newest turn in view is not a single scroll. A turn can add
+       ten cards, and their final height is not known when they are appended --
+       text wraps, the font swaps, `details` resolves -- so any one-shot
+       measurement lands short, further short the taller the slate.
+
+       Instead: remember whether the reader is at the bottom, and re-pin
+       whenever the content resizes. Scrolling up clears the flag, so the
+       thread stops chasing the end while somebody is reading back through it. */
+    const STUCK_THRESHOLD = 80;
+    let stuck = true;
+
+    function atBottom() {
+      return el.thread.scrollHeight - el.thread.clientHeight - el.thread.scrollTop
+        <= STUCK_THRESHOLD;
+    }
+
+    function scrollToEnd() {
+      stuck = true;
+      el.thread.scrollTop = el.thread.scrollHeight;
+    }
+
+    el.thread.addEventListener("scroll", () => { stuck = atBottom(); }, { passive: true });
+
+    if (typeof ResizeObserver === "function") {
+      new ResizeObserver(() => {
+        if (stuck) el.thread.scrollTop = el.thread.scrollHeight;
+      }).observe(el.inner);
+    }
+
+    /* ---------- rendering ---------- */
+
+    function renderUser(text) {
+      const row = node("div", "row user");
+      row.appendChild(node("div", "bubble", text));
+      el.inner.appendChild(row);
+    }
+
+    function renderThinking() {
+      const wrap = node("div", "agent");
+      const dots = node("div", "thinking");
+      dots.appendChild(node("i"));
+      dots.appendChild(node("i"));
+      dots.appendChild(node("i"));
+      wrap.appendChild(dots);
+      el.inner.appendChild(wrap);
+      scrollToEnd();
+      return wrap;
+    }
+
+    function renderCard(card, index, spotlight) {
+      const wrap = node("div", "card" + (spotlight ? " spotlight" : ""));
+
+      const top = node("div", "card-top");
+      top.appendChild(node("div", "rank", String(index + 1)));
+      top.appendChild(node("h3", "card-title", card.title || card.parent_asin));
+      wrap.appendChild(top);
+
+      const facts = node("div", "card-facts");
+      const price = formatPrice(card.price);
+      const priceNode = node("span", price ? "price" : "price absent", price || "price not listed");
+      facts.appendChild(priceNode);
+      const starText = stars(card.average_rating);
+      if (starText) {
+        const rating = node("span", "stars", starText);
+        rating.appendChild(node("span", "", " " + card.average_rating.toFixed(1)));
+        if (card.rating_number) {
+          rating.appendChild(node("span", "", " (" + numberFormat.format(card.rating_number) + ")"));
+        }
+        facts.appendChild(rating);
+      }
+      if (card.store) facts.appendChild(node("span", "", card.store));
+      wrap.appendChild(facts);
+
+      const categories = Array.isArray(card.categories) ? card.categories : [];
+      if (categories.length) {
+        wrap.appendChild(node("div", "crumb", categories.slice(-3).join(" › ")));
+      }
+
+      const matched = Array.isArray(card.matched) ? card.matched : [];
+      if (matched.length) {
+        const evidence = node("div", "evidence");
+        matched.slice(0, 8).forEach((hit) => {
+          const chip = node("span", "ev" + (hit.stale ? " stale" : ""));
+          chip.appendChild(node("span", "", hit.term));
+          chip.appendChild(node("span", "where", " · " + hit.field));
+          chip.title = hit.stale
+            ? "In the text retrieval reads, but the belief state has superseded it"
+            : "Appears in this product's " + hit.field;
+          evidence.appendChild(chip);
+        });
+        wrap.appendChild(evidence);
+      }
+
+      const features = Array.isArray(card.features) ? card.features : [];
+      if (features.length || card.description) {
+        const more = node("details", "more");
+        more.appendChild(node("summary", "", "Product details"));
+        if (features.length) {
+          const list = node("ul");
+          features.forEach((feature) => list.appendChild(node("li", "", feature)));
+          more.appendChild(list);
+        }
+        if (card.description) more.appendChild(node("p", "asin", card.description));
+        more.appendChild(node("div", "asin mono", card.parent_asin));
+        wrap.appendChild(more);
+      }
+      return wrap;
+    }
+
+    function renderTurn(turn) {
+      const wrap = node("div", "agent");
+
+      const meta = node("div", "agent-meta");
+      meta.appendChild(node("span", "dot"));
+      meta.appendChild(node("span", "", "Needle · turn " + turn.turn));
+      meta.appendChild(node("span", "", turn.latency_ms.toFixed(1) + " ms"));
+      if (turn.ask_attribute) {
+        meta.appendChild(node("span", "tag", "asking: " + turn.ask_attribute));
+      }
+      if (turn.degraded) {
+        meta.appendChild(node("span", "tag bad", "degraded turn"));
+      }
+      if (!turn.within_scored_budget) {
+        meta.appendChild(node("span", "tag warn", "past the scored 10-turn budget"));
+      }
+      wrap.appendChild(meta);
+
+      if (turn.message) wrap.appendChild(node("div", "agent-message", turn.message));
+
+      const cards = Array.isArray(turn.cards) ? turn.cards : [];
+      if (!cards.length) {
+        wrap.appendChild(node("div", "empty-slate", "No products returned for this turn."));
+      } else {
+        const spotlight = cards.length === 1;
+        const slate = node("div", "slate" + (spotlight ? "" : " multi"));
+        cards.forEach((card, index) => slate.appendChild(renderCard(card, index, spotlight)));
+        wrap.appendChild(slate);
+        if (spotlight) {
+          wrap.appendChild(node(
+            "div",
+            "empty-slate",
+            "One result: the agent is still narrowing and holds the wider slate back until it has enough to go on."
+          ));
+        }
+      }
+      return wrap;
+    }
+
+    function renderBeliefs(beliefs) {
+      clear(el.beliefs);
+      const groups = [
+        ["Looking for", beliefs.wanted, "want"],
+        ["Ruled out", beliefs.excluded, "excl"],
+        ["Dropped after a change of mind", beliefs.superseded, "gone"],
+      ];
+      let any = false;
+      groups.forEach(([label, entries, kind]) => {
+        if (!Array.isArray(entries) || !entries.length) return;
+        any = true;
+        const group = node("div", "belief-group");
+        group.appendChild(node("div", "belief-label", label));
+        entries.forEach((entry) => {
+          const chip = node("span", "bchip " + kind);
+          chip.appendChild(node("span", "attr", entry.attribute));
+          chip.appendChild(node("span", "", entry.value));
+          chip.title = "disclosed on turn " + entry.turn;
+          group.appendChild(chip);
+        });
+        el.beliefs.appendChild(group);
+      });
+      if (!any) el.beliefs.appendChild(node("div", "none", "Nothing disclosed yet."));
+
+      const version = beliefs.intent_version || 1;
+      el.intentVersion.textContent = "v" + version;
+      if (version > lastIntentVersion) {
+        el.intentVersion.style.color = "var(--amber)";
+        lastIntentVersion = version;
+      }
+    }
+
+    function renderConfig(data) {
+      el.factProducts.textContent = numberFormat.format(data.product_count || 0);
+      el.factIndex.textContent = data.signature_index ? "bundled" : "rebuilt";
+
+      clear(el.configBody);
+      const rows = [
+        ["Signature index", data.index_fallback
+          ? "rejected — rebuilt in process"
+          : (data.signature_index ? "prebuilt asset in use" : "rebuilt in process")],
+        ["Scored turn budget", String(data.scored_turn_budget)],
+        ["Optional features", (data.optional_features || []).length ? data.optional_features.join(", ") : "none installed"],
+      ];
+      if (typeof data.construction_seconds === "number") {
+        rows.push(["Agent construction", data.construction_seconds.toFixed(2) + " s"]);
+      }
+      rows.forEach(([key, value]) => {
+        const row = node("div", "kv");
+        row.appendChild(node("span", "", key));
+        row.appendChild(node("span", "", value));
+        el.configBody.appendChild(row);
+      });
+
+      const deviations = data.deviations || {};
+      const names = Object.keys(deviations);
+      const parts = [];
+      if (names.length) {
+        parts.push(["Not the scored configuration. ", names
+          .map((name) => name + ": " + JSON.stringify(deviations[name].effective) +
+               " (primary " + JSON.stringify(deviations[name].primary) + ")")
+          .join(" · ")]);
+      }
+      if (data.index_fallback) {
+        parts.push([
+          "Bundled signature index rejected. ",
+          "The agent rebuilt it in process, which is correct but costs construction " +
+          "time and means the shipped asset is not the one answering: " + data.index_fallback,
+        ]);
+      }
+      if (parts.length) {
+        clear(el.deviation);
+        parts.forEach(([lead, detail], index) => {
+          const line = node("div");
+          if (index) line.style.marginTop = "6px";
+          line.appendChild(node("b", "", lead));
+          line.appendChild(node("span", "", detail));
+          el.deviation.appendChild(line);
+        });
+        el.deviation.hidden = false;
+      } else {
+        el.deviation.hidden = true;
+      }
+    }
+
+    function renderSuggestions(list) {
+      clear(el.suggestions);
+      (list || []).forEach((category) => {
+        const chip = node("button", "chip", "I'm looking for " + category);
+        chip.type = "button";
+        chip.addEventListener("click", () => {
+          el.input.value = "I'm looking for " + category + ".";
+          autosize();
+          el.input.focus();
+        });
+        el.suggestions.appendChild(chip);
+      });
+    }
+
+    /* ---------- transport ---------- */
+
+    async function api(path, body) {
+      const response = await fetch(path, {
+        method: body === undefined ? "GET" : "POST",
+        headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch (error) {
+        throw new Error("the server returned a response that was not JSON");
+      }
+      if (!response.ok) throw new Error(payload && payload.error ? payload.error : "request failed");
+      return payload;
+    }
+
+    function showError(message) {
+      const wrap = node("div", "agent");
+      const meta = node("div", "agent-meta");
+      meta.appendChild(node("span", "tag bad", "interface error"));
+      wrap.appendChild(meta);
+      wrap.appendChild(node("div", "agent-message", message));
+      el.inner.appendChild(wrap);
+      scrollToEnd();
+    }
+
+    async function newSession() {
+      const data = await api("/api/session", {});
+      sessionId = data.session_id;
+      config = data.config;
+      lastIntentVersion = 1;
+      renderConfig(config);
+      renderSuggestions(config.suggestions);
+      renderBeliefs({ wanted: [], excluded: [], superseded: [], intent_version: 1 });
+      el.intentVersion.style.color = "";
+      el.statTurn.textContent = "0";
+      el.statLatency.textContent = "—";
+      el.factTurn.textContent = "turn 0";
+      el.latencyHint.textContent = "";
+    }
+
+    async function send(text) {
+      if (pending || !text.trim()) return;
+      pending = true;
+      el.send.disabled = true;
+      if (el.opening.parentNode) el.opening.remove();
+
+      renderUser(text);
+      const thinking = renderThinking();
+
+      try {
+        if (!sessionId) await newSession();
+        const turn = await api("/api/message", { session_id: sessionId, message: text });
+        thinking.replaceWith(renderTurn(turn));
+        renderBeliefs(turn.beliefs || {});
+        el.statTurn.textContent = String(turn.turn);
+        el.factTurn.textContent = "turn " + turn.turn;
+        el.statLatency.textContent = turn.latency_ms.toFixed(0) + " ms";
+        el.latencyHint.textContent = "answered in " + turn.latency_ms.toFixed(1) + " ms";
+      } catch (error) {
+        thinking.remove();
+        showError(error && error.message ? error.message : String(error));
+      } finally {
+        pending = false;
+        el.send.disabled = false;
+        scrollToEnd();
+        el.input.focus();
+      }
+    }
+
+    /* ---------- input ---------- */
+
+    function autosize() {
+      el.input.style.height = "auto";
+      el.input.style.height = Math.min(el.input.scrollHeight, 168) + "px";
+    }
+
+    el.input.addEventListener("input", autosize);
+    el.input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        el.composer.requestSubmit();
+      }
+    });
+
+    el.composer.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = el.input.value.trim();
+      if (!text) return;
+      el.input.value = "";
+      autosize();
+      send(text);
+    });
+
+    el.reset.addEventListener("click", async () => {
+      if (pending) return;
+      clear(el.inner);
+      el.inner.appendChild(el.opening);
+      try {
+        await newSession();
+      } catch (error) {
+        showError(error && error.message ? error.message : String(error));
+      }
+      el.input.focus();
+    });
+
+    /* ---------- boot ---------- */
+
+    (async () => {
+      try {
+        config = await api("/api/config");
+        renderConfig(config);
+        renderSuggestions(config.suggestions);
+        await newSession();
+      } catch (error) {
+        showError(
+          "Could not reach the storefront service: " +
+          (error && error.message ? error.message : String(error))
+        );
+      }
+      el.input.focus();
+    })();
+  })();
+  </script>
+</body>
+</html>
