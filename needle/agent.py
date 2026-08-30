@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -58,6 +59,7 @@ class Agent:
         promote_disclosure_bucket: bool = False,
         promotion_bucket_limit: int = 50_000,
         promote_opening_category: bool = False,
+        trace_enabled: bool = False,
     ) -> None:
         if not 1 <= int(candidate_pool) <= 500:
             raise ValueError("candidate_pool must be in 1..500")
@@ -116,6 +118,7 @@ class Agent:
         self.promote_disclosure_bucket = bool(promote_disclosure_bucket)
         self.promotion_bucket_limit = int(promotion_bucket_limit)
         self.promote_opening_category = bool(promote_opening_category)
+        self.trace_enabled = bool(trace_enabled)
         self.experiment_configuration: dict[str, object] = {
             "retrieval_mode": retrieval_mode,
             "query_mode": query_mode,
@@ -144,9 +147,11 @@ class Agent:
             "promote_disclosure_bucket": self.promote_disclosure_bucket,
             "promotion_bucket_limit": self.promotion_bucket_limit,
             "promote_opening_category": self.promote_opening_category,
+            "trace_enabled": self.trace_enabled,
         }
         self._seen_by_version: dict[tuple[str, int], set[str]] = {}
         self._opening_category_by_session: dict[str, str] = {}
+        self._trace_by_session: dict[str, list[dict[str, object]]] = {}
         # Degradations are recorded rather than raised; an empty list is the
         # assertion that every turn took the normal path.
         self.respond_failures: list[str] = []
@@ -172,6 +177,12 @@ class Agent:
         self._lexicon_words_by_session.pop(session_id, None)
         self._lexicon_written_by_session.pop(session_id, None)
         self._pinned_language.pop(session_id, None)
+        self._trace_by_session.pop(session_id, None)
+
+    def trace_for(self, session_id: str) -> tuple[dict[str, object], ...]:
+        """Return an isolated copy of optional faithful runtime traces."""
+
+        return tuple(copy.deepcopy(self._trace_by_session.get(session_id, ())))
 
     def respond(
         self,
@@ -376,6 +387,7 @@ class Agent:
             self._opening_category_by_session[session_id] = stated
         history_key = (session_id, state.intent_version)
         seen = self._seen_by_version.setdefault(history_key, set())
+        seen_before = frozenset(seen)
         excluded = seen if self.exclude_seen else ()
         retrieval_text = state.retrieval_text
         category_evidence = self._opening_category_by_session.get(session_id, "")
@@ -410,6 +422,9 @@ class Agent:
         )
         if identified is not None:
             recommendation_ids = [identified]
+            output_limit = min(limit, 1)
+            sparse = []
+            decision_path = "unique_identification"
         else:
             output_limit = limit
             if (
@@ -423,6 +438,7 @@ class Agent:
                 for parent_asin in promoted
                 if parent_asin not in excluded
             ][:output_limit]
+            sparse = []
             if len(recommendation_ids) < output_limit:
                 sparse = self.catalog.search(
                     retrieval_text,
@@ -438,6 +454,11 @@ class Agent:
                     if candidate.parent_asin not in promoted_set
                 )
                 recommendation_ids = recommendation_ids[:output_limit]
+            decision_path = (
+                "evidence_bucket_promotion"
+                if recommendation_ids and promoted and recommendation_ids[0] in promoted
+                else "sparse_fallback"
+            )
         # Only serialized products were shown. Withheld products must remain
         # eligible on the next turn or an adaptive slate can blacklist its own
         # eventual rank-one answer.
@@ -468,7 +489,9 @@ class Agent:
                 asking=ask_attribute is not None,
                 language=self._session_language(session_id, user_message),
             )
-        return {
+        # The explanation runs first so the message the lens records is the one
+        # the customer was actually sent.
+        response: TurnResponse = {
             "message": message,
             "ask_attribute": ask_attribute,
             "recommendations": [
@@ -477,3 +500,34 @@ class Agent:
             ],
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
+        if self.trace_enabled:
+            try:
+                from needle.lens import build_turn_trace
+
+                trace = build_turn_trace(
+                    catalog=self.catalog,
+                    state=state,
+                    turn=turn,
+                    retrieval_text=retrieval_text,
+                    category=category_evidence,
+                    promoted=promoted,
+                    identified=identified,
+                    sparse=sparse,
+                    recommendations=recommendation_ids,
+                    output_limit=output_limit,
+                    seen_before=seen_before,
+                    decision_path=decision_path,
+                    response=response,
+                    promotion_limit=self.promotion_bucket_limit,
+                    include_empty=self.promote_opening_category and turn == 1,
+                )
+            except Exception as error:  # noqa: BLE001 - tracing is non-operative
+                trace = {
+                    "trace_version": "needle-lens-v1",
+                    "target_blind": True,
+                    "turn": int(turn),
+                    "trace_error": f"{type(error).__name__}: {error}",
+                    "response": copy.deepcopy(response),
+                }
+            self._trace_by_session.setdefault(session_id, []).append(trace)
+        return response

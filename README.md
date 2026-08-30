@@ -31,6 +31,16 @@ python scripts/run_experiment.py --experiment-id PRIMARY-CHECK --agent starter.a
 
 `run_experiment.py` is the decision-grade path: it refuses dirty trees by default and writes an ignored, immutable directory containing the raw result, artifact/config fingerprints, strict-contract report, scenario metrics, latency, environment, and checksums.
 
+## See the decision, not just the answer
+
+Needle Lens replays released public sessions and exposes the same agent call's target-blind belief ledger, interpretation lattice, candidate funnel, ambiguity certificate, ranking evidence, and question decision:
+
+```bash
+python scripts/needle_lens.py
+```
+
+The console is dependency-free and offline. Its human-shopping question board is explicitly a diagnostic shadow; it cannot affect the measured official-simulator policy or the recommendation slate. See [`docs/NEEDLE_LENS.md`](docs/NEEDLE_LENS.md) for the faithfulness boundary.
+
 ## Repository map
 
 ```text
@@ -38,6 +48,7 @@ needle/                 production components and integration facade
 starter/agent.py        strict official entry-point adapter
 submission/             final-bundle entry point and run notes
 scripts/                artifact bootstrap and official evaluator launcher
+demo/                   dependency-free local decision console
 tests/                  dependency-free contract and behavior checks
 docs/                   architecture, ownership, evidence, and disclosures
 ```

@@ -1020,6 +1020,117 @@ class CatalogIndex:
             )
         )
 
+    def disclosure_diagnostics(
+        self,
+        messages: Iterable[str],
+        *,
+        category: str,
+        allow_ordered: bool = True,
+        include_empty: bool = False,
+        limit: int = 50_000,
+    ) -> dict[str, object]:
+        """Explain the exact set-valued lookup used by promotion.
+
+        This is a read-only demo/diagnostic surface. It deliberately repeats
+        the production resolution rules instead of approximating them from the
+        emitted slate, so a trace can expose every plausible parse, its bucket
+        cardinality, the safe union, and any reason promotion declined.
+        """
+
+        if self.retrieval_mode != "signature_first" or not 1 <= limit <= 50_000:
+            return {
+                "category": category,
+                "parses": [],
+                "union_count": 0,
+                "declined": True,
+                "decline_reason": "signature retrieval disabled or limit invalid",
+            }
+        sequences = disclosed_signature_sequences(messages)
+        if not sequences and include_empty:
+            sequences = ((),)
+        parsed: list[dict[str, object]] = []
+        union: set[str] = set()
+        declined_reason: str | None = None
+        for disclosed in sequences:
+            if allow_ordered:
+                bucket = self._card_bucket_lookup(
+                    disclosed,
+                    category=category,
+                    limit=limit,
+                )
+                mode = "ordered_prefix"
+            elif len(disclosed) >= 4 and len(frozenset(disclosed)) <= 4:
+                bucket = self._card_bucket_lookup(
+                    disclosed,
+                    category=category,
+                    unordered=True,
+                    limit=limit,
+                )
+                mode = "complete_unordered_set"
+            else:
+                parsed.append({
+                    "signatures": list(disclosed),
+                    "mode": "ineligible_after_revision",
+                    "candidate_count": 0,
+                    "over_limit": False,
+                })
+                continue
+            over_limit = bucket is None
+            parsed.append({
+                "signatures": list(disclosed),
+                "mode": mode,
+                "candidate_count": None if over_limit else len(bucket),
+                "over_limit": over_limit,
+            })
+            if over_limit:
+                declined_reason = "at least one plausible parse exceeds the safety limit"
+                continue
+            union.update(bucket)
+        if len(union) > limit:
+            declined_reason = "the plausible-parse union exceeds the safety limit"
+        return {
+            "category": category,
+            "parses": parsed,
+            "union_count": len(union),
+            "declined": declined_reason is not None or not union,
+            "decline_reason": declined_reason or ("no catalog-grounded bucket" if not union else None),
+        }
+
+    def product_evidence(
+        self,
+        parent_asins: Iterable[str],
+    ) -> dict[str, dict[str, object]]:
+        """Return catalog fields for a bounded list of emitted candidates.
+
+        The data comes from the same in-memory FTS table used for retrieval;
+        no second catalog parser or demo-only source of truth is involved.
+        """
+
+        ordered = tuple(dict.fromkeys(str(value) for value in parent_asins if str(value)))[:500]
+        if not ordered:
+            return {}
+        placeholders = ", ".join("?" for _ in ordered)
+        rows = self.connection.execute(
+            "SELECT parent_asin, title, categories, features, details, store, "
+            "description, rating_number FROM products "
+            f"WHERE parent_asin IN ({placeholders})",
+            ordered,
+        ).fetchall()
+        by_id = {
+            str(row[0]): {
+                "parent_asin": str(row[0]),
+                "title": str(row[1] or ""),
+                "categories": str(row[2] or ""),
+                "features": str(row[3] or ""),
+                "details": str(row[4] or ""),
+                "store": str(row[5] or ""),
+                "description": str(row[6] or ""),
+                "rating_number": int(row[7] or 0),
+            }
+            for row in rows
+        }
+        return {parent_asin: by_id[parent_asin] for parent_asin in ordered if parent_asin in by_id}
+
     def identify_from_disclosures(
         self,
         messages: Iterable[str],
