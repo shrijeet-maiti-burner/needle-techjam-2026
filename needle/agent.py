@@ -3,10 +3,16 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
-from needle.catalog import DEFAULT_FIELD_WEIGHTS, CatalogIndex, opening_category_signature
+from needle.catalog import (
+    DEFAULT_FIELD_WEIGHTS,
+    CatalogIndex,
+    disclosed_signature_sequences,
+    opening_category_signature,
+)
 from needle.contracts import TurnResponse
+from needle.explain import message_for, turn_record
 from needle.semantic import LexicalNormalizer, NoOpSemanticReranker
-from needle.state import StateStore
+from needle.state import Polarity, StateStore
 
 
 LEXICAL_MODES = frozenset({"none", "normalize", "expand"})
@@ -38,6 +44,8 @@ class Agent:
         early_slate_size: int = 1,
         full_slate_turn: int = 5,
         full_slate_constraints: int = 4,
+        explain: bool = False,
+        explanation_history: int = 64,
         promote_disclosure_bucket: bool = False,
         promotion_bucket_limit: int = 50_000,
         promote_opening_category: bool = False,
@@ -80,6 +88,14 @@ class Agent:
         self.early_slate_size = int(early_slate_size)
         self.full_slate_turn = int(full_slate_turn)
         self.full_slate_constraints = int(full_slate_constraints)
+        self.explain = bool(explain)
+        if not 1 <= int(explanation_history) <= 10_000:
+            raise ValueError("explanation_history must be in 1..10000")
+        self.explanation_history = int(explanation_history)
+        # Session id -> one record per turn. A side channel, never a response
+        # key: `evaluation.validate_response` rejects unknown keys, so anything
+        # extra in the payload would fail the official contract.
+        self.explanations: dict[str, list[dict]] = {}
         self.promote_disclosure_bucket = bool(promote_disclosure_bucket)
         self.promotion_bucket_limit = int(promotion_bucket_limit)
         self.promote_opening_category = bool(promote_opening_category)
@@ -107,6 +123,7 @@ class Agent:
             "early_slate_size": self.early_slate_size,
             "full_slate_turn": self.full_slate_turn,
             "full_slate_constraints": self.full_slate_constraints,
+            "explain": self.explain,
             "promote_disclosure_bucket": self.promote_disclosure_bucket,
             "promotion_bucket_limit": self.promotion_bucket_limit,
             "promote_opening_category": self.promote_opening_category,
@@ -187,6 +204,73 @@ class Agent:
             "recommendations": recommendations,
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
+
+    def _explain_turn(
+        self,
+        session_id: str,
+        *,
+        turn: int,
+        category: str,
+        state: object,
+        candidates: int | None,
+        identified: bool,
+        emitted: Sequence[str],
+        withheld: bool,
+        asking: bool,
+    ) -> str:
+        """Record what this turn did and say it. Never raises.
+
+        The message is not scored, so this can only ever cost a turn by throwing,
+        and `evaluate` substitutes an empty response when `respond` raises. It is
+        wrapped accordingly, and a failure degrades to the constant the agent
+        used before rather than to no answer.
+        """
+        try:
+            # The values the *bucket* keyed on, not just the belief state's
+            # active constraints: after an override the two diverge, and naming
+            # the smaller set makes a correct count look inconsistent with the
+            # previous turn's. The longest sequence is the maximal disclosure
+            # under the most likely parse.
+            wanted: list[str] = []
+            sequences = disclosed_signature_sequences(state.messages)
+            for value in max(sequences, key=len, default=()):
+                if value not in wanted:
+                    wanted.append(value)
+            unwanted: list[str] = []
+            for constraint in state.active_constraints():
+                if constraint.polarity is Polarity.NEGATIVE:
+                    if constraint.value not in unwanted:
+                        unwanted.append(constraint.value)
+                elif not wanted and constraint.value not in wanted:
+                    wanted.append(constraint.value)
+            record = turn_record(
+                turn=turn,
+                category=category,
+                wanted=wanted,
+                unwanted=unwanted,
+                candidates=candidates,
+                identified=identified,
+                emitted=emitted,
+                withheld=withheld,
+            )
+            history = self.explanations.setdefault(session_id, [])
+            history.append(record)
+            if len(self.explanations) > self.explanation_history:
+                # Bounded: a scoring run opens 200 sessions and never reads these
+                # back, so the oldest are dropped rather than grown without limit.
+                for stale in list(self.explanations)[: -self.explanation_history]:
+                    del self.explanations[stale]
+            return message_for(record, asking=asking)
+        except Exception as error:  # noqa: BLE001 - a dull message beats a lost turn
+            self.respond_failures.append(
+                f"session={session_id} turn={turn!r}: explain: "
+                f"{type(error).__name__}: {error}"
+            )
+            return (
+                "What else matters most for the item you want?"
+                if asking
+                else "These are the closest catalog matches for your current request."
+            )
 
     @staticmethod
     def _safe_turn(turn: object) -> int:
@@ -289,6 +373,18 @@ class Agent:
             if ask_attribute
             else "These are the closest catalog matches for your current request."
         )
+        if self.explain:
+            message = self._explain_turn(
+                session_id,
+                turn=turn,
+                category=category_evidence,
+                state=state,
+                candidates=len(promoted) if promoted else None,
+                identified=identified is not None,
+                emitted=recommendation_ids,
+                withheld=len(recommendation_ids) < limit,
+                asking=ask_attribute is not None,
+            )
         return {
             "message": message,
             "ask_attribute": ask_attribute,
