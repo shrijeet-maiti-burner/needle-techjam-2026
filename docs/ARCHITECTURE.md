@@ -10,7 +10,8 @@ official evaluator
 starter.agent.Agent
       |
 versioned state -> bounded signature promotion -> fielded sparse fallback
-       -> bounded popularity rerank -> no-op semantic boundary -> strict response
+       -> soft category/popularity rerank -> seen exclusion
+       -> no-op semantic boundary -> strict response
 ```
 
 ## Stable H6 interfaces
@@ -20,34 +21,40 @@ versioned state -> bounded signature promotion -> fielded sparse fallback
 - `NoOpSemanticReranker.rerank` proves the optional stage can be bypassed without failure.
 - `Agent.respond` owns the public contract, ten-item cap, deterministic message, and assembly.
 
-The repeated-`other` action is still a control, not the final question policy or innovation claim. The official FTS weights are retained because both measured alternatives failed their gates.
+The repeated-`other` action is selected for the released simulator because it
+returns up to two undisclosed constraints regardless of type. It remains an
+evaluator-specific control rather than a claim that real customers should only
+receive generic questions. The original FTS weights are retained because both
+measured alternatives failed their gates.
 
 ## Current measured candidate
 
 The development and submission adapters use the immutable primary preset:
 
-- versioned state with sentence-bounded subject preservation on a scoped preference override;
+- versioned state that retracts the stated opening preference while preserving later answers on a scoped preference override;
 - exact catalog-signature promotion only for non-empty buckets of at most 100;
 - sparse `OR` fallback with weights `6/4/2.5/2.5/1.5/1`;
-- bounded popularity strength 0.20, slate ten, and no seen-item exclusion;
+- soft opening-category coverage strength 1.00 and popularity strength 0.30;
+- seen-item exclusion within each intent version and a ten-item slate;
 - lexical normalization, expansion, fuzzy matching, and model reranking disabled.
 
-The pure sparse preset is the rollback. The signature asset is a catalog-bound
-32,034,816-byte SQLite file and is never built silently by an adapter. The
-development adapter requires the ignored local asset; the submission adapter
-requires the release-bundled asset.
+The pure sparse preset is the rollback and retains the selected safe state and
+soft priors. The optional signature asset is catalog-bound by SHA-256. If it is
+missing, corrupt, or bound to another catalog, construction records the reason
+and rebuilds the equivalent in-memory index rather than aborting the run.
 
-This is a public-development selection, not a freeze. Deterministic surface and
-paraphrase runs still regress materially, and the final asset has not completed
-a clean-bundle rehearsal.
+The selected primary measures TechnicalScore 0.878039 on the released set and
+0.867627 on a 1,000-target catalog-disjoint transfer proxy. A source-only clean
+bundle reproduces 0.878039 without the optional asset. Deterministic accents,
+filler, paraphrase, and typo slices still fail the absolute robustness gate, so
+this remains development evidence rather than a private-performance claim.
 
 ## Next experiment-driven extensions
 
-1. EXP-013 and EXP-014 decide whether one constraint-ambiguity representation should control questions and later-rank coverage. Failure removes that controller without breaking the core path.
-2. EXP-010 adds a session driver and independent surface/semantic slices rather than more hand-written marker patches.
-3. Any optional model must beat the no-op and lexical controls on public score, perturbation slices, license, offline startup, latency, memory, disk, and clean packaging.
-4. The deliberately failing hard-popularity filter remains to complete EXP-016's diagnostic matrix; it can never become the production policy.
-5. Yazhiniyan independently reproduces the selected runs and owns final clean-package, faithful-trace, and submission checks.
+1. EXP-013 and EXP-014 may still test question specificity and later-rank cluster coverage, but only behind the selected deterministic path.
+2. Robustness work targets general normalization and retrieval invariants; more released-template phrase patches are not acceptable evidence.
+3. Any optional model must beat the no-op and lexical controls on released score, disjoint targets, perturbation slices, license, offline startup, latency, memory, disk, and clean packaging.
+4. Final release work rebuilds the optional asset from the exact scoring catalog and repeats the clean extracted-bundle command.
 
 ## Invariants
 

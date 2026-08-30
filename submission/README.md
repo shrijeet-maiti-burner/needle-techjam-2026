@@ -1,6 +1,6 @@
 # Submission run notes
 
-Status: measured development candidate, not a frozen release.
+Status: selected development primary; source-only clean-bundle rehearsal passed.
 
 ## Environment
 
@@ -71,8 +71,10 @@ python scripts/build_signature_index.py
 ## Packaging
 
 The final bundle includes only required source, helper modules, dependency
-instructions, and the catalog-bound signature asset. The participant kit,
-datasets, evaluator, raw outputs, secrets, and development-only files must not be
-packaged. Before release, rebuild the asset from the exact scoring catalog,
-verify its catalog binding and SHA-256, and run the evaluator from a clean
-extracted bundle.
+instructions, and optionally the catalog-bound signature asset. The participant
+kit, datasets, evaluator, raw outputs, secrets, and development-only files must
+not be packaged. A clean source-only `git archive` at commit `531ad33b` rebuilt
+the missing index and reproduced TechnicalScore 0.878039. Before release,
+rebuild any optional asset from the exact scoring catalog, verify its catalog
+binding and SHA-256, and repeat the evaluator command from a clean extracted
+bundle.

@@ -23,6 +23,7 @@ class Agent:
         query_mode: str = "any",
         field_weights: Sequence[float] = DEFAULT_FIELD_WEIGHTS,
         popularity_strength: float = 0.0,
+        category_strength: float = 0.0,
         signature_bucket_limit: int = 100,
         signature_index_path: str | Path | None = None,
         candidate_pool: int = 200,
@@ -43,6 +44,7 @@ class Agent:
             query_mode=query_mode,
             field_weights=field_weights,
             popularity_strength=popularity_strength,
+            category_strength=category_strength,
             signature_bucket_limit=signature_bucket_limit,
             signature_index_path=signature_index_path,
         )
@@ -58,6 +60,7 @@ class Agent:
             "query_mode": query_mode,
             "field_weights": list(field_weights),
             "popularity_strength": float(popularity_strength),
+            "category_strength": float(category_strength),
             "signature_bucket_limit": int(signature_bucket_limit),
             "signature_index_path": (
                 str(self.catalog.signature_index_path)

@@ -33,6 +33,10 @@ COLOR_RE = re.compile(
     r"\b(black|white|blue|red|pink|green|brown|gray|grey|purple|yellow|orange)\b",
     re.IGNORECASE,
 )
+CATEGORY_REQUEST_RE = re.compile(
+    r"\b(?:looking\s+for|need|want)\s+(?:an?\s+)?(.+?)(?=[,.;!?]|$)",
+    re.IGNORECASE,
+)
 
 SEARCH_FIELDS = (
     "title",
@@ -119,6 +123,16 @@ def query_terms(text: str, limit: int = 60) -> list[str]:
         if len(token) > 1 and token.lower() not in STOPWORDS
     )
     return list(dict.fromkeys(terms))[:limit]
+
+
+def extract_category_terms(messages: Iterable[str]) -> frozenset[str]:
+    """High-precision category words from the opening shopping request."""
+
+    first = next(iter(messages), "")
+    match = CATEGORY_REQUEST_RE.search(first)
+    if match is None:
+        return frozenset()
+    return frozenset(query_terms(match.group(1), limit=12))
 
 
 def extract_query_signatures(messages: Iterable[str]) -> tuple[str, ...]:
@@ -274,6 +288,7 @@ class CatalogIndex:
         query_mode: str = "any",
         field_weights: Sequence[float] = DEFAULT_FIELD_WEIGHTS,
         popularity_strength: float = 0.0,
+        category_strength: float = 0.0,
         signature_bucket_limit: int = 100,
         signature_index_path: str | Path | None = None,
     ) -> None:
@@ -288,6 +303,8 @@ class CatalogIndex:
             raise ValueError("field_weights must be finite and non-negative")
         if not math.isfinite(popularity_strength) or not 0.0 <= popularity_strength <= 1.0:
             raise ValueError("popularity_strength must be between 0 and 1")
+        if not math.isfinite(category_strength) or not 0.0 <= category_strength <= 1.0:
+            raise ValueError("category_strength must be between 0 and 1")
         if not 1 <= int(signature_bucket_limit) <= 50_000:
             raise ValueError("signature_bucket_limit must be in 1..50000")
         if signature_index_path is not None and retrieval_mode != "signature_first":
@@ -300,6 +317,7 @@ class CatalogIndex:
         self.query_mode = query_mode
         self.field_weights = parsed_weights
         self.popularity_strength = float(popularity_strength)
+        self.category_strength = float(category_strength)
         self.signature_bucket_limit = int(signature_bucket_limit)
         self.signature_index_path = (
             Path(signature_index_path).expanduser().resolve()
@@ -311,6 +329,7 @@ class CatalogIndex:
         self._signature_count_cache: dict[str, int] = {}
         self.product_count = 0
         self._rating_numbers: dict[str, int] = {}
+        self._category_terms: dict[str, frozenset[str]] = {}
         self._max_log_rating = 1.0
         self.signature_index_fallback: str | None = None
         self._build()
@@ -332,6 +351,7 @@ class CatalogIndex:
                 self.connection = sqlite3.connect(":memory:")
                 self.product_count = 0
                 self._rating_numbers.clear()
+                self._category_terms.clear()
                 self._max_log_rating = 1.0
                 self._build()
 
@@ -364,6 +384,9 @@ class CatalogIndex:
                 seen.add(parent_asin)
                 rating_number = max(0, int(product.get("rating_number") or 0))
                 self._rating_numbers[parent_asin] = rating_number
+                self._category_terms[parent_asin] = frozenset(
+                    query_terms(_text(product.get("categories")), limit=30)
+                )
                 batch.append(
                     (
                         parent_asin,
@@ -505,8 +528,15 @@ class CatalogIndex:
     def _popularity_prior(self, parent_asin: str) -> float:
         return math.log1p(self._rating_numbers[parent_asin]) / self._max_log_rating
 
-    def _rerank_with_popularity(self, rows: list[tuple[str, float]]) -> list[tuple[str, float]]:
-        if self.popularity_strength == 0.0 or len(rows) < 2:
+    def _rerank_with_priors(
+        self,
+        rows: list[tuple[str, float]],
+        category_terms: frozenset[str],
+    ) -> list[tuple[str, float]]:
+        if (
+            (self.popularity_strength == 0.0 and (self.category_strength == 0.0 or not category_terms))
+            or len(rows) < 2
+        ):
             return rows
         scores = [score for _, score in rows]
         low, high = min(scores), max(scores)
@@ -515,7 +545,16 @@ class CatalogIndex:
         def combined(item: tuple[str, float]) -> tuple[float, float, str]:
             parent_asin, sparse_score = item
             relevance = 1.0 if span == 0.0 else (sparse_score - low) / span
-            value = relevance + self.popularity_strength * self._popularity_prior(parent_asin)
+            category_coverage = (
+                len(category_terms.intersection(self._category_terms[parent_asin])) / len(category_terms)
+                if category_terms
+                else 0.0
+            )
+            value = (
+                relevance
+                + self.popularity_strength * self._popularity_prior(parent_asin)
+                + self.category_strength * category_coverage
+            )
             return (-value, -sparse_score, parent_asin)
 
         return sorted(rows, key=combined)
@@ -532,13 +571,17 @@ class CatalogIndex:
         if bounded_limit == 0:
             return []
         excluded = frozenset(excluded_ids)
+        message_list = tuple(messages)
         fetch_limit = min(50_000, bounded_limit + len(excluded) + 200)
-        sparse_rows = self._rerank_with_popularity(self._sparse_rows(text, fetch_limit))
+        sparse_rows = self._rerank_with_priors(
+            self._sparse_rows(text, fetch_limit),
+            extract_category_terms(message_list),
+        )
         sparse_scores = dict(sparse_rows)
 
         ordered: list[tuple[str, float]] = []
         if self.retrieval_mode == "signature_first":
-            _, exact_ids = self.signature_candidates(messages, limit=self.signature_bucket_limit)
+            _, exact_ids = self.signature_candidates(message_list, limit=self.signature_bucket_limit)
             if 0 < len(exact_ids) <= self.signature_bucket_limit:
                 sparse_positions = {parent_asin: index for index, (parent_asin, _) in enumerate(sparse_rows)}
                 exact_order = sorted(

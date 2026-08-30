@@ -9,8 +9,10 @@ class PresetTest(unittest.TestCase):
     def test_primary_is_the_measured_signature_configuration(self) -> None:
         self.assertEqual(PRIMARY_AGENT_KWARGS["retrieval_mode"], "signature_first")
         self.assertEqual(PRIMARY_AGENT_KWARGS["signature_bucket_limit"], 100)
-        self.assertEqual(PRIMARY_AGENT_KWARGS["popularity_strength"], 0.20)
-        self.assertEqual(PRIMARY_AGENT_KWARGS["override_policy"], "preserve_subject")
+        self.assertEqual(PRIMARY_AGENT_KWARGS["popularity_strength"], 0.30)
+        self.assertEqual(PRIMARY_AGENT_KWARGS["category_strength"], 1.00)
+        self.assertIs(PRIMARY_AGENT_KWARGS["exclude_seen"], True)
+        self.assertEqual(PRIMARY_AGENT_KWARGS["override_policy"], "retract_stated")
         self.assertEqual(PRIMARY_AGENT_KWARGS["lexical_mode"], "none")
         self.assertEqual(PRIMARY_AGENT_KWARGS["slate_size"], 10)
 
