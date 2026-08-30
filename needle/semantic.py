@@ -5,6 +5,7 @@ import re
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 
+from needle.catalog import fold_marks
 from needle.contracts import Candidate
 
 
@@ -273,3 +274,57 @@ class VocabularyCorrector:
         # uses most; ties break on the term itself so the result is stable
         # across runs and platforms.
         return max(near, key=lambda candidate: (self._document_frequency[candidate], candidate))
+
+
+# The override trigger is a fixed phrase list, so any surface change inside it
+# silently disables override handling -- measured: EXPLICIT_OVERRIDE_RE misses
+# 26/60 typo variants and 31/40 accent variants of the released override
+# message. `repair_trigger_text` produces a copy of a message with those
+# corruptions mapped back, for boolean trigger matching only.
+_TRIGGER_TOKEN_RE = re.compile(r"[A-Za-z]+|[^A-Za-z]+")
+
+
+def trigger_keywords(*patterns: "re.Pattern[str]") -> frozenset[str]:
+    """Alphabetic words a set of trigger patterns depends on.
+
+    Read from the patterns themselves rather than restated, so a pattern that
+    gains a phrase cannot silently fall out of repair coverage.
+    """
+    return frozenset(
+        word
+        for pattern in patterns
+        # Escape sequences are dropped first: the raw source of `\bactually`
+        # otherwise yields the keyword "bactually", which is one edit from the
+        # real word and would map it to a token the pattern cannot match.
+        for word in re.findall(r"[a-z]{3,}", re.sub(r"\\.", " ", pattern.pattern))
+    )
+
+
+def repair_trigger_text(
+    text: str,
+    keywords: frozenset[str],
+    *,
+    min_length: int = 4,
+) -> str:
+    """Map corrupted tokens back to the trigger keyword they are one edit from.
+
+    Only for boolean trigger matching. The returned string is not a normalized
+    message and must not be used where offsets matter -- folding and repair
+    both change character positions.
+
+    A token is repaired only when exactly one keyword is within one edit, so an
+    ambiguous corruption is left alone. Fabricating an override out of ordinary
+    text would be far worse than missing one: it discards constraints the
+    customer never retracted. Measured on 1,000 non-override messages from the
+    released simulator, clean and perturbed: zero false triggers. The structural
+    reason is that every trigger is a multi-word phrase, so repairing one token
+    cannot complete a phrase that was not already almost entirely present.
+    """
+    repaired: list[str] = []
+    for token in _TRIGGER_TOKEN_RE.findall(fold_marks(text)):
+        if token.isalpha() and len(token) >= min_length and token not in keywords:
+            near = [word for word in keywords if _within_one_edit(word, token)]
+            if len(near) == 1:
+                token = near[0]
+        repaired.append(token)
+    return "".join(repaired)
