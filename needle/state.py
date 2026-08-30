@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Mapping
@@ -212,6 +213,47 @@ def _is_negated(message: str, offset: int) -> bool:
     return bool(NEGATION_RE.search(window))
 
 
+def fold_marks_in_place(message: str) -> str:
+    """Strip combining marks without moving a single character offset.
+
+    `ATTRIBUTE_VOCABULARY` is ASCII, so `_find_values` matches nothing at all
+    against an accented value: "cótton" yields no constraint where "cotton"
+    yields one, and the belief state simply loses the disclosure. That is the
+    `needle/state.py` half of the accents gate, raised by Aryaman on #13.
+
+    The obvious fix, folding the whole message with NFKD and dropping combining
+    characters, is not safe here. It is not length-preserving, and
+    `_declined_regions`, `inside_declined` and `_is_negated` all address this
+    message by offset, so every offset past an accent would be wrong by one.
+
+    Folding one character at a time keeps the mapping 1:1. A character is
+    replaced only when its own decomposition is a single ASCII base plus
+    combining marks, which is exactly the accented-Latin case; anything else,
+    including ligatures like "fi" that decompose to two letters, is left alone.
+    That matches `remove_diacritics 2` in the FTS5 tokenizer rather than
+    exceeding it, so the two sides agree on what a term is.
+
+    Deliberately not `needle.catalog.fold_marks`: that one is free to change
+    length because it feeds a tokenizer, and importing it here would silently
+    reintroduce the offset bug the moment it is used on a message.
+    """
+    if message.isascii():
+        return message
+    folded: list[str] = []
+    for character in message:
+        decomposed = unicodedata.normalize("NFKD", character)
+        base = decomposed[0]
+        if (
+            len(decomposed) > 1
+            and base.isascii()
+            and all(unicodedata.combining(mark) for mark in decomposed[1:])
+        ):
+            folded.append(base)
+        else:
+            folded.append(character)
+    return "".join(folded)
+
+
 def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
     """Attribute, value, polarity triples stated in one message.
 
@@ -221,7 +263,12 @@ def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
     never expressed. Suppression covers the declined attribute by name and
     any value stated inside that clause, while the rest of the message is
     extracted normally.
+
+    Accents are folded first, offsets intact, so a disclosure survives being
+    written with them. The values appended below are vocabulary phrases rather
+    than slices of the message, so nothing accented reaches the belief state.
     """
+    message = fold_marks_in_place(message)
     regions = _declined_regions(message)
     declined = _declined_attributes(message, regions)
 
@@ -309,10 +356,16 @@ class SessionState:
     # -- constraint bookkeeping ----------------------------------------- #
 
     def _supersede_all(self) -> None:
-        """Targeted invalidation is an open question (EXP-006). Until that
-        evidence exists this mirrors the previous full-reset behavior so the
-        override path stays unchanged, while recording the superseded events
-        rather than discarding them."""
+        """Supersede every active constraint at an override, recording the
+        events rather than discarding them.
+
+        EXP-006 asked whether targeted invalidation beats this. It is closed as
+        not actionable (docs/evidence/EXP_006_SHAPES.md): across 45 well-formed
+        override sessions, 30 public and 15 held out on card shapes the public
+        set omits, `retract_stated` hits 100%, so there is no session a targeted
+        policy could rescue. The remaining misses are on degenerate cards where
+        `old_value` and `new_value` are the same string and there is nothing to
+        invalidate selectively. Reopen only if a well-formed override misses."""
         self.constraints = [
             replace(constraint, status=ConstraintStatus.SUPERSEDED)
             if constraint.status is ConstraintStatus.ACTIVE

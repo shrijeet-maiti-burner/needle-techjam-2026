@@ -7,20 +7,33 @@ from needle.agent import Agent as CoreAgent
 from needle.presets import PRIMARY_AGENT_KWARGS
 
 
-DEFAULT_INDEX = (
-    Path(__file__).resolve().parents[1]
-    / ".artifacts"
-    / "indexes"
-    / "catalog-signatures.sqlite3"
-)
+_ROOT = Path(__file__).resolve().parents[1]
+
+# The evaluator imports `starter.agent.Agent`, so this is the path that actually
+# runs. Prefer the asset that ships inside the bundle; fall back to the local
+# development build, which is under `.artifacts/` and therefore gitignored and
+# absent from any bundle. Neither is required: `CatalogIndex` rebuilds the
+# signatures in memory when the index is missing or does not match the catalog.
+BUNDLED_INDEX = _ROOT / "submission" / "assets" / "catalog-signatures.sqlite3"
+DEVELOPMENT_INDEX = _ROOT / ".artifacts" / "indexes" / "catalog-signatures.sqlite3"
+
+
+def default_index() -> Path | None:
+    """First index that exists, or None to rebuild from the catalog."""
+    override = os.environ.get("NEEDLE_SIGNATURE_INDEX")
+    if override:
+        return Path(override)
+    for candidate in (BUNDLED_INDEX, DEVELOPMENT_INDEX):
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 class Agent(CoreAgent):
     def __init__(self, catalog_path: str | Path = "data/catalog.jsonl") -> None:
-        index_path = Path(os.environ.get("NEEDLE_SIGNATURE_INDEX", DEFAULT_INDEX))
         super().__init__(
             catalog_path,
-            signature_index_path=index_path,
+            signature_index_path=default_index(),
             **PRIMARY_AGENT_KWARGS,
         )
 
