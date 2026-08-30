@@ -12,10 +12,14 @@ from typing import Final, Mapping
 # - the primary selection, including `category_strength`, is in
 #   FINAL_SELECTION_20260830.md
 # - `override_policy` and `exclude_seen` are in EXP_006_008_018.md
-# - `popularity_strength` has an open review in EXP_006_SHAPES.md: it is the one
-#   value here whose disjoint-set evidence disagrees with its released-set
-#   evidence, and the review recommends lowering it. Do not tune it against the
-#   released set alone.
+# - `popularity_strength` was the one value here whose disjoint-set evidence
+#   disagreed with its released-set evidence (review in EXP_006_SHAPES.md).
+#   EXP_022.md retracts the released-set result: the public targets are sampled
+#   from the popular tail, so that set cannot judge a popularity prior at all.
+#   EXP_023.md then measures the value out of the emission path entirely -- once
+#   promotion decides rank one, 0.00, 0.30 and 1.00 are within 0.0014 of each
+#   other on the released set and 0.30 is the better of them on the omitted-shape
+#   holdout. It stays at 0.30. Do not tune it against the released set alone.
 PRIMARY_AGENT_KWARGS: Final[Mapping[str, object]] = MappingProxyType(
     {
         "retrieval_mode": "signature_first",

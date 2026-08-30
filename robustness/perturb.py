@@ -62,8 +62,19 @@ _STOPWORDS = frozenset(
 )
 
 # Genuine synonyms for the clothing/shoe/jewelry domain in US retail register.
-# Bidirectional. Kept small and hand-verified; a wrong entry would turn a
-# "meaning-preserving" slice into a silent meaning change.
+# Bidirectional. Hand-verified; a wrong entry would turn a "meaning-preserving"
+# slice into a silent meaning change, so near-neighbours are deliberately absent:
+# a cap is a kind of hat and a loafer is a kind of slip-on, but neither pair is
+# interchangeable, and gloves/mittens and sandals/flip-flops are simply
+# different products.
+#
+# The table has to intersect the vocabulary the released set actually uses or
+# the slice tests nothing. `initial_message` opens every session with
+# `coarse_category(...)`, and the public set draws those from ~180 distinct
+# category words. The original ten-word table met three of them (`pants`,
+# `sneakers`, `sunglasses`) and fired on 15 of 1000 messages, so its clean result
+# was vacuous rather than reassuring. The additions below are chosen from the
+# category words the set does use, and take that to 11 words met.
 _SYNONYMS: dict[str, str] = {
     "sneakers": "trainers",
     "trainers": "sneakers",
@@ -75,6 +86,34 @@ _SYNONYMS: dict[str, str] = {
     "shades": "sunglasses",
     "eyeglasses": "glasses",
     "glasses": "eyeglasses",
+    # US/UK register pairs, fully interchangeable
+    "sweaters": "jumpers",
+    "jumpers": "sweaters",
+    "sweater": "jumper",
+    "jumper": "sweater",
+    "panties": "knickers",
+    "knickers": "panties",
+    "backpacks": "rucksacks",
+    "rucksacks": "backpacks",
+    "backpack": "rucksack",
+    "rucksack": "backpack",
+    "vests": "waistcoats",
+    "waistcoats": "vests",
+    "vest": "waistcoat",
+    "waistcoat": "vest",
+    # same-register pairs
+    "handbags": "purses",
+    "purses": "handbags",
+    "handbag": "purse",
+    "purse": "handbag",
+    "wallets": "billfolds",
+    "billfolds": "wallets",
+    "wallet": "billfold",
+    "billfold": "wallet",
+    "watches": "wristwatches",
+    "wristwatches": "watches",
+    "underwear": "undergarments",
+    "undergarments": "underwear",
 }
 
 _CONTRACTIONS: dict[str, str] = {

@@ -81,6 +81,8 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
     exhausted: set[str] = set()
     evidence: dict[str, int] = {}
     opening: dict[str, str] = {}
+    stale: dict[str, tuple] = {}
+    walked: dict[str, int] = {}
 
     def observe(self, user_message: str, turn: int) -> None:
         # Holding the slate back costs turns, and every held turn appends
@@ -108,11 +110,12 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
         state = self.state._sessions[session_id]
 
         limit = None
-        if "prefix" in signals:
+        if signals & {"prefix", "promote"}:
             if turn == 1:
                 # An override clears the message history, so the category has to
                 # be captured from the opening line while it is still there.
                 opening[session_id] = _opening_category(user_message)
+        if "prefix" in signals:
             identified = _identify(
                 state.messages, opening.get(session_id, ""), "category" in signals
             )
@@ -123,6 +126,112 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
                 shown.add(identified)
                 self._seen_by_version[key] = set(shown)
                 return response
+
+        if "opening" in signals and turn == 1 and not _promote(
+            state.messages, opening.get(session_id, ""),
+            "category" in signals, _install.promote_cap,
+        ):
+            # The turn-one guess for a browsing or boundary session, which has
+            # disclosed nothing but the coarse category. It is a *fallback*: a
+            # buying session states a hard constraint in its opening line and
+            # its depth-one bucket is a far better guess, so the bare category
+            # is used only where there is no disclosure to promote from at all.
+            # The gate emits exactly
+            # one product on turn one either way, so this swaps one guess for
+            # another and cannot cost a turn: being wrong here is being wrong
+            # where the shipped ranking was going to be wrong too.
+            #
+            # It is deliberately *not* the same thing as promoting the empty
+            # prefix generally. That variant was measured and rejected (see
+            # EXP_023.md): the bare category bucket runs to hundreds of
+            # products, and letting it drive later turns walks a popularity
+            # ordering that never reaches the target, then crowds the shipped
+            # slate out of the release-floor merge. Confining it to turn one
+            # takes the guess and leaves the failure mode behind.
+            opening_list = _promote(
+                [], opening.get(session_id, ""), "category" in signals,
+                10 ** 9, empty_prefix=True,
+            )
+            if opening_list:
+                key = (session_id, state.intent_version)
+                shown = emitted.setdefault(key, set())
+                shown.add(opening_list[0])
+                self._seen_by_version[key] = set(shown)
+                response["recommendations"] = [{"parent_asin": opening_list[0]}]
+                return response
+
+        if "promote" in signals:
+            shortlist = _promote(
+                state.messages, opening.get(session_id, ""),
+                "category" in signals, _install.promote_cap,
+                empty_prefix="catpop" in signals,
+            )
+            if shortlist and "release_stale" in signals:
+                # A bucket that has not changed since last turn is a bucket the
+                # turn added no evidence to. On a clean transcript that barely
+                # happens: every reply discloses two more constraints and
+                # deepens the prefix, so the bucket is a different, smaller one
+                # each turn. On a corrupted one the disclosed signature stops
+                # keying the index, promotion keeps resolving to the same stale
+                # bucket, and walking it one product per turn is exactly the
+                # starvation that costs targets. Releasing there hands the turn
+                # back to the shipped ranking while turns remain to use it.
+                previous = stale.get(session_id)
+                stale[session_id] = tuple(shortlist[:8])
+                if previous is not None and previous == stale[session_id] and len(shortlist) > 1:
+                    shortlist = []
+
+            if shortlist and _install.walk_limit and walked.get(session_id, 0) >= _install.walk_limit:
+                # A bounded walk. Promotion converts within one or two emissions
+                # on a clean transcript, so a session still guessing after
+                # `walk_limit` of them is one whose disclosed signature is
+                # keying the wrong bucket. Every further turn spent on it is a
+                # turn the shipped ranking does not get, and that is how a
+                # perturbed session loses its target outright rather than
+                # merely late. Beyond the limit the bucket is abandoned.
+                shortlist = []
+
+            if shortlist:
+                key = (session_id, state.intent_version)
+                shown = emitted.setdefault(key, set())
+                if turn >= late_turn:
+                    # The release floor still has to guarantee the hit, so the
+                    # shortlist is merged *ahead of* the shipped slate rather
+                    # than replacing it. Ordering below rank one is the shipped
+                    # ordering; nothing is dropped.
+                    #
+                    # It is merged *bounded*, though. A corrupted transcript can
+                    # canonicalise to a signature that keys some other product's
+                    # bucket, and an unbounded merge would then fill all ten
+                    # slots with that wrong bucket and lose a target the shipped
+                    # ranking had. Half the slate is reserved for the shipped
+                    # answer, so no surface corruption can cost a hit -- only a
+                    # rank. This is the same failure the rejected empty-prefix
+                    # arm hit on the shape holdout, arriving by a different road.
+                    head = list(shortlist)[: max(1, top_k // 2)]
+                    ordered = head + [
+                        item["parent_asin"] for item in response["recommendations"]
+                        if item["parent_asin"] not in set(head)
+                    ]
+                    response["recommendations"] = [
+                        {"parent_asin": asin} for asin in ordered[:top_k]
+                    ]
+                else:
+                    pick = next((asin for asin in shortlist if asin not in shown), None)
+                    if pick is None:
+                        # The bucket is walked out: every member has already been
+                        # shown and rejected. Re-emitting its head spends the
+                        # turn on a product the evaluator has seen and passed
+                        # over, and does so again every turn until the release
+                        # floor. There is nothing left to promote, so release.
+                        shortlist = []
+                    else:
+                        response["recommendations"] = [{"parent_asin": pick}]
+                        walked[session_id] = walked.get(session_id, 0) + 1
+                if shortlist:
+                    shown.update(item["parent_asin"] for item in response["recommendations"])
+                    self._seen_by_version[key] = set(shown)
+                    return response
 
         if "exact" in signals:
             # Every constraint in the card is lifted from the target's own
@@ -140,6 +249,21 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
 
         if limit is None:
             confident = turn >= late_turn or len(state.active_constraints()) >= commit_constraints
+            if not confident and "release_unresolved" in signals and turn > 1:
+                # Promotion has just declined: the disclosed evidence resolves
+                # to no bucket at all. The entire case for holding a slate back
+                # is that the next turn sharpens a ranking promotion can act on,
+                # so when promotion cannot act there is nothing to wait for and
+                # the hold is pure MTTC -- and worse, on a corrupted transcript
+                # it starves the session, spending seven turns on one product
+                # each while only three full slates remain before MAX_TURNS.
+                # That is where the arm's robustness losses come from: it is not
+                # that the guess is wrong, it is that a wrong guess keeps the
+                # shipped ranking off the wire.
+                confident = not _promote(
+                    state.messages, opening.get(session_id, ""),
+                    "category" in signals, _install.promote_cap,
+                )
             if not confident and "exhausted" in signals and session_id in exhausted:
                 confident = True
             if not confident and "stalled_exact" in signals:
@@ -184,6 +308,8 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
 
 
 _install.fingerprint_limit = 3
+_install.promote_cap = 32
+_install.walk_limit = 0
 
 
 def _restore() -> None:
@@ -212,12 +338,15 @@ def main() -> None:
     parser.add_argument("--signals", action="append", default=None,
                         help="comma-separated: exhausted, fingerprint; repeat the flag for several arms")
     parser.add_argument("--fingerprint-limit", type=int, default=3)
+    parser.add_argument("--promote-cap", type=int, default=32,
+                        help="largest prefix shortlist worth walking (signal: promote)")
     parser.add_argument("--dataset", type=Path, default=KIT / "data/public_set.jsonl")
     parser.add_argument("--out", type=Path, default=None, help="write per-session rows here")
     parser.add_argument("--no-baseline", action="store_true")
     arguments = parser.parse_args()
 
     _install.fingerprint_limit = arguments.fingerprint_limit
+    _install.promote_cap = arguments.promote_cap
 
     catalog = KIT / "data/catalog.jsonl"
     missing = [path for path in (catalog, arguments.dataset) if not path.is_file()]
@@ -227,7 +356,7 @@ def main() -> None:
 
     samples = load_jsonl(str(arguments.dataset))
     catalog_ids, categories, products = catalog_index(str(catalog))
-    if any("prefix" in group for group in (arguments.signals or [])):
+    if any(("prefix" in group or "promote" in group) for group in (arguments.signals or [])):
         _build_prefix_index(products, categories)
 
     ks = arguments.k or [1]
@@ -334,6 +463,7 @@ def _extract_all_spans(messages):
 # `categories` field. Qualifying the prefix by it takes unique identification
 # from 140 sessions to 168 at full disclosure, and from 65 to 109 by turn two.
 _PREFIX_INDEX: dict[tuple, list[str]] = {}
+_POPULARITY: dict[str, float] = {}
 _FIRST4_INDEX: dict[frozenset, list[str]] = {}
 _CATEGORY_INDEX: dict[tuple, list[str]] = {}
 _CATEGORY_SET_INDEX: dict[tuple, list[str]] = {}
@@ -346,10 +476,16 @@ def _build_prefix_index(products, categories) -> None:
     if _PREFIX_INDEX:
         return
     for asin, product in products.items():
+        count = product.get("rating_number")
+        _POPULARITY[asin] = float(count) if isinstance(count, (int, float)) else 0.0
         signature = needle_catalog.product_signatures(product)[:4]
         coarse = needle_catalog.canonical_signature(
             official_coarse_category(categories.get(asin, []))
         )
+        # Depth 0 is the coarse category itself. `initial_message` states it
+        # verbatim on turn one, so a browsing session that has disclosed
+        # nothing at all still has one catalog-grounded key to rank by.
+        _CATEGORY_INDEX.setdefault((coarse, ()), []).append(asin)
         for depth in range(1, len(signature) + 1):
             _PREFIX_INDEX.setdefault(signature[:depth], []).append(asin)
             _CATEGORY_INDEX.setdefault((coarse, signature[:depth]), []).append(asin)
@@ -358,8 +494,33 @@ def _build_prefix_index(products, categories) -> None:
             _CATEGORY_SET_INDEX.setdefault((coarse, frozenset(signature)), []).append(asin)
 
 
+# Discourse markers the robustness slices insert and that a real shopper says
+# anyway. They carry no product meaning, and the arm matches on surface text, so
+# a single "um," between "For that" and "what matters is" is enough to switch
+# promotion off for the rest of the session. Stripping them before matching
+# costs nothing on clean text and is what makes the arm survive perturbation.
+_FILLER_RE = re.compile(
+    r"\b(?:um|uh|er|like|basically|honestly|seriously|actually|really|"
+    r"you\s+know|i\s+guess|i\s+think|i\s+mean|sort\s+of|kind\s+of|"
+    r"to\s+be\s+honest|if\s+that\s+makes\s+sense|please)\b[,\s]*",
+    re.IGNORECASE,
+)
+
+
+def _normalize_for_match(message: str) -> str:
+    """Fold marks, drop discourse fillers, collapse whitespace.
+
+    `SessionState.observe` folds accents for the *override trigger*, but the arm
+    reads `user_message` and `state.messages` for its own lookups, so it has to
+    do the same folding itself or an accented category never matches its index.
+    """
+    folded = needle_state.fold_marks_in_place(message)
+    stripped = _FILLER_RE.sub(" ", folded)
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
 def _opening_category(message: str) -> str:
-    match = _OPENING_CATEGORY_RE.search(message.strip())
+    match = _OPENING_CATEGORY_RE.search(_normalize_for_match(message))
     return needle_catalog.canonical_signature(match.group(1)) if match else ""
 
 
@@ -376,6 +537,7 @@ def _clause_parses(message: str) -> list[tuple[str, ...]]:
     precision 1.000, so a wrong parse cannot produce a wrong answer, only no
     answer.
     """
+    message = _normalize_for_match(message)
     marker = needle_catalog.SIGNATURE_MARKER_RE.search(message)
     if not marker:
         return [()]
@@ -437,6 +599,69 @@ def _identify(messages, category: str, use_category: bool) -> str | None:
                 answers.add(candidates[0])
                 break
     return answers.pop() if len(answers) == 1 else None
+
+
+# --- EXP-023: prefix promotion ----------------------------------------------
+#
+# `_identify` answers only when the disclosed prefix resolves to exactly one
+# product, and hands every other session back to the unmodified pipeline. That
+# throws away the part of the signal that is doing most of the work. Measured
+# over the 200 public cards, against the same `(coarse_category, prefix)` index:
+#
+# | disclosed constraints | median set | target in set | most-popular member is the target |
+# |---|---:|---:|---:|
+# | 1 | 26 | 200/200 | 118/200 |
+# | 2 |  1 | 200/200 | 178/200 |
+# | 3 |  1 | 200/200 | 189/200 |
+# | 4 |  1 | 200/200 | 192/200 |
+#
+# The target is inside the set at every depth because the card is built from the
+# target's own signature values, so the set is a *guaranteed* shortlist, not a
+# guess. What is a guess is the order within it, and `rating_number` orders it
+# well: one disclosed constraint already puts the target first in 118 sessions,
+# where the shipped BM25 ranking has to pick it out of the whole coarse
+# category. Promotion therefore replaces the emitted product, never the
+# candidate set, and cannot lose a target the pipeline would have found: a wrong
+# promotion costs one turn (0.02) and the next turn promotes the next member.
+#
+# Unlike identification this is evidence rather than proof, so it is capped: a
+# set larger than `promote_cap` is not a shortlist worth walking and the session
+# falls back to the shipped ranking.
+def _promote(messages, category: str, use_category: bool, cap: int,
+             empty_prefix: bool = False) -> list[str]:
+    """The disclosed prefix's candidate shortlist, most popular first."""
+    sequences = _disclosed_candidates(messages)
+    if empty_prefix and use_category and category:
+        # Turn one of a browsing or boundary session discloses nothing, so the
+        # deepest prefix available is the empty one and the shortlist is the
+        # whole coarse category. Ranking it by `rating_number` is the best
+        # turn-one guess the evidence supports: the most popular product in the
+        # stated category is the target in 32 of the 90 public browsing and
+        # boundary sessions, against 12 that the shipped ranking finds.
+        sequences = list(sequences) + [()]
+    if not sequences:
+        return []
+    # Deepest disclosure first: a longer prefix is strictly more evidence, and
+    # among equal depths the smaller set is the more resolved one.
+    best: list[str] | None = None
+    best_key: tuple[int, int] | None = None
+    for disclosed in sequences:
+        lookups = []
+        if use_category and category:
+            lookups.append(_CATEGORY_INDEX.get((category, disclosed)))
+            lookups.append(_CATEGORY_SET_INDEX.get((category, frozenset(disclosed))))
+        lookups.append(_PREFIX_INDEX.get(disclosed))
+        lookups.append(_FIRST4_INDEX.get(frozenset(disclosed)))
+        for candidates in lookups:
+            if not candidates or len(candidates) > cap:
+                continue
+            key = (-len(disclosed), len(candidates))
+            if best_key is None or key < best_key:
+                best_key, best = key, candidates
+            break
+    if best is None:
+        return []
+    return sorted(best, key=lambda asin: (-_POPULARITY.get(asin, 0.0), asin))
 
 
 if __name__ == "__main__":
