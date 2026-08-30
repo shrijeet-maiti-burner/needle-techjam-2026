@@ -9,8 +9,8 @@ official evaluator
       |
 starter.agent.Agent
       |
-versioned state -> safe category-bound card identification
-       -> bounded signature promotion -> fielded sparse fallback
+versioned state -> safe category-bound disclosure ranking/identification
+       -> bounded signature retrieval -> fielded sparse fallback
        -> soft category/popularity rerank -> adaptive slate + seen exclusion
        -> no-op semantic boundary -> strict response
 ```
@@ -34,6 +34,7 @@ The development and submission adapters use the immutable primary preset:
 
 - versioned state that retracts the stated opening preference while preserving later answers on a scoped preference override;
 - exact full-value and clause-level catalog-signature promotion only for non-empty buckets of at most 500;
+- popularity-ordered category-plus-disclosure buckets, including the opening category bucket, with every plausible semicolon parse unioned before emission;
 - direct identification only for category-bound card keys that are unique in the full catalog, with agreement across plausible semicolon parses;
 - ordered-prefix identification only before intent revision, and unordered identification only after all four disclosure positions are present;
 - sparse `OR` fallback with weights `6/4/2.5/2.5/1.5/1`;
@@ -48,14 +49,14 @@ soft priors. The optional signature asset is catalog-bound by SHA-256. If it is
 missing, corrupt, or bound to another catalog, construction records the reason
 and rebuilds the equivalent in-memory index rather than aborting the run.
 
-The selected primary measures TechnicalScore 0.955233 on the released set,
-with HR@10 0.995, MRR 0.967778, and MTTC 2.630. Three distribution-matched
-200-target panels disjoint from released targets score 0.961692, 0.952900, and
-0.947439. An exhaustive ground-truth audit records 179 correct direct
-identifications and zero wrong ones. The registered robustness matrix still
-fails paraphrase, typo, and word-order target-retention gates by one target
-each, plus two meaning-changing card-edit gates. This remains development
-evidence rather than a private-performance claim.
+The selected primary measures TechnicalScore 0.978500 on the released set,
+with HR@10 1.000, MRR 0.996667, and MTTC 2.025. Three distribution-matched
+200-target panels disjoint from released targets score 0.979075, 0.965725, and
+0.961950. An exhaustive ground-truth audit records 117 correct direct
+identifications and zero wrong ones; across 386 non-empty disclosure-bucket
+promotions, all 386 retain the target. The registered robustness matrix still
+has target-removal failures under several surface and meaning-changing edits.
+This remains development evidence rather than a private-performance claim.
 
 A second proxy varies card shape rather than target identity, drawing targets
 from the three `intent_card` shapes the released set never contains. It exposes
@@ -68,7 +69,7 @@ development diagnostics, not private-score estimates.
 1. EXP-013 is closed: question specificity was measured across ten arms and every alternative to repeated `other` lost (docs/evidence/EXP_013.md). EXP-014 may still test later-rank cluster coverage, but only behind the selected deterministic path.
 2. Robustness work targets general normalization and retrieval invariants; more released-template phrase patches are not acceptable evidence.
 3. Any optional model must beat the no-op and lexical controls on released score, disjoint targets, perturbation slices, license, offline startup, latency, memory, disk, and clean packaging.
-4. Final release work rebuilds the optional schema-v5 asset from the exact scoring catalog and repeats both source-only and asset-bundled clean extracted-bundle commands.
+4. Final release work rebuilds the optional schema-v6 asset from the exact scoring catalog and repeats both source-only and asset-bundled clean extracted-bundle commands.
 
 ## Invariants
 

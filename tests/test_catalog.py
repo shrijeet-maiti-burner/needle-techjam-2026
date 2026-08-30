@@ -180,6 +180,68 @@ class CatalogValidationTest(unittest.TestCase):
             )
         )
 
+    def test_disclosure_bucket_is_popularity_ordered_and_bounded(self) -> None:
+        path = self.write_catalog(
+            [
+                {
+                    "parent_asin": "LOW",
+                    "categories": ["Clothing", "Shirts"],
+                    "features": ["Cloudfoam cushioning"],
+                    "rating_number": 5,
+                },
+                {
+                    "parent_asin": "HIGH",
+                    "categories": ["Clothing", "Shirts"],
+                    "features": ["Cloudfoam cushioning"],
+                    "rating_number": 500,
+                },
+            ]
+        )
+        index = CatalogIndex(path, retrieval_mode="signature_first")
+        messages = ["For that, what matters is: Cloudfoam cushioning."]
+
+        self.assertEqual(
+            index.rank_disclosure_bucket(messages, category="shirts"),
+            ("HIGH", "LOW"),
+        )
+        self.assertEqual(
+            index.rank_disclosure_bucket(messages, category="shirts", limit=1),
+            (),
+        )
+        self.assertEqual(
+            index.rank_disclosure_bucket(
+                [], category="shirts", include_empty=True
+            ),
+            ("HIGH", "LOW"),
+        )
+
+    def test_disclosure_bucket_unions_plausible_semicolon_parses(self) -> None:
+        path = self.write_catalog(
+            [
+                {
+                    "parent_asin": "WHOLE",
+                    "categories": ["Clothing", "Shirts"],
+                    "features": ["Alpha Beta; Gamma Delta"],
+                    "rating_number": 1,
+                },
+                {
+                    "parent_asin": "SPLIT",
+                    "categories": ["Clothing", "Shirts"],
+                    "features": ["Alpha Beta", "Gamma Delta"],
+                    "rating_number": 2,
+                },
+            ]
+        )
+        index = CatalogIndex(path, retrieval_mode="signature_first")
+
+        self.assertEqual(
+            index.rank_disclosure_bucket(
+                ["For that, what matters is: Alpha Beta; Gamma Delta."],
+                category="shirts",
+            ),
+            ("SPLIT", "WHOLE"),
+        )
+
     def test_disagreeing_semicolon_parses_decline_identification(self) -> None:
         path = self.write_catalog(
             [

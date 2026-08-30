@@ -1,4 +1,4 @@
-# Safe adaptive identification selection, 30 August 2026
+# Category-bound disclosure promotion selection, 30 August 2026
 
 Status: selected final development primary. Private performance remains unknown.
 
@@ -8,129 +8,141 @@ Status: selected final development primary. Private performance remains unknown.
 - evaluator SHA-256: `79a5ea06f9a1b8c5036f30efa85dc1f36b8f6b06eb8feb8f545dfa767bc45564`
 - catalog SHA-256: `da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67`
 - public-set SHA-256: `857259f7a438e6188ac63e18995b6ff4489bfcfc4a716a798b9a2aa0ee8f7579`
-- runtime: Python 3.10, standard library only, network disabled, no model
-- contract tests: 292 passed
+- runtime: CPython 3.10.5, standard library only, network disabled, no model
+- contract and behavior tests: 312 passed
 
 ## Selected mechanism
 
-The official simulator derives a card from the target product's metadata and
-discloses up to four cleaned values in order. The production path uses that
-structure only when the evidence is safe:
+The official simulator builds an intent card from target-product metadata and
+discloses up to four cleaned values in order. The selected production path uses
+that structure without public labels:
 
-1. the opening request must yield an explicit normalized category;
-2. a category plus ordered disclosure prefix, or category plus complete
-   unordered disclosure, must map to exactly one product across the catalog;
-3. every plausible semicolon parse that resolves must agree on that product;
-4. ordered-prefix lookup is disabled after intent revision;
-5. unordered lookup requires four disclosure positions, preventing a partial
-   target prefix from matching another product's complete short card.
+1. schema-v6 stores every catalog product in category-bound buckets for the
+   empty disclosure and every ordered one-through-four-value prefix;
+2. a turn retrieves every bucket admitted by a plausible semicolon parse and
+   unions the products, avoiding the unsafe choice of whichever parse happens
+   to produce the smallest bucket;
+3. products in that union are ordered only by catalog `rating_number`, then
+   stable `parent_asin` tie-break; already emitted products are skipped;
+4. any parse over the 50,000-row safety limit makes promotion decline rather
+   than silently truncate the evidence set;
+5. ordered promotion is disabled after intent revision; post-override direct
+   identification requires the complete four-position unordered disclosure;
+6. direct identification is allowed only when all resolving parses agree and
+   the category-bound key names exactly one catalog product;
+7. if promotion or identification declines, bounded exact-signature retrieval
+   and fielded FTS5 remain in control.
 
-The index stores only globally unique category-bound keys. Keys are SHA-256
-digests of canonical category and disclosure tuples; no public labels or target
-identifiers are inputs to construction. When the checks decline, the existing
-bounded signature and FTS5 ranker remains in control.
-
-Before turn 5 and before four active constraints, the agent emits only its
-rank-one item. It releases the full slate afterward. Only emitted items enter
-seen-item exclusion. Catalog-derived one-edit recovery is restricted to the
-explicit opening category and disclosure clauses; arbitrary free text is not
-rewritten.
+Before turn 5 and four active constraints, the agent emits one item; afterward
+it may emit ten. Only emitted items enter seen-item exclusion. The opening
+category bucket is enabled because it adds 0.003300 on the released set; its
+dependence on the released popularity distribution is recorded as a limitation.
 
 ## Official public result
 
 ```text
-python scripts/run_experiment.py --experiment-id FINAL-SAFE-V5-PUBLIC --agent starter.agent:Agent --network-state disabled
+python scripts/run_experiment.py --experiment-id PROD-PROMOTION-V6-ENTRYPOINT --agent starter.agent:Agent --network-state disabled
 ```
 
 | metric | result |
 |---|---:|
-| TechnicalScore | 0.955233 |
-| HR@10 | 0.995000 |
-| MRR | 0.967778 |
-| MTTC | 2.630000 |
-| responses | 525 |
+| TechnicalScore | 0.978500 |
+| HR@10 | 1.000000 |
+| MRR | 0.996667 |
+| MTTC | 2.025000 |
+| responses | 405 |
 | contract violations | 0 |
 
-The one public miss is in the buying slice. Boundary, browsing, and intent
-override HR@10 are 1.0. This is released-development evidence, not a private
-result.
+Every scenario has HR@10 1.0. Buying MRR is 0.991667; boundary, browsing, and
+intent-override MRR are 1.0. This is released-development evidence, not a
+private result.
 
-## Catalog-disjoint transfer
+## Ablations and transfer
 
-`catalog-matched-v1` excludes all 200 released targets and preserves the
-released scenario marginals while matching target-popularity and catalog
-eligibility properties. Each seed selects 200 different targets.
+The same production implementation measures 0.954400 without disclosure-bucket
+promotion and 0.975200 when opening-category promotion is disabled. Removing
+the separate direct-identification shortcut leaves the released result at
+0.978500, so promotion, not a strict unique-key shortcut, supplies the gain.
+
+`catalog-matched-v1` excludes all released targets and preserves released
+scenario marginals while matching target-popularity and catalog-eligibility
+properties. Each seed selects 200 different targets.
 
 | seed | TechnicalScore | HR@10 | MRR | MTTC | violations |
 |---|---:|---:|---:|---:|---:|
-| 20260830 | 0.961692 | 1.000 | 0.980972 | 2.630 | 0 |
-| 20260831 | 0.952900 | 0.985 | 0.978333 | 2.655 | 0 |
-| 20260901 | 0.947439 | 0.990 | 0.957798 | 2.745 | 0 |
+| 20260830 | 0.979075 | 1.000 | 0.996250 | 1.990 | 0 |
+| 20260831 | 0.965725 | 0.990 | 0.979750 | 2.160 | 0 |
+| 20260901 | 0.961950 | 0.985 | 0.978500 | 2.205 | 0 |
 
-These panels argue against direct released-target memorisation. They still use
-our sampler and the released simulator, so they are not private-score
-estimates.
+These panels argue against released-target memorisation. They still use our
+sampler and the released simulator, so they are not private-score estimates.
 
-## Wrong-identification audit
+## Ground-truth safety audit
 
-`scripts/audit_identification.py` instruments every non-null direct lookup and
-compares it with evaluator ground truth. On all released sessions and the exact
-schema-v5 asset it records 179 calls, 179 correct, and zero wrong. This audit
-found and removed an earlier unsafe partial-set implementation; the historical
-EXP-021 wrapper result must not be used as the runtime safety claim.
+`scripts/audit_identification.py` instruments both category-bound mechanisms on
+all released sessions. The schema-v6 run records:
+
+- 117 non-null direct identifications: 117 correct, 0 wrong;
+- 386 non-empty disclosure-bucket promotions: target retained in 386, removed
+  in 0;
+- TechnicalScore 0.978500 through the same run.
+
+The audit found and removed an earlier unsafe partial-set implementation. The
+historical EXP-021 wrapper is not the runtime safety claim.
 
 ## Robustness
 
 The full registered seed-0 matrix was run without weakening its zero-removal
-threshold. Ten of thirteen meaning-preserving slices have zero target removal.
-The remaining failures are explicit:
+threshold. The exact surface and nine perturbation slices have zero removal;
+the seven failures are explicit below.
 
-| slice | HR@10 | MRR | MTTC | target-removal rate |
-|---|---:|---:|---:|---:|
-| exact | 0.995 | 0.967778 | 2.630 | - |
-| paraphrase | 0.990 | 0.888790 | 3.145 | 0.005000 |
-| typo | 0.990 | 0.951562 | 2.905 | 0.005000 |
-| word order | 0.990 | 0.933298 | 2.945 | 0.005348 |
-| attribute swap | 0.935 | 0.797415 | 3.800 | 0.055000 |
-| constraint drop | 0.955 | 0.899810 | 3.090 | 0.040000 |
+| slice | meaning | HR@10 | MRR | MTTC | target-removal rate |
+|---|---|---:|---:|---:|---:|
+| exact | baseline | 1.000 | 0.996667 | 2.025 | - |
+| filler | preserving | 0.995 | 0.980333 | 2.195 | 0.005000 |
+| paraphrase | preserving | 0.990 | 0.939667 | 2.640 | 0.010000 |
+| typo | preserving | 0.990 | 0.959597 | 2.765 | 0.010000 |
+| word order | preserving | 0.990 | 0.948506 | 2.440 | 0.012658 |
+| negation | changing | 0.995 | 0.981339 | 2.285 | 0.006410 |
+| attribute swap | changing | 0.960 | 0.871722 | 3.015 | 0.040000 |
+| constraint drop | changing | 0.965 | 0.955833 | 2.360 | 0.035000 |
 
-Attribute swap and constraint drop are meaning-changing card edits; their
-failures remain relevant because the registered gate also requires target
-retention after those edits. Casing, whitespace, punctuation, accents,
-synonym, filler, politeness, contraction, number format, override paraphrase,
-and negation have zero target removal. No claim of complete robustness is made.
+Casing, whitespace, punctuation, accents, synonym, politeness, contraction,
+number format, and override paraphrase have zero target removal. Number format
+has only one effective sample and is not strong evidence. No claim of complete
+robustness is made.
 
-## Asset and rollback
+## Asset and runtime
 
-The schema-v5 asset contains 869,240 exact-signature pairs and 162,190 globally
-unique card keys. It is 57,683,968 bytes with SHA-256
-`c3142af7d33e2ef1b6eaca66d112d6a372b5cf47546883aa6bfc4916d058b5c2`.
-It is bound to the catalog hash above. A missing, corrupt, or mismatched asset
-falls back to an equivalent in-process build rather than aborting agent
-construction.
+The schema-v6 asset contains 869,240 exact-signature pairs, 177,768 distinct
+category-bound keys, and 296,951 popularity-ordered card rows. It is 64,884,736
+bytes with SHA-256
+`73c91b4473772532cc22a39918885e00898b8eadbada8544bfad84dd8e9904e4`.
+It is bound to the catalog hash above. Missing, corrupt, or mismatched assets
+fall back to an equivalent in-process build rather than aborting construction.
 
-An isolated bundled run records 7.561s construction, 21.336s evaluation,
-509,960,192 bytes peak process working set, and response latency p50/p95/p99/max
-of 31.2/106.7/131.6/478.7 ms. The allowlisted release builder excludes the
-participant kit, datasets, evaluator, caches, results, and secrets; the verified
-21,357,204-byte zip has SHA-256
-`b2b998b1a61aa63fb52f8f23f4dca66b0a8bc76cd6dd3db52b188716dcc7d196`
-and reproduces 0.955233 through the unmodified official evaluator with zero
-stderr.
+The bundled development run records 6.774s construction, 2.853s evaluation,
+507,654,144 bytes peak process working set, and response latency p50/p95/p99/max
+of 2.0/42.7/95.6/418.6 ms.
 
-The source-only fallback also reproduces 0.955233, but construction takes
-83.755s and the full run peaks at 608,514,048 bytes. The bundled index is
-therefore the release path; source-only is survivability, not the preferred
-deployment.
+With the asset path forced to a verified-nonexistent file, the source-only
+fallback reproduces 0.978500 with zero violations. Construction takes 84.788s
+and the complete run peaks at 594,825,216 bytes. It is survivability evidence,
+not the preferred deployment.
 
-The rollback remains the pure-sparse preset. Direct identification, adaptive
-emission, and structured correction are separate constructor controls and can
-be disabled without changing the public response contract.
+The allowlisted release builder excludes the participant kit, datasets,
+evaluator, caches, results, and secrets. The clean extracted bundle writes no
+stderr, reproduces 0.978500, and contains 19 tracked files plus the ignored
+catalog-bound asset. The 23,967,155-byte archive has SHA-256
+`80dd232a4691d4e9501bf859ba9f6e39425d873a9a6234412f282c9a4060f226`.
 
 ## Decision
 
-Select the category-bound unique-key path, parse agreement, post-override
-ordering guard, full-disclosure unordered guard, adaptive slate, and
-structured correction. Reject the earlier unconstrained partial-set lookup.
-Carry the five registered robustness failures into the final limitations; do
-not convert public or proxy measurements into a private-score or winning claim.
+Select category-bound disclosure promotion with plausible-parse union,
+popularity ordering, post-override ordering guard, adaptive slate, and the
+existing sparse fallback. Keep strict direct identification because its public
+audit is exact, while recognising that its released score contribution is zero
+after promotion. Reject broad filler and category-typo rewrites that did not
+recover their official robustness failures. Carry all seven registered gate
+failures into the final limitations; do not convert public or proxy measurements
+into a private-score or winning claim.

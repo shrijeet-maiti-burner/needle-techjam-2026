@@ -49,7 +49,9 @@ def main() -> None:
             self._target_iterator = iter(targets)
             self._target = ""
             self.identifications: list[tuple[str, str]] = []
+            self.promotions: list[tuple[str, bool]] = []
             identify = self.catalog.identify_from_disclosures
+            promote = self.catalog.rank_disclosure_bucket
 
             def audited(*args: object, **kwargs: object) -> str | None:
                 result = identify(*args, **kwargs)
@@ -59,6 +61,14 @@ def main() -> None:
 
             self.catalog.identify_from_disclosures = audited  # type: ignore[method-assign]
 
+            def audited_promotion(*args: object, **kwargs: object) -> tuple[str, ...]:
+                result = promote(*args, **kwargs)
+                if result:
+                    self.promotions.append((self._target, self._target in result))
+                return result
+
+            self.catalog.rank_disclosure_bucket = audited_promotion  # type: ignore[method-assign]
+
         def reset(self, session_id: str, user_profile: dict[str, object]) -> None:
             self._target = next(self._target_iterator)
             super().reset(session_id, user_profile)
@@ -66,16 +76,23 @@ def main() -> None:
     agent = AuditedAgent()
     result = official.evaluate(agent, samples, catalog_ids, categories, products)
     wrong = [pair for pair in agent.identifications if pair[0] != pair[1]]
+    removed = [target for target, retained in agent.promotions if not retained]
     report = {
         "direct_identification_calls": len(agent.identifications),
         "correct": len(agent.identifications) - len(wrong),
         "wrong": len(wrong),
         "wrong_examples": wrong[:10],
+        "promotion_calls": len(agent.promotions),
+        "promotion_target_retained": len(agent.promotions) - len(removed),
+        "promotion_target_removed": len(removed),
+        "promotion_removal_examples": removed[:10],
         "technical_score": result["recommended_technical_score"],
     }
     print(json.dumps(report, indent=2))
     if wrong:
         raise SystemExit("direct-identification precision audit failed")
+    if removed:
+        raise SystemExit("disclosure-bucket target-retention audit failed")
 
 
 if __name__ == "__main__":

@@ -38,6 +38,9 @@ class Agent:
         early_slate_size: int = 1,
         full_slate_turn: int = 5,
         full_slate_constraints: int = 4,
+        promote_disclosure_bucket: bool = False,
+        promotion_bucket_limit: int = 50_000,
+        promote_opening_category: bool = False,
     ) -> None:
         if not 1 <= int(candidate_pool) <= 500:
             raise ValueError("candidate_pool must be in 1..500")
@@ -51,6 +54,8 @@ class Agent:
             raise ValueError("full_slate_turn must be in 1..10")
         if not 1 <= int(full_slate_constraints) <= 20:
             raise ValueError("full_slate_constraints must be in 1..20")
+        if not 1 <= int(promotion_bucket_limit) <= 50_000:
+            raise ValueError("promotion_bucket_limit must be in 1..50000")
         self.catalog = CatalogIndex(
             catalog_path,
             retrieval_mode=retrieval_mode,
@@ -75,6 +80,9 @@ class Agent:
         self.early_slate_size = int(early_slate_size)
         self.full_slate_turn = int(full_slate_turn)
         self.full_slate_constraints = int(full_slate_constraints)
+        self.promote_disclosure_bucket = bool(promote_disclosure_bucket)
+        self.promotion_bucket_limit = int(promotion_bucket_limit)
+        self.promote_opening_category = bool(promote_opening_category)
         self.experiment_configuration: dict[str, object] = {
             "retrieval_mode": retrieval_mode,
             "query_mode": query_mode,
@@ -99,6 +107,9 @@ class Agent:
             "early_slate_size": self.early_slate_size,
             "full_slate_turn": self.full_slate_turn,
             "full_slate_constraints": self.full_slate_constraints,
+            "promote_disclosure_bucket": self.promote_disclosure_bucket,
+            "promotion_bucket_limit": self.promotion_bucket_limit,
+            "promote_opening_category": self.promote_opening_category,
         }
         self._seen_by_version: dict[tuple[str, int], set[str]] = {}
         self._opening_category_by_session: dict[str, str] = {}
@@ -218,6 +229,17 @@ class Agent:
             retrieval_text = self.lexical.normalize(retrieval_text)
         elif self.lexical_mode == "expand":
             retrieval_text = self.lexical.expand_query(retrieval_text)
+        promoted = (
+            self.catalog.rank_disclosure_bucket(
+                state.messages,
+                category=category_evidence,
+                allow_ordered=state.intent_version == 1,
+                include_empty=self.promote_opening_category and turn == 1,
+                limit=self.promotion_bucket_limit,
+            )
+            if self.promote_disclosure_bucket and limit
+            else ()
+        )
         identified = (
             self.catalog.identify_from_disclosures(
                 state.messages,
@@ -230,12 +252,6 @@ class Agent:
         if identified is not None:
             recommendation_ids = [identified]
         else:
-            sparse = self.catalog.search(
-                retrieval_text,
-                self.candidate_pool,
-                messages=state.messages,
-                excluded_ids=excluded,
-            )
             output_limit = limit
             if (
                 self.adaptive_slate
@@ -243,8 +259,26 @@ class Agent:
                 and len(state.active_constraints()) < self.full_slate_constraints
             ):
                 output_limit = min(output_limit, self.early_slate_size)
-            ranked = self.semantic.rerank(sparse, retrieval_text)[:output_limit]
-            recommendation_ids = [candidate.parent_asin for candidate in ranked]
+            recommendation_ids = [
+                parent_asin
+                for parent_asin in promoted
+                if parent_asin not in excluded
+            ][:output_limit]
+            if len(recommendation_ids) < output_limit:
+                sparse = self.catalog.search(
+                    retrieval_text,
+                    self.candidate_pool,
+                    messages=state.messages,
+                    excluded_ids=excluded,
+                )
+                ranked = self.semantic.rerank(sparse, retrieval_text)
+                promoted_set = set(recommendation_ids)
+                recommendation_ids.extend(
+                    candidate.parent_asin
+                    for candidate in ranked
+                    if candidate.parent_asin not in promoted_set
+                )
+                recommendation_ids = recommendation_ids[:output_limit]
         # Only serialized products were shown. Withheld products must remain
         # eligible on the next turn or an adaptive slate can blacklist its own
         # eventual rank-one answer.

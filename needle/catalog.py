@@ -60,7 +60,7 @@ DEFAULT_FIELD_WEIGHTS = (6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
 RETRIEVAL_MODES = frozenset({"sparse", "signature_first"})
 QUERY_MODES = frozenset({"any", "all"})
 CORRECTION_SCOPES = frozenset({"all", "structured"})
-SIGNATURE_INDEX_SCHEMA_VERSION = "5"
+SIGNATURE_INDEX_SCHEMA_VERSION = "6"
 
 # Discourse markers and request-frame verbs. `query_terms` drops these from the
 # query, and the same tokenizer runs over the corpus, so this removes a matchable
@@ -379,7 +379,7 @@ def _card_keys(product: dict[str, object]) -> tuple[bytes, ...]:
     sequence = card_signature_sequence(product)
     keys = [
         _card_lookup_key(sequence[:length], category=category)
-        for length in range(1, len(sequence) + 1)
+        for length in range(0, len(sequence) + 1)
     ]
     if sequence:
         keys.append(_card_lookup_key(sequence, category=category, unordered=True))
@@ -493,11 +493,13 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
             "PRIMARY KEY(signature, parent_asin)) WITHOUT ROWID"
         )
         connection.execute(
-            "CREATE TABLE card_keys("
-            "key BLOB PRIMARY KEY, parent_asin TEXT NOT NULL) WITHOUT ROWID"
+            "CREATE TABLE card_buckets("
+            "key BLOB NOT NULL, rating_number INTEGER NOT NULL, "
+            "parent_asin TEXT NOT NULL, "
+            "PRIMARY KEY(key, rating_number DESC, parent_asin)) WITHOUT ROWID"
         )
         batch: list[tuple[str, str]] = []
-        card_key_owners: dict[bytes, str | None] = {}
+        card_bucket_batch: list[tuple[bytes, int, str]] = []
         with catalog.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
@@ -512,34 +514,36 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
                 product_count += 1
                 for signature in product_signatures(product):
                     batch.append((signature, parent_asin))
+                rating_number = max(0, int(product.get("rating_number") or 0))
                 for key in _card_keys(product):
-                    owner = card_key_owners.get(key)
-                    if owner is None and key not in card_key_owners:
-                        card_key_owners[key] = parent_asin
-                    elif owner != parent_asin:
-                        card_key_owners[key] = None
+                    card_bucket_batch.append((key, rating_number, parent_asin))
                 if len(batch) >= 5_000:
                     connection.executemany("INSERT INTO signatures VALUES (?, ?)", batch)
                     signature_count += len(batch)
                     batch.clear()
+                if len(card_bucket_batch) >= 5_000:
+                    connection.executemany(
+                        "INSERT INTO card_buckets VALUES (?, ?, ?)",
+                        card_bucket_batch,
+                    )
+                    card_bucket_batch.clear()
         if batch:
             connection.executemany("INSERT INTO signatures VALUES (?, ?)", batch)
             signature_count += len(batch)
-        card_keys = [
-            (key, owner)
-            for key, owner in card_key_owners.items()
-            if owner is not None
-        ]
-        connection.executemany(
-            "INSERT INTO card_keys VALUES (?, ?)",
-            card_keys,
+        if card_bucket_batch:
+            connection.executemany(
+                "INSERT INTO card_buckets VALUES (?, ?, ?)",
+                card_bucket_batch,
+            )
+        card_key_count = int(
+            connection.execute("SELECT COUNT(DISTINCT key) FROM card_buckets").fetchone()[0]
         )
         metadata = {
             "schema_version": SIGNATURE_INDEX_SCHEMA_VERSION,
             "catalog_sha256": sha256_file(catalog),
             "product_count": str(product_count),
             "signature_count": str(signature_count),
-            "card_key_count": str(len(card_keys)),
+            "card_key_count": str(card_key_count),
         }
         connection.executemany("INSERT INTO metadata VALUES (?, ?)", metadata.items())
         connection.commit()
@@ -558,7 +562,7 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
         "catalog_sha256": metadata["catalog_sha256"],
         "product_count": product_count,
         "signature_count": signature_count,
-        "card_key_count": len(card_keys),
+        "card_key_count": card_key_count,
     }
 
 
@@ -689,13 +693,15 @@ class CatalogIndex:
                 "PRIMARY KEY(signature, parent_asin)) WITHOUT ROWID"
             )
             cursor.execute(
-                "CREATE TABLE card_keys("
-                "key BLOB PRIMARY KEY, parent_asin TEXT NOT NULL) WITHOUT ROWID"
+                "CREATE TABLE card_buckets("
+                "key BLOB NOT NULL, rating_number INTEGER NOT NULL, "
+                "parent_asin TEXT NOT NULL, "
+                "PRIMARY KEY(key, rating_number DESC, parent_asin)) WITHOUT ROWID"
             )
         seen: set[str] = set()
         batch: list[tuple[str, str, str, str, str, str, str, int]] = []
         signature_batch: list[tuple[str, str]] = []
-        card_key_owners: dict[bytes, str | None] = {}
+        card_bucket_batch: list[tuple[bytes, int, str]] = []
         with self.catalog_path.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
@@ -733,31 +739,29 @@ class CatalogIndex:
                         for signature in product_signatures(product)
                     )
                     for key in _card_keys(product):
-                        owner = card_key_owners.get(key)
-                        if owner is None and key not in card_key_owners:
-                            card_key_owners[key] = parent_asin
-                        elif owner != parent_asin:
-                            card_key_owners[key] = None
+                        card_bucket_batch.append((key, rating_number, parent_asin))
                 if len(batch) >= 1_000:
                     cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
                     batch.clear()
                     if signature_batch:
                         cursor.executemany("INSERT INTO signatures VALUES (?, ?)", signature_batch)
                         signature_batch.clear()
+                    if card_bucket_batch:
+                        cursor.executemany(
+                            "INSERT INTO card_buckets VALUES (?, ?, ?)",
+                            card_bucket_batch,
+                        )
+                        card_bucket_batch.clear()
         if batch:
             cursor.executemany("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?)", batch)
         if signature_batch:
             cursor.executemany("INSERT INTO signatures VALUES (?, ?)", signature_batch)
         if self.retrieval_mode == "signature_first" and self.signature_index_path is None:
-            cursor.executemany(
-                "INSERT INTO card_keys VALUES (?, ?)",
-                (
-                    (key, owner)
-                    for key, owner in card_key_owners.items()
-                    if owner is not None
-                ),
-            )
-            card_key_owners.clear()
+            if card_bucket_batch:
+                cursor.executemany(
+                    "INSERT INTO card_buckets VALUES (?, ?, ?)",
+                    card_bucket_batch,
+                )
         self.connection.commit()
         self.product_count = len(seen)
         if self.product_count == 0:
@@ -891,11 +895,96 @@ class CatalogIndex:
 
         if not category or not disclosed or (not unordered and len(disclosed) > 4):
             return None
-        row = self._signature_connection.execute(
-            "SELECT parent_asin FROM card_keys WHERE key = ?",
+        rows = self._signature_connection.execute(
+            "SELECT parent_asin FROM card_buckets WHERE key = ? LIMIT 2",
             (_card_lookup_key(disclosed, category=category, unordered=unordered),),
-        ).fetchone()
-        return str(row[0]) if row is not None else None
+        ).fetchall()
+        return str(rows[0][0]) if len(rows) == 1 else None
+
+    def _card_bucket_lookup(
+        self,
+        disclosed: tuple[str, ...],
+        *,
+        category: str,
+        unordered: bool = False,
+        limit: int,
+    ) -> tuple[str, ...] | None:
+        """Return a popularity-ordered bucket, or ``None`` when over limit."""
+
+        if not category or (not unordered and len(disclosed) > 4):
+            return ()
+        rows = self._signature_connection.execute(
+            "SELECT parent_asin FROM card_buckets WHERE key = ? "
+            "ORDER BY rating_number DESC, parent_asin LIMIT ?",
+            (
+                _card_lookup_key(disclosed, category=category, unordered=unordered),
+                limit + 1,
+            ),
+        ).fetchall()
+        if len(rows) > limit:
+            return None
+        return tuple(str(row[0]) for row in rows)
+
+    def rank_disclosure_bucket(
+        self,
+        messages: Iterable[str],
+        *,
+        category: str,
+        allow_ordered: bool = True,
+        include_empty: bool = False,
+        limit: int = 50_000,
+    ) -> tuple[str, ...]:
+        """Rank every product admitted by a plausible category-bound parse.
+
+        Plausible parses are unioned rather than choosing the smallest bucket:
+        a semicolon inside one catalog feature can otherwise make a wrong split
+        look more specific while dropping the target. The union remains ordered
+        only by the catalog-derived popularity prior. Any over-limit parse makes
+        promotion decline so the fallback ranker keeps full control.
+        """
+
+        if self.retrieval_mode != "signature_first" or not 1 <= limit <= 50_000:
+            return ()
+        sequences = disclosed_signature_sequences(messages)
+        if not sequences and include_empty:
+            sequences = ((),)
+        candidates: set[str] = set()
+        resolved = False
+        for disclosed in sequences:
+            bucket: tuple[str, ...] | None
+            if allow_ordered:
+                bucket = self._card_bucket_lookup(
+                    disclosed,
+                    category=category,
+                    limit=limit,
+                )
+            elif len(disclosed) >= 4 and len(frozenset(disclosed)) <= 4:
+                bucket = self._card_bucket_lookup(
+                    disclosed,
+                    category=category,
+                    unordered=True,
+                    limit=limit,
+                )
+            else:
+                continue
+            if bucket is None:
+                return ()
+            if bucket:
+                resolved = True
+                candidates.update(bucket)
+                if len(candidates) > limit:
+                    return ()
+        if not resolved:
+            return ()
+        return tuple(
+            sorted(
+                candidates,
+                key=lambda parent_asin: (
+                    -self._rating_numbers.get(parent_asin, 0),
+                    parent_asin,
+                ),
+            )
+        )
 
     def identify_from_disclosures(
         self,

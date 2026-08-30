@@ -22,12 +22,16 @@ class PresetTest(unittest.TestCase):
         self.assertEqual(PRIMARY_AGENT_KWARGS["full_slate_constraints"], 4)
         self.assertIs(PRIMARY_AGENT_KWARGS["correct_unmatched_terms"], True)
         self.assertEqual(PRIMARY_AGENT_KWARGS["correction_scope"], "structured")
+        self.assertIs(PRIMARY_AGENT_KWARGS["promote_disclosure_bucket"], True)
+        self.assertEqual(PRIMARY_AGENT_KWARGS["promotion_bucket_limit"], 50000)
+        self.assertIs(PRIMARY_AGENT_KWARGS["promote_opening_category"], True)
 
     def test_rollback_removes_only_catalog_signature_promotion(self) -> None:
         self.assertEqual(ROLLBACK_AGENT_KWARGS["retrieval_mode"], "sparse")
         self.assertNotIn("signature_bucket_limit", ROLLBACK_AGENT_KWARGS)
         self.assertNotIn("identify_from_disclosures", ROLLBACK_AGENT_KWARGS)
         self.assertNotIn("adaptive_slate", ROLLBACK_AGENT_KWARGS)
+        self.assertNotIn("promote_disclosure_bucket", ROLLBACK_AGENT_KWARGS)
 
     def test_presets_are_immutable(self) -> None:
         with self.assertRaises(TypeError):

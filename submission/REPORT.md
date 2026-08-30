@@ -25,14 +25,17 @@ session before it reads `ask_attribute`.
 
 **Retrieval.** Exact full-value and punctuation-delimited clause signatures are
 looked up in a catalog-bound SQLite index, with fielded FTS5 BM25 as the fallback
-ordering. Signature buckets larger than 500 are not promoted. A soft coverage
-score for opening-category words and a bounded popularity prior over
-`rating_number` rerank but never filter candidates. Category-bound card keys can
-identify a product directly only when the key is globally unique, every
-plausible disclosure parse agrees, and the intent-order safety guards hold.
-Before turn 5 or four active constraints, the agent emits only rank one; it then
-releases the full slate. Candidates actually shown within an intent version are
-excluded, while withheld candidates remain eligible.
+ordering. Signature intersections larger than 500 are not promoted. The
+metadata-derived intent-card path separately indexes every category-bound
+disclosure prefix. At each turn, all plausible semicolon parses are unioned and
+the admitted products are ordered by catalog popularity; an over-limit parse
+makes this path decline instead of truncating evidence. A direct answer is used
+only when a category-bound card key is globally unique, every resolving parse
+agrees, and the intent-order safety guards hold. Before turn 5 or four active
+constraints, the agent emits only rank one; it then releases the full slate.
+Candidates actually shown within an intent version are excluded, while withheld
+candidates remain eligible. FTS5, soft category coverage, and the bounded
+`rating_number` prior remain the fallback.
 
 **Surface robustness.** Structural parsers fold accents and normalize
 whitespace. A catalog-derived one-edit corrector operates only on the explicit
@@ -69,22 +72,22 @@ datasets and assets for the final Devpost description.
 | estimated model cost | $0.00 |
 | network access required | no |
 | credentials required | no |
-| per-response latency, p50 | 31.2 ms |
-| per-response latency, p95 | 106.7 ms |
-| per-response latency, p99 | 131.6 ms |
-| per-response latency, max | 478.7 ms |
-| construction with bundled index | 7.561 s |
-| construction without bundled index | 83.755 s |
-| generated index size | 57,683,968 bytes |
-| generated index SHA-256 | `c3142af7d33e2ef1b6eaca66d112d6a372b5cf47546883aa6bfc4916d058b5c2` |
-| complete evaluator peak working set, bundled | 509,960,192 bytes |
-| complete evaluator peak working set, source-only | 608,514,048 bytes |
-| contract violations | 0 of 525 responses |
+| per-response latency, p50 | 2.0 ms |
+| per-response latency, p95 | 42.7 ms |
+| per-response latency, p99 | 95.6 ms |
+| per-response latency, max | 418.6 ms |
+| construction with bundled index | 6.774 s |
+| construction without bundled index | 84.788 s |
+| generated index size | 64,884,736 bytes |
+| generated index SHA-256 | `73c91b4473772532cc22a39918885e00898b8eadbada8544bfad84dd8e9904e4` |
+| complete evaluator peak working set, bundled | 507,654,144 bytes |
+| complete evaluator peak working set, source-only | 594,825,216 bytes |
+| contract violations | 0 of 405 responses |
 
 Measured on the 200 official public sessions, `retrieval_mode=signature_first`,
 `signature_bucket_limit=500`, `category_strength=1.00`, `popularity_strength=0.30`,
-`override_policy=retract_stated`, `exclude_seen=true`, category-bound direct
-identification enabled, and adaptive slate size 1 -> 10.
+`override_policy=retract_stated`, `exclude_seen=true`, category-bound disclosure
+promotion and direct identification enabled, and adaptive slate size 1 -> 10.
 
 ## Limitations
 
@@ -94,17 +97,16 @@ These are stated plainly because they bear on how the result should be read.
 are deterministically materialised from the target catalog row. Three separate
 200-target proxies exclude every released ground-truth target and match public
 rating, price-presence, broad-category, profile, and scenario marginals. They
-score 0.961692, 0.952900, and 0.947439. They still reuse the released simulator,
+score 0.979075, 0.965725, and 0.961950. They still reuse the released simulator,
 so they are evidence against direct target memorising, not private-score
 estimates.
 
 **Sensitivity to message wording is measured and real.** The exact surface has
-HR@10 0.995 and MRR 0.967778. Casing, whitespace, punctuation, accents,
-synonym, filler, politeness, contraction, number-format, and override-
-paraphrase slices remove no targets. Paraphrase, single-edit typo, and word
-order each remove one previously retained target, reaching HR@10 0.990 with
-MRR 0.888790, 0.951562, and 0.933298 respectively. Two meaning-changing card
-edits also fail the registered zero-removal gate. The gates were not weakened.
+HR@10 1.000 and MRR 0.996667. Several perturbation slices still remove targets,
+including filler, paraphrase, single-edit typo, and word order; the larger
+meaning-changing attribute-swap and constraint-drop edits also fail the
+registered zero-removal gate. The exact rates and ranking metrics are retained
+in the dated final evidence record. The gates were not weakened.
 
 **Override handling still depends on a structural trigger.** Accent folding and
 independent paraphrases pass, and later question answers now survive a scoped
@@ -117,12 +119,13 @@ popularity 0.55 reaches 0.881183 on the released set but loses to 0.30 on 1,000
 disjoint targets, 0.866666 versus 0.867627. The higher released result is
 rejected rather than reported as the primary.
 
-**Direct identification depends on evaluator structure.** It assumes intent
-cards are metadata-derived and disclosures retain the released ordering. If the
-private evaluator uses hand-written cards or a different disclosure policy,
-the unique-key path declines or loses its benefit and the signature/FTS path
-must carry the session. An exhaustive public audit records 179 correct direct
-identifications and zero wrong, but this cannot prove private behavior.
+**Disclosure promotion depends on evaluator structure.** It assumes intent
+cards are metadata-derived and clean disclosures retain the released ordering.
+If the private evaluator uses hand-written cards or a different disclosure
+policy, the category-bound path declines or loses its benefit and the
+signature/FTS path must carry the session. An exhaustive public audit records
+117 correct direct identifications and zero wrong; all 386 non-empty promoted
+buckets retain the public target. Neither result proves private behavior.
 
 **Negative constraints are tracked but not enforced.** The belief state records
 exclusions and exposes them, but retrieval does not currently filter on them. A

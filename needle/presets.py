@@ -37,6 +37,9 @@ PRIMARY_AGENT_KWARGS: Final[Mapping[str, object]] = MappingProxyType(
         "full_slate_constraints": 4,
         "correct_unmatched_terms": True,
         "correction_scope": "structured",
+        "promote_disclosure_bucket": True,
+        "promotion_bucket_limit": 50000,
+        "promote_opening_category": True,
     }
 )
 
