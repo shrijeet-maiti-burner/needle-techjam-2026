@@ -13,7 +13,7 @@ This is a hypothesis, not a result. Architecture decisions are accepted only aft
 
 ## Current status
 
-H0 began on 29 August 2026 at 12:00 SGT. The contract-valid integration path is complete and a measured public-development candidate plus pure-sparse rollback are encoded in `needle/presets.py`. The candidate is not frozen: deterministic wording perturbations still regress, question-policy experiments remain open, and the generated signature asset has not completed final clean-bundle validation.
+H0 began on 29 August 2026 at 12:00 SGT. The contract-valid integration path is complete and the selected development primary plus pure-sparse rollback are encoded in `needle/presets.py`. The primary measures TechnicalScore 0.878039 on the 200 released sessions and 0.867627 on a deterministic 1,000-target catalog-disjoint proxy. A source-only clean-bundle rehearsal reproduces the released result without the ignored signature asset. Meaning-preserving perturbations still expose material failures, so neither measurement is a private-score or winning claim.
 
 ## Quick start
 
@@ -24,7 +24,7 @@ python scripts/bootstrap.py
 python scripts/build_signature_index.py
 python -m unittest discover -s tests -v
 python scripts/evaluate.py --output results/primary.json
-python scripts/run_experiment.py --experiment-id PRIMARY-CHECK --agent starter.agent:Agent --network-state enabled
+python scripts/run_experiment.py --experiment-id PRIMARY-CHECK --agent starter.agent:Agent --network-state disabled
 ```
 
 `bootstrap.py` downloads the official participant kit, verifies its pinned SHA-256 digest, and extracts it under the ignored `.artifacts/` directory. `build_signature_index.py` creates the ignored catalog-bound development asset. `evaluate.py` runs the measured `starter.agent.Agent` preset against the unmodified official evaluator and public data.

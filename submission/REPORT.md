@@ -24,10 +24,11 @@ costs nothing, because the evaluator scores `recommendations` and may end the
 session before it reads `ask_attribute`.
 
 **Retrieval.** Exact catalog-signature promotion over an FTS5 index, with sparse
-BM25 as the fallback ordering and a bounded popularity prior over
-`rating_number`. Candidates already shown within an intent version are excluded,
-which turns ten turns of ten slots into up to a hundred distinct products rather
-than the same twenty repeated.
+BM25 as the fallback ordering. A soft coverage score for category words in the
+opening request and a bounded popularity prior over `rating_number` rerank but
+never filter candidates. Candidates already shown within an intent version are
+excluded, which turns ten turns of ten slots into up to a hundred distinct
+products rather than repeating the same slate.
 
 **Intent override.** An explicit override retracts the preference the customer
 stated, not the answers they gave to our questions. The opening message is
@@ -46,6 +47,10 @@ network, and cost risk from official scoring entirely.
 
 ## Disclosure
 
+The separate [submission disclosure inventory](../docs/SUBMISSION_DISCLOSURES.md)
+tracks the required development tools, APIs, libraries and frameworks, and
+datasets and assets for the final Devpost description.
+
 | item | value |
 |---|---|
 | model | none |
@@ -54,43 +59,51 @@ network, and cost risk from official scoring entirely.
 | estimated model cost | $0.00 |
 | network access required | no |
 | credentials required | no |
-| per-response latency, p50 | 38.5 ms |
-| per-response latency, p95 | 77.7 ms |
-| per-response latency, p99 | 103.6 ms |
-| per-response latency, max | 126.9 ms |
-| one-time construction | ~1.5 s with the bundled index, ~8.2 s rebuilding |
-| peak Python heap | ~9 MB above the interpreter baseline |
-| contract violations | 0 of 494 responses |
+| per-response latency, p50 | 59.6 ms |
+| per-response latency, p95 | 118.2 ms |
+| per-response latency, p99 | 143.3 ms |
+| per-response latency, max | 156.9 ms |
+| instrumented construction with local index | 5.08 s |
+| peak Python traced memory | 66,086,555 bytes |
+| peak process working set | 478,224,384 bytes |
+| contract violations | 0 of 446 responses |
 
 Measured on the 200 official public sessions, `retrieval_mode=signature_first`,
+`category_strength=1.00`, `popularity_strength=0.30`,
 `override_policy=retract_stated`, `exclude_seen=true`.
 
 ## Limitations
 
 These are stated plainly because they bear on how the result should be read.
 
-**The public score is measured, its transfer is not.** Public intent cards are
-deterministically materialised from the target catalog row, and the private set
-uses disjoint users and disjoint targets. A high public score is consistent with
-having fitted the message generator rather than solved the task. Nothing in this
-submission demonstrates transfer.
+**The public score is measured; private transfer is not.** Public intent cards
+are deterministically materialised from the target catalog row. A separate
+1,000-target proxy excludes every released ground-truth target and scores
+0.867627, but it deliberately reuses the released simulator and marginal
+profile/scenario distributions. It is evidence against direct target memorising,
+not a private-score estimate.
 
 **Sensitivity to message wording is measured and real.** Under a perturbation
 harness that rewords the customer's messages while preserving meaning, the
-TechnicalScore falls from 0.8977 at baseline to 0.8216 under light synonym
-substitution and 0.7188 under heavy paraphrase. At the heavier levels the tuned
-system scores below plain BM25 with no additions, which sits at 0.8294. The
-constraint matching, category parsing, and override detection all key off the
-released message templates, so they degrade together rather than independently.
+selected TechnicalScore falls from 0.878039 to 0.746239 on accents, 0.852302 on
+filler, 0.831659 on paraphrase, and 0.792330 on typos. Whitespace and word-order
+slices score 0.866604 and 0.865589. These failures remain open even though the
+soft category prior improves every slice over its no-category control.
 
 **Override detection is the single largest fragility.** If the override trigger
 phrase is not recognised, the intent version never bumps and no override policy
 runs. In that condition the override slice falls to 0.133 hit rate and the
 overall score to 0.7242, identically for every policy.
 
-**The popularity prior is conditional, not free.** Added to bare BM25 it is
-negative, 0.8294 to 0.7727. It pays only once exact matching has narrowed the
-candidate set. It is therefore a second bet on the messages being literal.
+**The popularity prior is conditional, not free.** With category strength 1.00,
+popularity 0.55 reaches 0.881183 on the released set but loses to 0.30 on 1,000
+disjoint targets, 0.866666 versus 0.867627. The higher released result is
+rejected rather than reported as the primary.
+
+**Category parsing is soft and bounded.** Failure to recognize an opening
+category removes only that prior; it does not remove candidates. A wrong partial
+parse can still reorder results, so the category prior is not equivalent to a
+verified taxonomy constraint.
 
 **Negative constraints are tracked but not enforced.** The belief state records
 exclusions and exposes them, but retrieval does not currently filter on them. A
