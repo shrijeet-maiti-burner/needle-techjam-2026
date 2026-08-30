@@ -32,27 +32,30 @@ measured alternatives failed their gates.
 The development and submission adapters use the immutable primary preset:
 
 - versioned state that retracts the stated opening preference while preserving later answers on a scoped preference override;
-- exact catalog-signature promotion only for non-empty buckets of at most 100;
+- exact full-value and clause-level catalog-signature promotion only for non-empty buckets of at most 500;
 - sparse `OR` fallback with weights `6/4/2.5/2.5/1.5/1`;
 - soft opening-category coverage strength 1.00 and popularity strength 0.30;
 - seen-item exclusion within each intent version and a ten-item slate;
-- lexical normalization, expansion, fuzzy matching, and model reranking disabled.
+- Unicode diacritic folding at token and structural-parser boundaries;
+- lexical expansion, fuzzy typo matching, and model reranking disabled.
 
 The pure sparse preset is the rollback and retains the selected safe state and
 soft priors. The optional signature asset is catalog-bound by SHA-256. If it is
 missing, corrupt, or bound to another catalog, construction records the reason
 and rebuilds the equivalent in-memory index rather than aborting the run.
 
-The selected primary measures TechnicalScore 0.878039 on the released set and
-0.867627 on a 1,000-target catalog-disjoint transfer proxy. A second proxy
-varies card shape rather than target identity, drawing targets from the three
-`intent_card` shapes the released set never contains; the primary measures
-0.818531 there. Both proxies are development diagnostics, not private estimates,
-and they disagree about `popularity_strength` (docs/evidence/EXP_006_SHAPES.md).
-A source-only clean bundle reproduces 0.878039 without the optional asset, and
-`scripts/bundle_rehearsal.py` reproduces that check from tracked files alone. Deterministic accents,
-filler, paraphrase, and typo slices still fail the absolute robustness gate, so
-this remains development evidence rather than a private-performance claim.
+The selected primary measures TechnicalScore 0.887527 on the released set.
+Three distribution-matched 200-target panels disjoint from released targets
+score 0.884987, 0.886981, and 0.892706. Source-only and asset-bundled clean
+archives reproduce 0.887527. Accent and filler slices preserve HR@10 exactly;
+compound paraphrase loses 0.010 HR and typo loses 0.090 HR. This remains
+development evidence rather than a private-performance claim.
+
+A second proxy varies card shape rather than target identity, drawing targets
+from the three `intent_card` shapes the released set never contains. It exposes
+a different failure surface and disagrees with released-set tuning of
+`popularity_strength` (docs/evidence/EXP_006_SHAPES.md). These proxies are
+development diagnostics, not private-score estimates.
 
 ## Next experiment-driven extensions
 

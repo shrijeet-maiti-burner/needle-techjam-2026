@@ -1,6 +1,6 @@
 # Submission run notes
 
-Status: selected development primary; source-only clean-bundle rehearsal passed.
+Status: selected development primary; source-only and asset-bundled clean rehearsals passed.
 
 ## Environment
 
@@ -8,17 +8,16 @@ Status: selected development primary; source-only clean-bundle rehearsal passed.
 - mandatory runtime dependencies: Python standard library only (see `requirements.txt`)
 - network required for scoring: no
 - credentials required: no
-- entry point: `submission.agent.Agent`
+- official entry point: `starter.agent.Agent`
+- equivalent release adapter: `submission.agent.Agent`
 
 ### Environment variables
 
 `NEEDLE_SIGNATURE_INDEX` (optional). Read by `starter/agent.py` to override the
-signature index location. If unset it defaults to
-`.artifacts/indexes/catalog-signatures.sqlite3`, which is a development path
-excluded from the bundle, so in a packaged bundle the default will not resolve
-and the agent rebuilds the index in process. Set it to
-`submission/assets/catalog-signatures.sqlite3` to use the bundled asset and skip
-the rebuild. Nothing fails either way; the only difference is startup time.
+signature index location. Without an override, the starter automatically uses
+`submission/assets/catalog-signatures.sqlite3` when present, otherwise the
+development path `.artifacts/indexes/catalog-signatures.sqlite3`. If neither is
+present, the agent rebuilds the equivalent index in process.
 
 ## Running in the official harness
 
@@ -54,13 +53,14 @@ Note the capitalisation: the exported symbol is `Agent`, not `agent`.
 
 - optional asset: `submission/assets/catalog-signatures.sqlite3`
 
-The signature index is a startup optimisation, not a requirement. It is bound to
-a specific catalog by SHA-256. If it is absent, unreadable, or was built against
-any other catalog, the agent logs the reason to
+The schema-v2 signature index is a startup optimisation, not a requirement. It
+is bound to a specific catalog by SHA-256. If it is absent, unreadable, or was
+built against any other catalog, the agent records the reason in
 `CatalogIndex.signature_index_fallback` and rebuilds the equivalent index in
-process. Measured: identical TechnicalScore on the 200 public sessions either
-way, with construction at roughly 1.5s using the bundled asset and 8.2s
-rebuilding. The stale index is never trusted, only ever discarded and rebuilt.
+process. The 49,860,608-byte asset contains 869,240 product-signature rows and
+has SHA-256 `646fcd647a2a78cf00daf7998edd6d7c57c8a4d87000f1b888685b2e4864de9c`.
+Measured construction is 5.125s with the asset and 40.614s without it; both
+paths reproduce TechnicalScore 0.887527. A stale index is never trusted.
 
 Rebuild it for a given catalog with:
 
@@ -71,10 +71,11 @@ python scripts/build_signature_index.py
 ## Packaging
 
 The final bundle includes only required source, helper modules, dependency
-instructions, and optionally the catalog-bound signature asset. The participant
-kit, datasets, evaluator, raw outputs, secrets, and development-only files must
-not be packaged. A clean source-only `git archive` at commit `531ad33b` rebuilt
-the missing index and reproduced TechnicalScore 0.878039. Before release,
-rebuild any optional asset from the exact scoring catalog, verify its catalog
-binding and SHA-256, and repeat the evaluator command from a clean extracted
-bundle.
+instructions, and the catalog-bound signature asset. The participant kit,
+datasets, evaluator, raw outputs, secrets, and development-only files must not
+be packaged. A clean source-only `git archive` at commit `5a61c1a` rebuilt the
+missing index and reproduced TechnicalScore 0.887527. The verified release
+layout adds the generated asset at
+`submission/assets/catalog-signatures.sqlite3`: 50,221,823 bytes across 76
+files, zero stderr, and the same 0.887527 score. Rebuild the asset from the exact
+scoring catalog and repeat this clean extracted-bundle command before upload.

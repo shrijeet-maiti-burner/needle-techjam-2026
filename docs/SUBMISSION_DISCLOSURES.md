@@ -13,6 +13,7 @@ The final Devpost project description must truthfully list all development tools
 | API | official local Python `Agent` interface | evaluator integration | yes |
 | dataset/asset | TikTok TechJam 2026 participant kit | public evaluator, sessions, schema, and catalog package | evaluator-side |
 | dataset/asset | Amazon Reviews 2023, `Clothing_Shoes_and_Jewelry` derivative | source of the frozen competition catalog | evaluator-side |
+| generated asset | catalog-bound SQLite signature index | startup optimisation; reproducibly derived from the frozen catalog | bundled, with source-only fallback |
 
 ## Before submission
 

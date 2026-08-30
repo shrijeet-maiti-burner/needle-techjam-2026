@@ -23,12 +23,13 @@ attribute-specific question and two questions exhaust the customer. Asking also
 costs nothing, because the evaluator scores `recommendations` and may end the
 session before it reads `ask_attribute`.
 
-**Retrieval.** Exact catalog-signature promotion over an FTS5 index, with sparse
-BM25 as the fallback ordering. A soft coverage score for category words in the
-opening request and a bounded popularity prior over `rating_number` rerank but
-never filter candidates. Candidates already shown within an intent version are
-excluded, which turns ten turns of ten slots into up to a hundred distinct
-products rather than repeating the same slate.
+**Retrieval.** Exact full-value and punctuation-delimited clause signatures are
+looked up in a catalog-bound SQLite index, with fielded FTS5 BM25 as the fallback
+ordering. Signature buckets larger than 500 are not promoted. A soft coverage
+score for opening-category words and a bounded popularity prior over
+`rating_number` rerank but never filter candidates. Candidates already shown
+within an intent version are excluded, which turns ten turns of ten slots into
+up to a hundred distinct products rather than repeating the same slate.
 
 **Intent override.** An explicit override retracts the preference the customer
 stated, not the answers they gave to our questions. The opening message is
@@ -59,17 +60,20 @@ datasets and assets for the final Devpost description.
 | estimated model cost | $0.00 |
 | network access required | no |
 | credentials required | no |
-| per-response latency, p50 | 59.6 ms |
-| per-response latency, p95 | 118.2 ms |
-| per-response latency, p99 | 143.3 ms |
-| per-response latency, max | 156.9 ms |
-| instrumented construction with local index | 5.08 s |
-| peak Python traced memory | 66,086,555 bytes |
-| peak process working set | 478,224,384 bytes |
-| contract violations | 0 of 446 responses |
+| per-response latency, p50 | 96.5 ms |
+| per-response latency, p95 | 203.8 ms |
+| per-response latency, p99 | 238.3 ms |
+| per-response latency, max | 281.1 ms |
+| construction with bundled index | 5.125 s |
+| construction without bundled index | 40.614 s |
+| construction peak working set, bundled | 196,231,168 bytes |
+| construction peak working set, source-only | 263,766,016 bytes |
+| complete evaluator peak working set, bundled | 423,079,936 bytes |
+| release bundle size | 50,221,823 bytes |
+| contract violations | 0 of 429 responses |
 
 Measured on the 200 official public sessions, `retrieval_mode=signature_first`,
-`category_strength=1.00`, `popularity_strength=0.30`,
+`signature_bucket_limit=500`, `category_strength=1.00`, `popularity_strength=0.30`,
 `override_policy=retract_stated`, `exclude_seen=true`.
 
 ## Limitations
@@ -77,23 +81,25 @@ Measured on the 200 official public sessions, `retrieval_mode=signature_first`,
 These are stated plainly because they bear on how the result should be read.
 
 **The public score is measured; private transfer is not.** Public intent cards
-are deterministically materialised from the target catalog row. A separate
-1,000-target proxy excludes every released ground-truth target and scores
-0.867627, but it deliberately reuses the released simulator and marginal
-profile/scenario distributions. It is evidence against direct target memorising,
-not a private-score estimate.
+are deterministically materialised from the target catalog row. Three separate
+200-target proxies exclude every released ground-truth target and match public
+rating, price-presence, broad-category, profile, and scenario marginals. They
+score 0.884987, 0.886981, and 0.892706. They still reuse the released simulator,
+so they are evidence against direct target memorising, not private-score
+estimates.
 
-**Sensitivity to message wording is measured and real.** Under a perturbation
-harness that rewords the customer's messages while preserving meaning, the
-selected TechnicalScore falls from 0.878039 to 0.746239 on accents, 0.852302 on
-filler, 0.831659 on paraphrase, and 0.792330 on typos. Whitespace and word-order
-slices score 0.866604 and 0.865589. These failures remain open even though the
-soft category prior improves every slice over its no-category control.
+**Sensitivity to message wording is measured and real.** The exact surface has
+HR@10 0.995 and MRR 0.710089. Accent perturbations are now byte-identical on all
+reported metrics; filler preserves HR@10 and loses 0.004535 MRR; compound
+paraphrase reaches HR@10 0.985 and MRR 0.666165. Single-edit typos remain the
+largest failure at HR@10 0.905 and MRR 0.618657. The measured typo-recovery arm
+did not improve these figures and was removed.
 
-**Override detection is the single largest fragility.** If the override trigger
-phrase is not recognised, the intent version never bumps and no override policy
-runs. In that condition the override slice falls to 0.133 hit rate and the
-overall score to 0.7242, identically for every policy.
+**Override handling still depends on a structural trigger.** Accent folding and
+independent paraphrases pass, and later question answers now survive a scoped
+preference override even when the optional opening-subject anchor cannot be
+parsed. A genuinely unrecognised retraction would still leave the old intent
+version active; no model is present to infer it semantically.
 
 **The popularity prior is conditional, not free.** With category strength 1.00,
 popularity 0.55 reaches 0.881183 on the released set but loses to 0.30 on 1,000

@@ -13,7 +13,7 @@ This is a hypothesis, not a result. Architecture decisions are accepted only aft
 
 ## Current status
 
-H0 began on 29 August 2026 at 12:00 SGT. The contract-valid integration path is complete and the selected development primary plus pure-sparse rollback are encoded in `needle/presets.py`. The primary measures TechnicalScore 0.878039 on the 200 released sessions and 0.867627 on a deterministic 1,000-target catalog-disjoint proxy. A source-only clean-bundle rehearsal reproduces the released result without the ignored signature asset. Meaning-preserving perturbations still expose material failures, so neither measurement is a private-score or winning claim.
+H0 began on 29 August 2026 at 12:00 SGT. The contract-valid integration path is complete and the selected development primary plus pure-sparse rollback are encoded in `needle/presets.py`. The primary measures TechnicalScore 0.887527 on the 200 released sessions. Three 200-target, distribution-matched catalog-disjoint panels score 0.884987, 0.886981, and 0.892706. Clean source-only and asset-bundled rehearsals reproduce the released result. Accent and filler perturbations now preserve HR@10 exactly; typo robustness remains a material failure, so none of these measurements is a private-score or winning claim.
 
 ## Quick start
 
