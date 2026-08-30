@@ -28,47 +28,14 @@ in `message`, and a customer reading it is still free to answer with anything.
 """
 from __future__ import annotations
 
-import json
 import re
 from collections import Counter
-from pathlib import Path
 from typing import Iterable, Mapping, Sequence
-
-from needle.catalog import COLOR_RE, MATERIAL_RE, _text
 
 # Facet name -> the attribute word `local_evaluator.classify_constraint` would
 # give the same value, so a question here is answerable in the same vocabulary
 # the simulator and the belief state already speak.
 FACETS: tuple[str, ...] = ("material", "color")
-
-_FIELDS: tuple[str, ...] = ("title", "features", "details")
-
-
-def build_facet_index(catalog_path: str | Path) -> dict[str, tuple[str, str]]:
-    """`parent_asin -> (material, colour)`, blank where the catalog does not say.
-
-    One pass, two regexes per product, about 1.4 seconds and under 3MB for the
-    released 50000-product catalog. Built lazily by the agent so a run that never
-    asks a question never pays for it.
-    """
-    facets: dict[str, tuple[str, str]] = {}
-    with Path(catalog_path).open(encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            product = json.loads(line)
-            parent_asin = str(product.get("parent_asin") or "").strip()
-            if not parent_asin:
-                continue
-            blob = " ".join(_text(product.get(field)) for field in _FIELDS)
-            material = MATERIAL_RE.search(blob)
-            colour = COLOR_RE.search(blob)
-            facets[parent_asin] = (
-                material.group(1).lower() if material else "",
-                colour.group(1).lower() if colour else "",
-            )
-    return facets
-
 
 def _groups(
     candidates: Sequence[str],
@@ -133,4 +100,4 @@ def clarifying_options(
     return best_name, ordered
 
 
-__all__ = ["FACETS", "build_facet_index", "clarifying_options"]
+__all__ = ["FACETS", "clarifying_options"]

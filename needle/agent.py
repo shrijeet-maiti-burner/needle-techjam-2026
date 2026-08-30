@@ -11,7 +11,7 @@ from needle.catalog import (
 )
 from needle.contracts import TurnResponse
 from needle.explain import message_for, turn_record
-from needle.questions import build_facet_index, clarifying_options
+from needle.questions import clarifying_options
 from needle.semantic import LexicalNormalizer, NoOpSemanticReranker
 from needle.state import Polarity, StateStore
 
@@ -95,10 +95,6 @@ class Agent:
         self.full_slate_turn = int(full_slate_turn)
         self.full_slate_constraints = int(full_slate_constraints)
         self.explain = bool(explain)
-        self._catalog_path_for_facets = str(catalog_path)
-        # Built on first question rather than at construction: about 1.4s and
-        # under 3MB, and a run that never asks one never pays for it.
-        self._facets: dict[str, tuple[str, str]] | None = None
         self.promote_disclosure_bucket = bool(promote_disclosure_bucket)
         self.promotion_bucket_limit = int(promotion_bucket_limit)
         self.promote_opening_category = bool(promote_opening_category)
@@ -214,10 +210,10 @@ class Agent:
         """The facet worth asking about next, from the products still in play."""
         if not candidate_ids:
             return "", ()
-        if self._facets is None:
-            self._facets = build_facet_index(self._catalog_path_for_facets)
         return clarifying_options(
-            candidate_ids, self._facets, already_said=already_said
+            candidate_ids,
+            self.catalog.clarification_facets(candidate_ids),
+            already_said=already_said,
         )
 
     def _explain_turn(
