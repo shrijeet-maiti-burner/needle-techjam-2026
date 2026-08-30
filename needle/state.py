@@ -6,6 +6,8 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Mapping
 
+from needle.semantic import repair_trigger_text, trigger_keywords
+
 
 # Retraction verbs, and the things a customer can retract. Split apart so the
 # trigger is a rule about English rather than a list of released templates:
@@ -88,6 +90,11 @@ ATTRIBUTE_NAME_ALIASES = {
     "use case": "use_case",
     "use-case": "use_case",
 }
+
+
+# Derived from the patterns themselves, so a pattern that gains a phrase
+# cannot silently fall out of surface-repair coverage.
+_TRIGGER_KEYWORDS = trigger_keywords(EXPLICIT_OVERRIDE_RE, PREFERENCE_OVERRIDE_RE)
 
 
 def _declined_regions(message: str) -> list[tuple[int, int]]:
@@ -325,8 +332,17 @@ class SessionState:
         if turn <= self.last_turn:
             raise ValueError(f"turn must increase for session {self.session_id}")
 
+        # Both triggers are consumed as booleans, never for their spans, so a
+        # surface-repaired copy is safe to match against here. `subject_anchor`
+        # and the no-preference clause logic keep using the raw message,
+        # because those do depend on offsets.
         override_match = EXPLICIT_OVERRIDE_RE.search(user_message)
         preference_override = bool(PREFERENCE_OVERRIDE_RE.search(user_message))
+        if not override_match:
+            probe = repair_trigger_text(user_message, _TRIGGER_KEYWORDS)
+            override_match = EXPLICIT_OVERRIDE_RE.search(probe)
+            if override_match:
+                preference_override = bool(PREFERENCE_OVERRIDE_RE.search(probe))
         if override_match:
             prior_subject = self.subject_anchor
             self.intent_version += 1
