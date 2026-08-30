@@ -176,3 +176,26 @@ class SurfaceRobustnessTest(unittest.TestCase):
         # customer actually states still has to reach the index intact.
         parses = arms._clause_parses("For that, what matters is: Assorted Colors.")
         self.assertEqual(parses, [("assorted colors",)])
+
+
+@unittest.skipIf(arms is None, "official participant kit is not bootstrapped")
+class WalkedOutBucketTest(unittest.TestCase):
+    """A bucket whose every member has been shown has nothing left to offer.
+
+    Re-emitting its head spends the turn on a product the evaluator has already
+    seen and passed over, and does so again every turn until the release floor.
+    Releasing instead took MRR from 0.997500 to 1.000000 on the public set:
+    all 200 sessions convert at rank one. See EXP_023.md.
+    """
+
+    def test_the_walk_visits_each_member_once_in_popularity_order(self) -> None:
+        for table in (arms._CATEGORY_INDEX, arms._POPULARITY):
+            table.clear()
+        arms._POPULARITY.update({"HI": 900.0, "MID": 50.0, "LO": 1.0})
+        arms._CATEGORY_INDEX[("shirts", ("cotton",))] = ["LO", "HI", "MID"]
+        order = arms._promote(["For that, what matters is: cotton."], "shirts", True, 100)
+        self.assertEqual(order, ["HI", "MID", "LO"])
+        # The caller walks this list against its own `shown` set, so the
+        # ordering being total and deterministic is what makes "walked out"
+        # a well-defined state rather than an infinite loop on the head.
+        self.assertEqual(len(order), len(set(order)))

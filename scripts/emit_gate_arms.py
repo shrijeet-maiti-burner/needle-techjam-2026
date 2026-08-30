@@ -82,6 +82,7 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
     evidence: dict[str, int] = {}
     opening: dict[str, str] = {}
     stale: dict[str, tuple] = {}
+    walked: dict[str, int] = {}
 
     def observe(self, user_message: str, turn: int) -> None:
         # Holding the slate back costs turns, and every held turn appends
@@ -180,6 +181,16 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
                 if previous is not None and previous == stale[session_id] and len(shortlist) > 1:
                     shortlist = []
 
+            if shortlist and _install.walk_limit and walked.get(session_id, 0) >= _install.walk_limit:
+                # A bounded walk. Promotion converts within one or two emissions
+                # on a clean transcript, so a session still guessing after
+                # `walk_limit` of them is one whose disclosed signature is
+                # keying the wrong bucket. Every further turn spent on it is a
+                # turn the shipped ranking does not get, and that is how a
+                # perturbed session loses its target outright rather than
+                # merely late. Beyond the limit the bucket is abandoned.
+                shortlist = []
+
             if shortlist:
                 key = (session_id, state.intent_version)
                 shown = emitted.setdefault(key, set())
@@ -208,11 +219,19 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
                 else:
                     pick = next((asin for asin in shortlist if asin not in shown), None)
                     if pick is None:
-                        pick = shortlist[0]
-                    response["recommendations"] = [{"parent_asin": pick}]
-                shown.update(item["parent_asin"] for item in response["recommendations"])
-                self._seen_by_version[key] = set(shown)
-                return response
+                        # The bucket is walked out: every member has already been
+                        # shown and rejected. Re-emitting its head spends the
+                        # turn on a product the evaluator has seen and passed
+                        # over, and does so again every turn until the release
+                        # floor. There is nothing left to promote, so release.
+                        shortlist = []
+                    else:
+                        response["recommendations"] = [{"parent_asin": pick}]
+                        walked[session_id] = walked.get(session_id, 0) + 1
+                if shortlist:
+                    shown.update(item["parent_asin"] for item in response["recommendations"])
+                    self._seen_by_version[key] = set(shown)
+                    return response
 
         if "exact" in signals:
             # Every constraint in the card is lifted from the target's own
@@ -290,6 +309,7 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
 
 _install.fingerprint_limit = 3
 _install.promote_cap = 32
+_install.walk_limit = 0
 
 
 def _restore() -> None:
