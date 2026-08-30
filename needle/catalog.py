@@ -223,6 +223,18 @@ def _signature_marker(message: str) -> re.Match[str] | None:
     return SIGNATURE_MARKER_RE.search(repaired)
 
 
+def _marker_value(match: re.Match[str]) -> str:
+    """Value named by a marker, bounded to its sentence.
+
+    The marker pattern is intentionally permissive, but its final ``(.+)``
+    must not absorb a following discourse fragment. A terminator ends the
+    disclosed value when followed by whitespace, a comma, or end of input;
+    decimal points inside prices remain intact.
+    """
+
+    return re.split(r"[!?]|\.(?=\s|,|$)", match.group(1), maxsplit=1)[0]
+
+
 def extract_query_signatures(messages: Iterable[str]) -> tuple[str, ...]:
     """Extract catalog-grounded fragments from released-style dialogue.
 
@@ -243,7 +255,7 @@ def extract_query_signatures(messages: Iterable[str]) -> tuple[str, ...]:
             explicit_value = re.sub(
                 r"\s+now\s*[.!?]*\s*$",
                 "",
-                marker.group(1).split(";", 1)[0],
+                _marker_value(marker).split(";", 1)[0],
                 flags=re.IGNORECASE,
             )
             signature = canonical_signature(explicit_value)
@@ -407,7 +419,7 @@ def disclosed_signature_sequences(
             clause = re.sub(
                 r"\s+now\s*[.!?]*\s*$",
                 "",
-                marker.group(1),
+                _marker_value(marker),
                 flags=re.IGNORECASE,
             )
             raw_parses: list[tuple[str, ...]] = [(clause,)]
@@ -452,7 +464,7 @@ def structured_query_terms(messages: Iterable[str]) -> list[str]:
         message = _structural_text(raw_message)
         marker = _signature_marker(message)
         if marker is not None:
-            terms.extend(query_terms(marker.group(1)))
+            terms.extend(query_terms(_marker_value(marker)))
     return list(dict.fromkeys(terms))
 
 
