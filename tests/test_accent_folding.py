@@ -10,7 +10,13 @@ from __future__ import annotations
 
 import unittest
 
-from needle.state import Polarity, extract_constraints, fold_marks_in_place
+from needle.state import (
+    Polarity,
+    _within_one_edit,
+    extract_constraints,
+    fold_marks_in_place,
+    looks_like_retraction,
+)
 
 
 class FoldMarksInPlace(unittest.TestCase):
@@ -63,3 +69,44 @@ class AccentedDisclosures(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TypoTolerantOverride(unittest.TestCase):
+    """A single typo must not cost the whole session.
+
+    `EXPLICIT_OVERRIDE_RE` is a phrase match, so "earliier preference" left it
+    unmatched, the retracted constraints stayed active, and the agent spent the
+    rest of the session chasing a preference the customer had withdrawn. On the
+    typo slice that was `intent_override` HR 0.567 against 1.000.
+    """
+
+    def test_single_typo_in_either_half_still_retracts(self):
+        for message in (
+            "Actually, ignore my earliier preference. What I need is: leather.",
+            "Actually, ignore my eartier preference. What I need is: leather.",
+            "Actually, ignore my earlier prefference. What I need is: leather.",
+            "Actually, ignroe my earlier preference. What I need is: leather.",
+        ):
+            self.assertTrue(looks_like_retraction(message), message)
+
+    def test_both_halves_are_still_required(self):
+        # A retraction verb with nothing to retract, and a prior-reference with
+        # no retraction, must both stay quiet: a false override bumps the intent
+        # version and discards belief, which costs more than a missed one.
+        self.assertFalse(looks_like_retraction("Please ignore the fit for now."))
+        self.assertFalse(looks_like_retraction("My earlier preference was cotton."))
+
+    def test_released_non_override_replies_stay_quiet(self):
+        for message in (
+            "I don't have an additional preference for other.",
+            "For that, what matters is: cotton; Imported.",
+            "Those options are not quite right yet. Ask me about one specific attribute.",
+            "I need cotton instead of polyester.",
+            "I'm looking for Men's Shirts, but I'm still exploring.",
+        ):
+            self.assertFalse(looks_like_retraction(message), message)
+
+    def test_short_words_are_matched_exactly(self):
+        # One edit reaches too many unrelated words below five characters.
+        self.assertFalse(_within_one_edit("undp", "undo"))
+        self.assertTrue(_within_one_edit("ignorre", "ignore"))
