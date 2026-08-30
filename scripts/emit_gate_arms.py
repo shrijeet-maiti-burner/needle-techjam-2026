@@ -81,6 +81,7 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
     exhausted: set[str] = set()
     evidence: dict[str, int] = {}
     opening: dict[str, str] = {}
+    stale: dict[str, tuple] = {}
 
     def observe(self, user_message: str, turn: int) -> None:
         # Holding the slate back costs turns, and every held turn appends
@@ -148,7 +149,7 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
             # takes the guess and leaves the failure mode behind.
             opening_list = _promote(
                 [], opening.get(session_id, ""), "category" in signals,
-                _install.promote_cap, empty_prefix=True,
+                10 ** 9, empty_prefix=True,
             )
             if opening_list:
                 key = (session_id, state.intent_version)
@@ -164,6 +165,21 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
                 "category" in signals, _install.promote_cap,
                 empty_prefix="catpop" in signals,
             )
+            if shortlist and "release_stale" in signals:
+                # A bucket that has not changed since last turn is a bucket the
+                # turn added no evidence to. On a clean transcript that barely
+                # happens: every reply discloses two more constraints and
+                # deepens the prefix, so the bucket is a different, smaller one
+                # each turn. On a corrupted one the disclosed signature stops
+                # keying the index, promotion keeps resolving to the same stale
+                # bucket, and walking it one product per turn is exactly the
+                # starvation that costs targets. Releasing there hands the turn
+                # back to the shipped ranking while turns remain to use it.
+                previous = stale.get(session_id)
+                stale[session_id] = tuple(shortlist[:8])
+                if previous is not None and previous == stale[session_id] and len(shortlist) > 1:
+                    shortlist = []
+
             if shortlist:
                 key = (session_id, state.intent_version)
                 shown = emitted.setdefault(key, set())
@@ -172,10 +188,19 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
                     # shortlist is merged *ahead of* the shipped slate rather
                     # than replacing it. Ordering below rank one is the shipped
                     # ordering; nothing is dropped.
-                    ordered = list(shortlist)
-                    ordered += [
+                    #
+                    # It is merged *bounded*, though. A corrupted transcript can
+                    # canonicalise to a signature that keys some other product's
+                    # bucket, and an unbounded merge would then fill all ten
+                    # slots with that wrong bucket and lose a target the shipped
+                    # ranking had. Half the slate is reserved for the shipped
+                    # answer, so no surface corruption can cost a hit -- only a
+                    # rank. This is the same failure the rejected empty-prefix
+                    # arm hit on the shape holdout, arriving by a different road.
+                    head = list(shortlist)[: max(1, top_k // 2)]
+                    ordered = head + [
                         item["parent_asin"] for item in response["recommendations"]
-                        if item["parent_asin"] not in set(shortlist)
+                        if item["parent_asin"] not in set(head)
                     ]
                     response["recommendations"] = [
                         {"parent_asin": asin} for asin in ordered[:top_k]
@@ -205,6 +230,21 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
 
         if limit is None:
             confident = turn >= late_turn or len(state.active_constraints()) >= commit_constraints
+            if not confident and "release_unresolved" in signals and turn > 1:
+                # Promotion has just declined: the disclosed evidence resolves
+                # to no bucket at all. The entire case for holding a slate back
+                # is that the next turn sharpens a ranking promotion can act on,
+                # so when promotion cannot act there is nothing to wait for and
+                # the hold is pure MTTC -- and worse, on a corrupted transcript
+                # it starves the session, spending seven turns on one product
+                # each while only three full slates remain before MAX_TURNS.
+                # That is where the arm's robustness losses come from: it is not
+                # that the guess is wrong, it is that a wrong guess keeps the
+                # shipped ranking off the wire.
+                confident = not _promote(
+                    state.messages, opening.get(session_id, ""),
+                    "category" in signals, _install.promote_cap,
+                )
             if not confident and "exhausted" in signals and session_id in exhausted:
                 confident = True
             if not confident and "stalled_exact" in signals:
@@ -434,8 +474,33 @@ def _build_prefix_index(products, categories) -> None:
             _CATEGORY_SET_INDEX.setdefault((coarse, frozenset(signature)), []).append(asin)
 
 
+# Discourse markers the robustness slices insert and that a real shopper says
+# anyway. They carry no product meaning, and the arm matches on surface text, so
+# a single "um," between "For that" and "what matters is" is enough to switch
+# promotion off for the rest of the session. Stripping them before matching
+# costs nothing on clean text and is what makes the arm survive perturbation.
+_FILLER_RE = re.compile(
+    r"\b(?:um|uh|er|like|basically|honestly|seriously|actually|really|"
+    r"you\s+know|i\s+guess|i\s+think|i\s+mean|sort\s+of|kind\s+of|"
+    r"to\s+be\s+honest|if\s+that\s+makes\s+sense|please)\b[,\s]*",
+    re.IGNORECASE,
+)
+
+
+def _normalize_for_match(message: str) -> str:
+    """Fold marks, drop discourse fillers, collapse whitespace.
+
+    `SessionState.observe` folds accents for the *override trigger*, but the arm
+    reads `user_message` and `state.messages` for its own lookups, so it has to
+    do the same folding itself or an accented category never matches its index.
+    """
+    folded = needle_state.fold_marks_in_place(message)
+    stripped = _FILLER_RE.sub(" ", folded)
+    return re.sub(r"\s+", " ", stripped).strip()
+
+
 def _opening_category(message: str) -> str:
-    match = _OPENING_CATEGORY_RE.search(message.strip())
+    match = _OPENING_CATEGORY_RE.search(_normalize_for_match(message))
     return needle_catalog.canonical_signature(match.group(1)) if match else ""
 
 
@@ -452,6 +517,7 @@ def _clause_parses(message: str) -> list[tuple[str, ...]]:
     precision 1.000, so a wrong parse cannot produce a wrong answer, only no
     answer.
     """
+    message = _normalize_for_match(message)
     marker = needle_catalog.SIGNATURE_MARKER_RE.search(message)
     if not marker:
         return [()]

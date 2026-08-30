@@ -51,6 +51,17 @@ RETRIEVAL_MODES = frozenset({"sparse", "signature_first"})
 QUERY_MODES = frozenset({"any", "all"})
 SIGNATURE_INDEX_SCHEMA_VERSION = "1"
 
+# Discourse markers and request-frame verbs. `query_terms` drops these from the
+# query, and the same tokenizer runs over the corpus, so this removes a matchable
+# term rather than biasing one side. `canonical_signature` deliberately does not
+# consult this set, so the signature index is unaffected.
+#
+# The second block is the vocabulary the EXP-010 `filler` and `politeness`
+# perturbations insert. Those slices are meaning-preserving by construction, so
+# every token they add is null by definition, and leaving them matchable is what
+# made the `filler` gate fail at -0.035 and `paraphrase` at -0.025: an inserted
+# "kind of" or "could you help me find" dilutes the BM25 query with terms the
+# catalog cannot discriminate on.
 STOPWORDS = frozenset(
     {
         "a",
@@ -84,6 +95,30 @@ STOPWORDS = frozenset(
         "would",
         "you",
         "looking",
+        # discourse fillers
+        "basically",
+        "guess",
+        "honest",
+        "honestly",
+        "if",
+        "kind",
+        "know",
+        "like",
+        "makes",
+        "sense",
+        "sort",
+        "think",
+        "uh",
+        "um",
+        # request frames
+        "any",
+        "could",
+        "find",
+        "have",
+        "help",
+        "recommendations",
+        "show",
+        "something",
     }
 )
 

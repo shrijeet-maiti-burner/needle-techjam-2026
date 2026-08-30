@@ -136,3 +136,43 @@ class OpeningGuessTest(unittest.TestCase):
             ["POPULAR", "OTHER"],
         )
         self.assertEqual(arms._promote([], "shirts", True, 100), [])
+
+
+@unittest.skipIf(arms is None, "official participant kit is not bootstrapped")
+class SurfaceRobustnessTest(unittest.TestCase):
+    """The arm matches on surface text, so it has to normalize it itself.
+
+    `SessionState.observe` folds accents for the override trigger, but the arm
+    reads `user_message` and `state.messages` for its own index lookups. Before
+    these, one inserted "um," or one accented category was enough to switch
+    promotion off for a whole session: EXP_023.md measures the `paraphrase`
+    slice going from -0.090 hit rate to -0.025 and `typo` target removal from
+    0.045 to 0.005 once this normalization and the release rules are in.
+    """
+
+    def test_discourse_fillers_do_not_hide_the_marker(self) -> None:
+        plain = arms._clause_parses("For that, what matters is: 100% Cotton.")
+        filled = arms._clause_parses("For that, um, what matters is: 100% Cotton.")
+        self.assertEqual(plain, filled)
+        self.assertNotEqual(plain, [()])
+
+    def test_multiword_fillers_are_stripped(self) -> None:
+        plain = arms._clause_parses("For that, what matters is: Imported.")
+        for token in ("you know", "sort of", "i guess", "to be honest"):
+            with self.subTest(token=token):
+                self.assertEqual(
+                    arms._clause_parses(f"For that, {token}, what matters is: Imported."),
+                    plain,
+                )
+
+    def test_the_opening_category_is_accent_folded(self) -> None:
+        self.assertEqual(
+            arms._opening_category("I'm looking for Sandàls, but I'm still exploring"),
+            arms._opening_category("I'm looking for Sandals, but I'm still exploring"),
+        )
+
+    def test_a_real_constraint_containing_a_filler_word_survives(self) -> None:
+        # "sort" and "kind" are stripped only as discourse markers; a value the
+        # customer actually states still has to reach the index intact.
+        parses = arms._clause_parses("For that, what matters is: Assorted Colors.")
+        self.assertEqual(parses, [("assorted colors",)])
