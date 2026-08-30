@@ -108,11 +108,12 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
         state = self.state._sessions[session_id]
 
         limit = None
-        if "prefix" in signals:
+        if signals & {"prefix", "promote"}:
             if turn == 1:
                 # An override clears the message history, so the category has to
                 # be captured from the opening line while it is still there.
                 opening[session_id] = _opening_category(user_message)
+        if "prefix" in signals:
             identified = _identify(
                 state.messages, opening.get(session_id, ""), "category" in signals
             )
@@ -121,6 +122,37 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
                 key = (session_id, state.intent_version)
                 shown = emitted.setdefault(key, set())
                 shown.add(identified)
+                self._seen_by_version[key] = set(shown)
+                return response
+
+        if "promote" in signals:
+            shortlist = _promote(
+                state.messages, opening.get(session_id, ""),
+                "category" in signals, _install.promote_cap,
+                empty_prefix="catpop" in signals,
+            )
+            if shortlist:
+                key = (session_id, state.intent_version)
+                shown = emitted.setdefault(key, set())
+                if turn >= late_turn:
+                    # The release floor still has to guarantee the hit, so the
+                    # shortlist is merged *ahead of* the shipped slate rather
+                    # than replacing it. Ordering below rank one is the shipped
+                    # ordering; nothing is dropped.
+                    ordered = list(shortlist)
+                    ordered += [
+                        item["parent_asin"] for item in response["recommendations"]
+                        if item["parent_asin"] not in set(shortlist)
+                    ]
+                    response["recommendations"] = [
+                        {"parent_asin": asin} for asin in ordered[:top_k]
+                    ]
+                else:
+                    pick = next((asin for asin in shortlist if asin not in shown), None)
+                    if pick is None:
+                        pick = shortlist[0]
+                    response["recommendations"] = [{"parent_asin": pick}]
+                shown.update(item["parent_asin"] for item in response["recommendations"])
                 self._seen_by_version[key] = set(shown)
                 return response
 
@@ -184,6 +216,7 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
 
 
 _install.fingerprint_limit = 3
+_install.promote_cap = 32
 
 
 def _restore() -> None:
@@ -212,12 +245,15 @@ def main() -> None:
     parser.add_argument("--signals", action="append", default=None,
                         help="comma-separated: exhausted, fingerprint; repeat the flag for several arms")
     parser.add_argument("--fingerprint-limit", type=int, default=3)
+    parser.add_argument("--promote-cap", type=int, default=32,
+                        help="largest prefix shortlist worth walking (signal: promote)")
     parser.add_argument("--dataset", type=Path, default=KIT / "data/public_set.jsonl")
     parser.add_argument("--out", type=Path, default=None, help="write per-session rows here")
     parser.add_argument("--no-baseline", action="store_true")
     arguments = parser.parse_args()
 
     _install.fingerprint_limit = arguments.fingerprint_limit
+    _install.promote_cap = arguments.promote_cap
 
     catalog = KIT / "data/catalog.jsonl"
     missing = [path for path in (catalog, arguments.dataset) if not path.is_file()]
@@ -227,7 +263,7 @@ def main() -> None:
 
     samples = load_jsonl(str(arguments.dataset))
     catalog_ids, categories, products = catalog_index(str(catalog))
-    if any("prefix" in group for group in (arguments.signals or [])):
+    if any(("prefix" in group or "promote" in group) for group in (arguments.signals or [])):
         _build_prefix_index(products, categories)
 
     ks = arguments.k or [1]
@@ -334,6 +370,7 @@ def _extract_all_spans(messages):
 # `categories` field. Qualifying the prefix by it takes unique identification
 # from 140 sessions to 168 at full disclosure, and from 65 to 109 by turn two.
 _PREFIX_INDEX: dict[tuple, list[str]] = {}
+_POPULARITY: dict[str, float] = {}
 _FIRST4_INDEX: dict[frozenset, list[str]] = {}
 _CATEGORY_INDEX: dict[tuple, list[str]] = {}
 _CATEGORY_SET_INDEX: dict[tuple, list[str]] = {}
@@ -346,10 +383,16 @@ def _build_prefix_index(products, categories) -> None:
     if _PREFIX_INDEX:
         return
     for asin, product in products.items():
+        count = product.get("rating_number")
+        _POPULARITY[asin] = float(count) if isinstance(count, (int, float)) else 0.0
         signature = needle_catalog.product_signatures(product)[:4]
         coarse = needle_catalog.canonical_signature(
             official_coarse_category(categories.get(asin, []))
         )
+        # Depth 0 is the coarse category itself. `initial_message` states it
+        # verbatim on turn one, so a browsing session that has disclosed
+        # nothing at all still has one catalog-grounded key to rank by.
+        _CATEGORY_INDEX.setdefault((coarse, ()), []).append(asin)
         for depth in range(1, len(signature) + 1):
             _PREFIX_INDEX.setdefault(signature[:depth], []).append(asin)
             _CATEGORY_INDEX.setdefault((coarse, signature[:depth]), []).append(asin)
@@ -437,6 +480,69 @@ def _identify(messages, category: str, use_category: bool) -> str | None:
                 answers.add(candidates[0])
                 break
     return answers.pop() if len(answers) == 1 else None
+
+
+# --- EXP-023: prefix promotion ----------------------------------------------
+#
+# `_identify` answers only when the disclosed prefix resolves to exactly one
+# product, and hands every other session back to the unmodified pipeline. That
+# throws away the part of the signal that is doing most of the work. Measured
+# over the 200 public cards, against the same `(coarse_category, prefix)` index:
+#
+# | disclosed constraints | median set | target in set | most-popular member is the target |
+# |---|---:|---:|---:|
+# | 1 | 26 | 200/200 | 118/200 |
+# | 2 |  1 | 200/200 | 178/200 |
+# | 3 |  1 | 200/200 | 189/200 |
+# | 4 |  1 | 200/200 | 192/200 |
+#
+# The target is inside the set at every depth because the card is built from the
+# target's own signature values, so the set is a *guaranteed* shortlist, not a
+# guess. What is a guess is the order within it, and `rating_number` orders it
+# well: one disclosed constraint already puts the target first in 118 sessions,
+# where the shipped BM25 ranking has to pick it out of the whole coarse
+# category. Promotion therefore replaces the emitted product, never the
+# candidate set, and cannot lose a target the pipeline would have found: a wrong
+# promotion costs one turn (0.02) and the next turn promotes the next member.
+#
+# Unlike identification this is evidence rather than proof, so it is capped: a
+# set larger than `promote_cap` is not a shortlist worth walking and the session
+# falls back to the shipped ranking.
+def _promote(messages, category: str, use_category: bool, cap: int,
+             empty_prefix: bool = False) -> list[str]:
+    """The disclosed prefix's candidate shortlist, most popular first."""
+    sequences = _disclosed_candidates(messages)
+    if empty_prefix and use_category and category:
+        # Turn one of a browsing or boundary session discloses nothing, so the
+        # deepest prefix available is the empty one and the shortlist is the
+        # whole coarse category. Ranking it by `rating_number` is the best
+        # turn-one guess the evidence supports: the most popular product in the
+        # stated category is the target in 32 of the 90 public browsing and
+        # boundary sessions, against 12 that the shipped ranking finds.
+        sequences = list(sequences) + [()]
+    if not sequences:
+        return []
+    # Deepest disclosure first: a longer prefix is strictly more evidence, and
+    # among equal depths the smaller set is the more resolved one.
+    best: list[str] | None = None
+    best_key: tuple[int, int] | None = None
+    for disclosed in sequences:
+        lookups = []
+        if use_category and category:
+            lookups.append(_CATEGORY_INDEX.get((category, disclosed)))
+            lookups.append(_CATEGORY_SET_INDEX.get((category, frozenset(disclosed))))
+        lookups.append(_PREFIX_INDEX.get(disclosed))
+        lookups.append(_FIRST4_INDEX.get(frozenset(disclosed)))
+        for candidates in lookups:
+            if not candidates or len(candidates) > cap:
+                continue
+            key = (-len(disclosed), len(candidates))
+            if best_key is None or key < best_key:
+                best_key, best = key, candidates
+            break
+    if best is None:
+        return []
+    return sorted(best, key=lambda asin: (-_POPULARITY.get(asin, 0.0), asin))
 
 
 if __name__ == "__main__":
