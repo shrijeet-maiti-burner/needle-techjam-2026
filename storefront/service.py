@@ -41,9 +41,9 @@ from needle.state import ConstraintStatus, Polarity
 
 from storefront.catalog_view import CatalogView
 
-# The evaluator scores ten turns. A person testing the interface is not bound by
-# that, so the conversation is not cut off at ten; the turn number is reported
-# and the interface marks where the scored budget would have ended.
+# The evaluator and `StateStore` both accept at most ten turns. The interface
+# stops there too: sending an eleventh message would exercise the agent's
+# degraded-response guard rather than the selected policy shown on screen.
 SCORED_TURN_BUDGET = 10
 
 # Sessions are held for their belief state. This bounds a long-lived server;
@@ -271,6 +271,10 @@ class StorefrontService:
             if conversation is None:
                 conversation = self.start(session_id)
             turn_number = conversation.next_turn
+            if turn_number > SCORED_TURN_BUDGET:
+                raise ValueError(
+                    "ten-turn budget exhausted; start a new conversation"
+                )
             agent = self.agent
 
             started = time.perf_counter()

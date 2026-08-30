@@ -515,6 +515,7 @@
     let sessionId = null;
     let config = null;
     let pending = false;
+    let budgetExhausted = false;
     let lastIntentVersion = 1;
 
     /* ---------- dom helpers ----------
@@ -829,7 +830,11 @@
       const data = await api("/api/session", {});
       sessionId = data.session_id;
       config = data.config;
+      budgetExhausted = false;
       lastIntentVersion = 1;
+      el.input.disabled = false;
+      el.input.placeholder = "Describe what you are looking for...";
+      el.send.disabled = false;
       renderConfig(config);
       renderSuggestions(config.suggestions);
       renderBeliefs({ wanted: [], excluded: [], superseded: [], intent_version: 1 });
@@ -841,7 +846,7 @@
     }
 
     async function send(text) {
-      if (pending || !text.trim()) return;
+      if (pending || budgetExhausted || !text.trim()) return;
       pending = true;
       el.send.disabled = true;
       if (el.opening.parentNode) el.opening.remove();
@@ -858,12 +863,17 @@
         el.factTurn.textContent = "turn " + turn.turn;
         el.statLatency.textContent = turn.latency_ms.toFixed(0) + " ms";
         el.latencyHint.textContent = "answered in " + turn.latency_ms.toFixed(1) + " ms";
+        if (turn.turn >= config.scored_turn_budget) {
+          budgetExhausted = true;
+          el.input.disabled = true;
+          el.input.placeholder = "Ten-turn budget reached — start a new conversation";
+        }
       } catch (error) {
         thinking.remove();
         showError(error && error.message ? error.message : String(error));
       } finally {
         pending = false;
-        el.send.disabled = false;
+        el.send.disabled = budgetExhausted;
         scrollToEnd();
         el.input.focus();
       }

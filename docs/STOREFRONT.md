@@ -29,7 +29,7 @@ The value is read as JSON, so `false` is a bool and `10` an int. A keyword the i
 - the reply and the recommended slate, joined back to catalog display fields;
 - per card: title, store, price where the catalog carries one, rating, category path, and the disclosed values that appear in that product's text, labelled with the field they appear in;
 - a belief panel with active constraints, ruled-out values, and values dropped at a change of mind, plus the intent version;
-- per turn: number, latency, `ask_attribute`, and whether the turn is still inside the scored ten-turn budget;
+- per turn: number, latency, and `ask_attribute`; after turn ten the composer locks rather than exercising the agent's degraded-response fallback;
 - whether the run deviates from `PRIMARY_AGENT_KWARGS`, and whether the bundled signature index was accepted or rejected.
 
 ## Boundaries

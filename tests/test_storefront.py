@@ -215,13 +215,15 @@ class StorefrontServiceTest(unittest.TestCase):
             "leather", [entry["value"] for entry in turn.beliefs["wanted"]]
         )
 
-    def test_turns_past_the_scored_budget_are_marked_not_truncated(self) -> None:
-        """A tester is not bound by ten turns; the interface just says so."""
+    def test_an_eleventh_turn_is_refused_instead_of_silently_degrading(self) -> None:
         conversation = self.service.start()
-        for index in range(11):
+        for index in range(10):
             turn = self.service.send(conversation.session_id, f"belt number {index}")
-        self.assertEqual(turn.turn, 11)
-        self.assertFalse(turn.within_scored_budget)
+            self.assertFalse(turn.degraded)
+        self.assertEqual(turn.turn, 10)
+        self.assertTrue(turn.within_scored_budget)
+        with self.assertRaisesRegex(ValueError, "ten-turn budget exhausted"):
+            self.service.send(conversation.session_id, "one turn too many")
 
     def test_evidence_cites_disclosed_values_not_message_scaffolding(self) -> None:
         """"For that, what matters is" must never reach a card as evidence.
