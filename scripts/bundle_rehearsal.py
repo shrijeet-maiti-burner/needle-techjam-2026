@@ -184,6 +184,18 @@ for turn, message in enumerate(messages, start=1):
     if not recommendations:
         raise SystemExit(f"turn {turn}: empty slate")
 
+# `respond` never raises by design: `evaluate` replaces the whole response when
+# it does, which forfeits the turn, so the agent catches and degrades instead
+# and records what happened. That makes a degradation invisible to every check
+# above -- the response is still a valid dict with an in-catalog slate. It is
+# the same shape of silence that let a signature asset ship for weeks while the
+# agent rejected it at load. Read the record.
+failures = getattr(agent, "respond_failures", [])
+if failures:
+    raise SystemExit(
+        f"agent degraded on {len(failures)} turn(s) during rehearsal: {failures[:3]}"
+    )
+
 print("bundle rehearsal ok:", len(messages), "turns, slates non-empty and in-catalog")
 '''
 
