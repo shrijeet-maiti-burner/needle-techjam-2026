@@ -77,6 +77,26 @@ class CatalogValidationTest(unittest.TestCase):
             )
         )
 
+    def test_marker_value_stops_before_trailing_discourse_filler(self) -> None:
+        self.assertEqual(
+            extract_query_signatures(
+                ["I'm looking for shirts. A key requirement is: cotton., kind of"]
+            )[0],
+            "cotton",
+        )
+        self.assertEqual(
+            disclosed_signature_sequences(
+                ["I'm looking for shirts. A key requirement is: cotton., kind of"]
+            ),
+            (("cotton",),),
+        )
+        self.assertEqual(
+            extract_query_signatures(
+                ["What matters is: budget around $30.99. I can be flexible."]
+            )[0],
+            "budget around 30 99",
+        )
+
     def test_nested_request_uses_the_final_category_phrase(self) -> None:
         self.assertEqual(
             extract_category_terms(
