@@ -104,6 +104,25 @@ def main() -> None:
     catalog_sha = sha256_file(catalog)
     if metadata.get("catalog_sha256") != catalog_sha:
         raise ValueError("signature asset is not bound to the official catalog")
+    # The catalog binding was checked and the schema was not, so an asset built
+    # against an older `SIGNATURE_INDEX_SCHEMA_VERSION` shipped happily and was
+    # then rejected at load by the very agent it was built for. `CatalogIndex`
+    # treats that as a soft failure and rebuilds in process, so nothing broke
+    # and nothing said anything: the bundle simply carried 32MB it could not
+    # use and paid 19 extra seconds of construction on every run.
+    # Read from the package rather than duplicating the constant, so this can
+    # never drift from the loader it is protecting. Imported here rather than at
+    # module scope because the bundler is otherwise deliberately free of package
+    # imports.
+    sys.path.insert(0, str(ROOT))
+    from needle.catalog import SIGNATURE_INDEX_SCHEMA_VERSION
+
+    if metadata.get("schema_version") != SIGNATURE_INDEX_SCHEMA_VERSION:
+        raise ValueError(
+            "signature asset schema "
+            f"{metadata.get('schema_version')!r} is not the {SIGNATURE_INDEX_SCHEMA_VERSION!r} "
+            "this code reads; rebuild it with scripts/build_signature_index.py"
+        )
 
     workspace = Path(tempfile.mkdtemp(prefix="needle-release-"))
     try:
