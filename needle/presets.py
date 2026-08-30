@@ -37,6 +37,11 @@ PRIMARY_AGENT_KWARGS: Final[Mapping[str, object]] = MappingProxyType(
         "full_slate_constraints": 4,
         "correct_unmatched_terms": True,
         "correction_scope": "structured",
+        # The `message` field is not scored, so this cannot move the number. It
+        # is on because a transcript a person reads is the product, and a
+        # constant sentence on every turn is not one. Every claim it makes is
+        # taken from the state that produced the turn; see needle/explain.py.
+        "explain": True,
         "promote_disclosure_bucket": True,
         "promotion_bucket_limit": 50000,
         "promote_opening_category": True,
