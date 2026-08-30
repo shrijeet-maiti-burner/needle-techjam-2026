@@ -33,11 +33,15 @@ class SignatureIndexFallback(unittest.TestCase):
         )
 
     def index(self, path: Path, signature_index_path=None) -> CatalogIndex:
-        return CatalogIndex(
+        built = CatalogIndex(
             path,
             retrieval_mode="signature_first",
             signature_index_path=signature_index_path,
         )
+        # A healthy index keeps an open handle on the asset; on Windows that
+        # blocks the TemporaryDirectory cleanup these tests register.
+        self.addCleanup(built.close)
+        return built
 
     def test_missing_index_falls_back_instead_of_raising(self) -> None:
         index = self.index(self.catalog(), "/tmp/needle-definitely-not-here.sqlite3")

@@ -84,9 +84,11 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(response["recommendations"][0]["parent_asin"], "BLACK_SHIRT")
         self.assertEqual(response["usage"], {"prompt_tokens": 0, "completion_tokens": 0})
 
-    def test_reset_is_required(self) -> None:
+    def test_reset_is_required_by_the_state_store(self) -> None:
+        """The invariant still holds where it is owned. `Agent.respond` no
+        longer propagates it; see `test_respond_never_raises` for why."""
         with self.assertRaisesRegex(RuntimeError, "reset must be called"):
-            self.agent.respond("missing", "black shirt", 1, 10)
+            self.agent.state.observe("missing", "black shirt", 1)
 
     def test_explicit_override_starts_a_new_intent_version(self) -> None:
         self.agent.reset("override", {})
