@@ -336,6 +336,16 @@ class SessionState:
         # surface-repaired copy is safe to match against here. `subject_anchor`
         # and the no-preference clause logic keep using the raw message,
         # because those do depend on offsets.
+        # Accents are handled structurally, before the trigger runs, because
+        # edit-distance repair cannot reach them: the perturbation corrupts two
+        # vowels in a word, which is two edits, and `repair_trigger_text` is
+        # deliberately bounded at one. `fold_marks_in_place` is length
+        # preserving, so `_declined_regions`, `inside_declined` and
+        # `_is_negated` keep working on the offsets they already rely on, and
+        # the folded text is what reaches `self.messages`, so retrieval and
+        # signature extraction see the same normalization the belief state did.
+        user_message = fold_marks_in_place(user_message)
+
         override_match = EXPLICIT_OVERRIDE_RE.search(user_message)
         preference_override = bool(PREFERENCE_OVERRIDE_RE.search(user_message))
         if not override_match:
