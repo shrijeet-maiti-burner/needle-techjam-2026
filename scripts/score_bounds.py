@@ -12,32 +12,36 @@ That floors the set at `12*3 + 18*4 + 170*1 = 278` turns, MTTC 1.39, efficiency
 on turn one in all 170 other sessions, including 90 whose opening message
 discloses nothing but a coarse category, so it bounds without being approachable.
 
-**Achievable bound, 0.982500.** This script replays each session's exact message
-schedule and grants an oracle no real agent can have: the moment the disclosed
-evidence admits the target at all, it emits the target at rank one. On turn one
-of a browsing or boundary session nothing is disclosed, so there the oracle is
-held to the best rule that actually exists -- the most popular product in the
-stated category.
+**Protocol-conditioned oracle reference, 0.982500.** This is not an achievable
+algorithmic bound. The script replays each session's exact message schedule and
+grants an oracle ground-truth knowledge to emit the target as soon as the
+disclosed bucket contains it. On turn one of a browsing or boundary session,
+the oracle is instead held to the measured popularity rule.
 
-The second number is the useful one. It bounds every technique that ranks within
-the evidence the simulator discloses: popularity, BM25, dense retrieval, a
-perfect LLM reranker. None of them can rank a product the evidence never
-surfaces, and none can separate products the evidence cannot distinguish.
+The second number is a diagnostic reference for this protocol. It is not a
+bound on every feasible technique: another prior, user-profile correlation, or
+private-sampler regularity could separate products that the disclosed
+constraints alone do not.
 
 That second point is the load-bearing one, and it is a property of the released
 `intent_card`: every constraint is lifted from the target's own field values, so
 the products sharing a disclosed prefix are *exchangeable* on that evidence. At
 turn one of a buying session the bucket has median 26 members, all carrying the
 one stated constraint in the one stated category, and nothing in the transcript
-separates them. The only discriminator left is the prior over which of them is
+separates them. The measured discriminator is the prior over which of them is
 likely to be a target at all, which is what `rating_number` supplies.
 
     python3 scripts/score_bounds.py
 """
-import sys, importlib.util, statistics
-sys.argv = ["x"]; sys.path.insert(0, "/private/tmp/pr5repro")
-spec = importlib.util.spec_from_file_location("ega", "/private/tmp/pr5repro/scripts/emit_gate_arms.py")
-ega = importlib.util.module_from_spec(spec); spec.loader.exec_module(ega)
+import statistics
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from scripts import emit_gate_arms as ega  # noqa: E402
+
 KIT = ega.KIT
 from evaluator.local_evaluator import (
     catalog_index, load_jsonl, materialize_hidden_fields, coarse_category,
@@ -113,6 +117,6 @@ e = max(0.0, min(1.0, (11 - mttc) / 10))
 print(f"{'scenario':<18}{'n':>4}{'oracle MTTC':>14}")
 for k in sorted(by_scen):
     print(f"{k:<18}{len(by_scen[k]):>4}{statistics.fmean(by_scen[k]):>14.4f}")
-print(f"\nbucket oracle: HR={hr:.4f} MRR=1.0000 MTTC={mttc:.4f} -> SCORE {0.5*hr + 0.3*1.0 + 0.2*e:.6f}")
+print(f"\nprotocol oracle: HR={hr:.4f} MRR=1.0000 MTTC={mttc:.4f} -> SCORE {0.5*hr + 0.3*1.0 + 0.2*e:.6f}")
 print(f"our measured arm                                    0.978550")
 print(f"\nabsolute bound (omniscient, evaluator floor only)     0.992200")
