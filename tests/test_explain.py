@@ -113,28 +113,24 @@ class IntegrationTest(unittest.TestCase):
             )
             self.assertEqual(violations, [])
 
-    def test_the_trace_is_recorded_per_turn_and_never_leaks_into_the_payload(self) -> None:
+    def test_nothing_is_added_to_the_payload(self) -> None:
         with self._agent(True) as agent:
             agent.reset("s", {})
             response = agent.respond("s", self.OPENING, 1, 10)
             self.assertEqual(
                 set(response), {"message", "ask_attribute", "recommendations", "usage"}
             )
-            self.assertEqual(len(agent.explanations["s"]), 1)
-            self.assertEqual(agent.explanations["s"][0]["turn"], 1)
 
-    def test_the_trace_is_bounded(self) -> None:
+    def test_the_message_changes_with_the_state_that_produced_it(self) -> None:
+        """The point of the feature: not a constant, and not a random one either."""
         with self._agent(True) as agent:
-            agent.explanation_history = 3
-            for index in range(10):
-                agent.reset(f"s{index}", {})
-                agent.respond(f"s{index}", self.OPENING, 1, 10)
-            self.assertLessEqual(len(agent.explanations), 3)
-
-    def test_the_history_bound_is_validated(self) -> None:
-        for value in (0, -1, 20_000):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                Agent(CATALOG, explanation_history=value)
+            agent.reset("s", {})
+            first = agent.respond("s", self.OPENING, 1, 10)["message"]
+            second = agent.respond("s", self.REPLY, 2, 10)["message"]
+            self.assertNotEqual(first, second)
+            # Turn one has nothing disclosed; turn two has two values and a count.
+            self.assertIn("Starting from", first)
+            self.assertIn("candidates", second)
 
 
 if __name__ == "__main__":
