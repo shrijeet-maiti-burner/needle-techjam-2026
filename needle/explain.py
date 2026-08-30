@@ -65,6 +65,7 @@ def turn_record(
     identified: bool,
     emitted: Sequence[str],
     withheld: bool,
+    sampled: bool = False,
 ) -> dict:
     """What this turn did, as the input `message_for` renders.
 
@@ -82,6 +83,8 @@ def turn_record(
     else:
         basis, confidence = "ranking", "exploring"
     return {
+        "options": ("", ()),
+        "sampled": bool(sampled),
         "turn": int(turn),
         "category": _category(category),
         "wanted": [str(value) for value in wanted],
@@ -112,7 +115,21 @@ def _message_for(record: dict, *, asking: bool) -> str:
     wanted = list(record.get("wanted") or ())
     unwanted = list(record.get("unwanted") or ())
     candidates = record.get("candidates")
-    tail = " What else matters?" if asking else ""
+    facet, options = record.get("options") or ("", ())
+    if asking and facet and options:
+        # The choices are the values the remaining products actually carry, so
+        # an option is never offered that nothing satisfies.
+        #
+        # Counts are shown only when they are counts of the whole candidate set.
+        # The set is sampled when it is large, and printing "black (123)" beside
+        # "1034 candidates" would be quoting a number of a different thing.
+        if record.get("sampled"):
+            offered = ", ".join(value for value, _ in options)
+        else:
+            offered = ", ".join(f"{value} ({count})" for value, count in options)
+        tail = f" Which {facet}? {offered} -- or say anything else that matters."
+    else:
+        tail = " What else matters?" if asking else ""
 
     if unwanted:
         ruled_out = f" I have ruled out {_join(unwanted)}."

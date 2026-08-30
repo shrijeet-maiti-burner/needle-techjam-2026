@@ -11,11 +11,18 @@ from needle.catalog import (
 )
 from needle.contracts import TurnResponse
 from needle.explain import message_for, turn_record
+from needle.questions import build_facet_index, clarifying_options
 from needle.semantic import LexicalNormalizer, NoOpSemanticReranker
 from needle.state import Polarity, StateStore
 
 
 LEXICAL_MODES = frozenset({"none", "normalize", "expand"})
+
+# How many of the popularity-ordered candidates a clarifying question counts
+# over. Counting a facet across tens of thousands of products would cost more
+# than the question is worth; beyond this the values are still real but the
+# counts are of the sample, and are not shown.
+_FACET_SAMPLE = 400
 
 
 class Agent:
@@ -88,6 +95,10 @@ class Agent:
         self.full_slate_turn = int(full_slate_turn)
         self.full_slate_constraints = int(full_slate_constraints)
         self.explain = bool(explain)
+        self._catalog_path_for_facets = str(catalog_path)
+        # Built on first question rather than at construction: about 1.4s and
+        # under 3MB, and a run that never asks one never pays for it.
+        self._facets: dict[str, tuple[str, str]] | None = None
         self.promote_disclosure_bucket = bool(promote_disclosure_bucket)
         self.promotion_bucket_limit = int(promotion_bucket_limit)
         self.promote_opening_category = bool(promote_opening_category)
@@ -197,6 +208,18 @@ class Agent:
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
 
+    def _options_for(
+        self, candidate_ids: Sequence[str], already_said: Sequence[str]
+    ) -> tuple[str, tuple[tuple[str, int], ...]]:
+        """The facet worth asking about next, from the products still in play."""
+        if not candidate_ids:
+            return "", ()
+        if self._facets is None:
+            self._facets = build_facet_index(self._catalog_path_for_facets)
+        return clarifying_options(
+            candidate_ids, self._facets, already_said=already_said
+        )
+
     def _explain_turn(
         self,
         session_id: str,
@@ -205,6 +228,8 @@ class Agent:
         category: str,
         state: object,
         candidates: int | None,
+        candidate_ids: Sequence[str] = (),
+        sampled: bool = False,
         identified: bool,
         emitted: Sequence[str],
         withheld: bool,
@@ -244,7 +269,10 @@ class Agent:
                 identified=identified,
                 emitted=emitted,
                 withheld=withheld,
+                sampled=sampled,
             )
+            if asking:
+                record["options"] = self._options_for(candidate_ids, record["wanted"])
             return message_for(record, asking=asking)
         except Exception as error:  # noqa: BLE001 - a dull message beats a lost turn
             self.respond_failures.append(
@@ -365,6 +393,11 @@ class Agent:
                 category=category_evidence,
                 state=state,
                 candidates=len(promoted) if promoted else None,
+                # Bounded: the bucket is popularity-ordered, and counting a
+                # facet over every one of tens of thousands of products would
+                # cost more than the question is worth.
+                candidate_ids=tuple(promoted[:_FACET_SAMPLE]),
+                sampled=len(promoted) > _FACET_SAMPLE if promoted else False,
                 identified=identified is not None,
                 emitted=recommendation_ids,
                 withheld=len(recommendation_ids) < limit,
