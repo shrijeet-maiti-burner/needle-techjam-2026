@@ -40,29 +40,39 @@ at the official scenario mix and reusing public `user_profile` values so shape
 is the only variable. A matched control of 200 four-constraint targets, also
 disjoint from public, separates "different target" from "different shape".
 
-| Set | n | TechnicalScore | HR@10 | MRR | MTTC | Override HR | Boundary HR | Violations |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| public | 200 | 0.868395 | 0.995 | 0.667984 | 2.475 | 1.000 | 1.000 | 0 |
-| control, 4-constraint, disjoint targets | 200 | 0.862610 | 0.965 | 0.721367 | 2.815 | 1.000 | 1.000 | 0 |
-| holdout, omitted shapes | 200 | 0.798766 | 0.875 | 0.678885 | 3.120 | 0.867 | 0.600 | 0 |
+Measured first at the pre-#11 primary, which is what the narrative below was
+written against, and rerun at the current one. The current primary adds the
+soft category prior at 1.00 and popularity at 0.30.
 
-Target disjointness alone costs 0.005785. The agent is not memorizing public
-targets. Card shape costs a further 0.063844.
+| Set | n | pre-#11 | current primary | HR@10, current |
+|---|---:|---:|---:|---:|
+| public | 200 | 0.868395 | 0.878039 | 0.995 |
+| control, 4-constraint, disjoint targets | 200 | 0.862610 | see below | |
+| holdout, omitted shapes | 200 | 0.798766 | 0.818531 | 0.905 |
 
-No contract violations and no exceptions on any of the 600 sessions, so the
-shapes are a scoring risk, not a safety risk.
+The 200-session control is superseded by six 600-session draws of the same
+construction, which average 0.861734 at HR@10 0.9678 under the current primary.
+So target disjointness costs about 0.016 and card shape a further 0.043. The
+agent is not memorising public targets, and the shape gap narrowed under #11
+without closing.
+
+No contract violations and no exceptions on any of the sessions in either
+measurement, so the shapes are a scoring risk, not a safety risk.
 
 ## The cost is degeneracy, not constraint count
 
-| Holdout shape | n | HR@10 | MRR | MTTC |
-|---|---:|---:|---:|---:|
-| 3 constraints, well-formed | 66 | 1.000 | 0.8500 | 2.106 |
-| 3 constraints, degenerate | 66 | 0.894 | 0.6701 | 2.818 |
-| 2 constraints, degenerate | 68 | 0.735 | 0.5213 | 4.397 |
+Current primary, with the pre-#11 HR in the last column for comparison:
+
+| Holdout shape | n | HR@10 | MRR | MTTC | HR, pre-#11 |
+|---|---:|---:|---:|---:|---:|
+| 3 constraints, well-formed | 66 | 1.000 | 0.7856 | 2.030 | 1.000 |
+| 3 constraints, degenerate | 66 | 0.909 | 0.7122 | 2.758 | 0.894 |
+| 2 constraints, degenerate | 68 | 0.809 | 0.5406 | 3.794 | 0.735 |
 
 Three well-formed constraints beat the four-constraint control on every metric.
 Fewer constraints is not the problem. Degeneracy is, and it scales with how
-degenerate the card is.
+degenerate the card is. The ordering is unchanged by #11, which lifted the two
+degenerate shapes without touching the well-formed one.
 
 The mechanism is an information floor rather than a defect. A two-constraint
 degenerate card has `cleaned` of length one, so `hard_constraints` and
@@ -70,7 +80,8 @@ degenerate card has `cleaned` of length one, so `hard_constraints` and
 distinguishing term. `customer_reply` filters on `value not in disclosed`, so
 once that term is disclosed every later `other` returns "I don't have an
 additional preference." Retrieval has one term to work with for ten turns. This
-is also why holdout MTTC rises to 4.397 on that shape.
+is also why holdout MTTC is worst on that shape, 3.794 against 2.030 for the
+well-formed one.
 
 ## EXP-006 is closed: targeted invalidation has nothing to fix
 
@@ -85,6 +96,10 @@ Split the holdout override sessions by shape:
 | 3 constraints, well-formed | 15 | 15 | 1.000 |
 | 3 constraints, degenerate | 6 | 5 | 0.833 |
 | 2 constraints, degenerate | 9 | 6 | 0.667 |
+
+The split is identical under the current primary and the pre-#11 one, so #11
+changed which items rank where without changing which override sessions are
+winnable.
 
 Every override miss is on a degenerate card. Across all 45 well-formed override
 sessions measured to date, 30 public and 15 held out, `retract_stated` hits
@@ -142,21 +157,103 @@ would have shipped.
 gated arm is exactly the kind of change someone will propose again, and because
 the holdout slice justified itself on its first use.
 
+## `popularity_strength` under the #11 primary
+
+This is the transfer evidence for EXP-016, whose register entry names Shrijeet
+as owner and Athul as reviewer. It is a review, not a retrieval decision.
+
+#11 selected popularity 0.30 with the new category prior, on a 1,000-target
+disjoint proxy where 0.30 beat 0.20 by 0.000797. That proxy takes catalog
+targets disjoint from released ground truth with no shape filter, so it is about
+96% four-constraint by construction: it controls target identity, not card
+shape. The slice in this document is the only one that varies shape, and the two
+disagree.
+
+Swept at the current primary, so the category prior is active in every arm. Six
+600-session controls from `build_shape_holdout.py --control` at seeds 29, 13, 5,
+17, 41, 97, plus public and the omitted-shape holdout.
+
+| strength | public | shapes | s29 | s13 | s5 | s17 | s41 | s97 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.00 | 0.861027 | **0.842421** | **0.857272** | 0.858367 | **0.860939** | **0.865463** | 0.866541 | **0.870130** |
+| 0.10 | 0.869263 | 0.834755 | 0.856077 | 0.859466 | 0.859309 | 0.863990 | 0.866664 | 0.867964 |
+| 0.20 | 0.875803 | 0.826462 | 0.856894 | **0.860651** | 0.858990 | 0.863254 | 0.868493 | 0.864545 |
+| 0.30 (shipped) | **0.878039** | 0.818531 | 0.855953 | 0.858137 | 0.858134 | 0.865286 | **0.869943** | 0.862949 |
+
+Public at 0.30 reproduces #11's selected result exactly, 0.878039 at HR@10
+0.995, which is what licenses comparing the rest.
+
+Paired, 0.30 minus 0.00:
+
+| set | n | mean | 95% bootstrap | worse / better | sign test |
+|---|---:|---:|---|---|---:|
+| shapes holdout | 200 | **-0.023890** | **[-0.043017, -0.008474]** | 46 / 15 | p 0.00009 |
+| pooled controls | 3600 | -0.001385 | [-0.004096, +0.001193] | 624 / 473 | p 0.00001 |
+| public | 200 | +0.017012 | [-0.000159, +0.034148] | 38 / 71 | p 0.00203 |
+
+**On the omitted-shape holdout, 0.30 costs 0.023890 against 0.00, with an
+interval that excludes zero.** That is the one comparison here whose size, and
+not merely direction, is established. The holdout falls monotonically as the
+prior rises while public rises monotonically, which is the same opposed-gradient
+signature that rejected the profile-tag arm above, at twice the magnitude.
+
+On the six controls the direction is the same at every step, 0.10 over 0.00 at
+p 0.00268, 0.20 over 0.10 at p 0.00047, 0.30 over 0.20 at p 0.02098, and 0.30
+over 0.00 at p 0.00001, but no interval on the mean excludes zero. Set totals
+disagree about which value ranks first, which is exactly why #11's +0.000797
+from a single draw should not be read as a preference for 0.30: that margin is
+about half of one standard error at that sample size.
+
+The cost concentrates where information is scarcest. Dropping the prior to 0.00
+lifts the two-constraint degenerate slice from HR 0.809 to 0.868 and its
+override sessions from 6 of 9 to 7 of 9, while the well-formed shape stays at
+1.000 either way. A card with one distinguishing term leaves retrieval little to
+rank on, so a popularity prior decides the slate on that shape.
+
+The category prior itself passes this slice comfortably, and that is worth
+recording separately: at matched popularity 0.20 it moves the holdout from
+0.798766 to 0.826462, and at 0.00 from 0.802804 to 0.842421. It gains more the
+lower the popularity prior is set.
+
+**Recommendation to EXP-016's owner: lower `popularity_strength`.** 0.00 is
+first or tied on the holdout and on four of six controls, and it costs 0.017012
+on public, which is the set with the known filter. The decision, and any value
+between 0.00 and 0.10, belongs to Shrijeet.
+
 ## Pins
 
-- code: branch `state/exp013-question-policy` at the parent of this commit,
-  clean tree, primary config `retrieval_mode=signature_first`,
-  `signature_bucket_limit=100`, `popularity_strength=0.20`,
+- code: the shape and EXP-006 sections were measured pre-#11 at
+  `popularity_strength=0.20` with no category prior, and rerun at the current
+  primary: `retrieval_mode=signature_first`, `signature_bucket_limit=100`,
+  `category_strength=1.00`, `popularity_strength=0.30`,
   `override_policy=retract_stated`, `exclude_seen=True`, `slate_size=10`,
-  `lexical_mode=none`
+  `lexical_mode=none`. Both are stated wherever they differ.
+- popularity sweep: 32 runs at the current primary with only
+  `popularity_strength` varying, per-session rows retained. The sweep calls the
+  official `evaluate()` directly and so records no contract-violation count; the
+  contract evidence is the zero-violation runs recorded above, not these.
 - evaluator: official `local_evaluator.py`, source commit
   `34078351e1c3615e5505a2e829600b56a542e462`
 - public set: sha256 `857259f7a438e6188ac63e18995b6ff4489bfcfc4a716a798b9a2aa0ee8f7579`
 - catalog: sha256 `da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67`
-- holdout and control: regenerate with `python3 scripts/build_shape_holdout.py`
-  (seed 13). Both are development artifacts under `.artifacts/`, not committed
-  and not shipped.
+- holdout: regenerate with `python3 scripts/build_shape_holdout.py` (seed 13).
+- controls: the same script with `--control --count 600` at seeds 29, 13, 5, 17,
+  41, 97. Datasets and sweep payloads are development artifacts under
+  `.artifacts/`, not committed and not shipped.
 - Python 3.12.3, macOS, stdlib only, no network, no model assets
+
+Reproduce the sweep with:
+
+```bash
+python3 scripts/popularity_sweep.py --seeds 29 13 5 17 41 97 --count 600 \
+    --strengths 0.00 0.10 0.20 0.30 \
+    --extra-dataset .artifacts/participant-kit/techjam-conversational-search/data/public_set.jsonl \
+    --extra-dataset .artifacts/holdout/shapes.jsonl \
+    --output .artifacts/sweeps/popularity-category.json
+python3 scripts/analyze_sweep.py .artifacts/sweeps/popularity-category.json
+```
+
+About 35 minutes for the 32 runs, stdlib only, no network.
 
 ## Caveat
 
