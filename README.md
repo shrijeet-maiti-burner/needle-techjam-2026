@@ -38,9 +38,19 @@ needle/                 production components and integration facade
 starter/agent.py        strict official entry-point adapter
 submission/             final-bundle entry point and run notes
 scripts/                artifact bootstrap and official evaluator launcher
+storefront/             conversational interface service (not shipped)
+demo/                   local interfaces, no build step
 tests/                  dependency-free contract and behavior checks
 docs/                   architecture, ownership, evidence, and disclosures
 ```
+
+## Conversational interface
+
+```bash
+python scripts/needle_storefront.py --warm
+```
+
+Serves a local shopping interface on `http://127.0.0.1:8770` driven by the selected primary agent, so free-text behaviour the 200 released sessions never produce can be tested directly. It runs `PRIMARY_AGENT_KWARGS` and reports any deviation from it on screen. See [docs/STOREFRONT.md](docs/STOREFRONT.md).
 
 ## Non-negotiable rules
 
