@@ -1,11 +1,12 @@
 """Sweep `popularity_strength` across independently drawn control sets.
 
 The first sweep in `docs/evidence/EXP_006_SHAPES.md` drew two 600-session
-controls, at seeds 29 and 13, and they disagreed about whether 0.00 or 0.10 is
-better: +0.000300 one way, -0.002148 the other. That spread was recorded as a
-noise floor of roughly 0.003 for a 600-session draw, which left the decision
-between 0.00 and 0.10 unresolved and the shipped value chosen conservatively
-rather than measured.
+controls that disagreed about which strength was best. Their spread was recorded
+as a noise floor for a 600-session draw, which left the decision unresolved and
+the shipped value chosen conservatively rather than measured. One of those two
+controls turned out not to be reproducible from the committed builder and its
+numbers were withdrawn, so this script also exists to make the comparison
+regenerable end to end.
 
 Comparing whole-set aggregates across seeds is the weakest available test,
 because it measures the variance of the absolute score under a fresh draw of

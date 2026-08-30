@@ -31,16 +31,15 @@ import needle.agent as needle_agent  # noqa: E402
 import needle.state as needle_state  # noqa: E402
 
 
+from needle.presets import PRIMARY_AGENT_KWARGS  # noqa: E402
+
 # Fixed controls. Only `ask_attribute` selection varies between arms.
-BASE_KWARGS: dict[str, object] = {
-    "retrieval_mode": "signature_first",
-    "signature_bucket_limit": 100,
-    "popularity_strength": 0.20,
-    "override_policy": "retract_stated",
-    "exclude_seen": True,
-    "slate_size": 10,
-    "lexical_mode": "none",
-}
+#
+# Taken from the shipped preset rather than copied, so the arms always compare
+# question policies at the configuration the repository actually ships. An
+# earlier copy here silently kept measuring a retrieval configuration that had
+# been replaced, which is the whole reason these arms had to be rerun.
+BASE_KWARGS: dict[str, object] = dict(PRIMARY_AGENT_KWARGS)
 
 # The two released simulator replies that disclose nothing about the target.
 UNINFORMATIVE_REPLY_RE = re.compile(

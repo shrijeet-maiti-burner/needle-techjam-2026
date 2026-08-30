@@ -1,22 +1,23 @@
 """EXP-013: pin the measured question policy.
 
-Repeated `other` on every turn that has a reply. Measured on all 200 official
-public sessions at fixed retrieval and state controls (docs/evidence/EXP_013.md,
-reproduce with `python3 scripts/qpolicy_arms.py`):
+Repeated `other` on every turn that has a reply. Ten arms were measured on all
+200 official public sessions at fixed retrieval and state controls; every
+alternative lost, and dropping questions entirely lost by a wide margin. The
+arms, their scores, and the pins are in docs/evidence/EXP_013.md and reproduce
+with `python3 scripts/qpolicy_arms.py`. They are deliberately not copied here,
+where nothing would notice them going stale: an earlier copy of them in this
+docstring outlived the retrieval configuration they were measured on.
 
-    repeated `other` (shipped)          0.868395
-    `other` x2, then bucket rotation    0.859244
-    frequency-ordered rotation          0.849624
-    `other` x2, then stop asking        0.839695
-    rotation over all 7 buckets         0.779538
-    never ask                           0.443918
+The reasons the assertions exist, which do not go stale. Every named-attribute
+rotation loses because `customer_reply` matches `other` against any constraint
+type while a named attribute matches only its own bucket, so a named attribute
+can return nothing where `other` returns two values. Asking is free, because
+`evaluate()` scores the slate before it reads `ask_attribute`, so the only cost
+of a question is the reply it spends. And the margin against not asking is the
+largest measured in this project, but it shrinks as retrieval improves, so
+requote it from the record rather than from memory.
 
-The margins are the reason these assertions exist. Not asking costs 0.424477
-TechnicalScore and 43 points of HR@10, and every named-attribute rotation loses
-because `customer_reply` matches `other` against any constraint type while a
-named attribute matches only its own bucket. Asking is free: `evaluate()` scores
-the slate before it reads `ask_attribute`. If a change here is deliberate,
-rerun the arms and update the evidence record rather than these numbers.
+If a change here is deliberate, rerun the arms and update the evidence record.
 """
 from __future__ import annotations
 
@@ -76,7 +77,7 @@ class QuestionPolicyTest(unittest.TestCase):
         self.assertEqual(self._asked()[:9], ["other"] * 9)
 
     def test_never_goes_silent_while_a_reply_is_still_possible(self) -> None:
-        # Arm C. Silence costs 0.424477 TechnicalScore because the customer
+        # Arm C. Silence is the worst arm measured, because the customer
         # discloses nothing; arm D shows that stopping after the constraints
         # look exhausted still loses the boundary and override slices, which
         # each need a third question the agent cannot predict in advance.

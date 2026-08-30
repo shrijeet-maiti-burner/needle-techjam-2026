@@ -1,25 +1,26 @@
 """Paired analysis of a `popularity_sweep.py` result.
 
-The first sweep compared whole-set aggregates across two seeds and found them
-disagreeing by 0.002148 and 0.000300, which was recorded as a noise floor of
-roughly 0.003 for a 600-session draw. That number is the spread of the absolute
-score under a fresh draw of targets. It is the wrong scale against which to
-judge a difference between two arms, and it is far too wide, because both arms
-run over the same sessions: the draw is common to them and cancels.
+The first sweep compared whole-set aggregates across two seeds, found them
+disagreeing, and recorded that spread as a noise floor for a 600-session draw.
+The figure was right for what it measured: the spread of the absolute score
+under a fresh draw of targets. It is the wrong scale against which to judge a
+difference between two arms, and far too wide, because both arms run over the
+same sessions and the draw is common to them, so it cancels.
 
 This reads the per-session rows and differences the arms session by session, so
 what is estimated is the mean of the paired difference and the uncertainty of
 that mean. Both are reported alongside the between-seed spread of each arm's
 absolute score, which is what makes the difference in scale visible.
 
-    python3 scripts/analyze_sweep.py .artifacts/sweeps/popularity-seeds.json
+    python3 scripts/analyze_sweep.py .artifacts/sweeps/popularity-category.json
 
-Reported per comparison: the paired mean difference, its standard error, a
-normal-approximation 95% interval, a bootstrap 95% interval resampling sessions,
-and a sign count over the sessions the two arms actually score differently. The
-bootstrap makes no normality assumption, which matters because the per-session
-score is bounded and lumpy; agreement between the two intervals is a check that
-the approximation holds, not a second result.
+Reported for every set and for the pooled controls: the paired mean difference,
+its standard error, a bootstrap 95% interval resampling sessions, and a sign
+test over the sessions the two arms actually score differently. The bootstrap
+makes no normality assumption, which matters because the per-session score is
+bounded and lumpy. Per-set intervals matter as much as the pooled one: a slice
+that is small but strongly affected can carry a result the pooled controls
+cannot resolve.
 """
 from __future__ import annotations
 
@@ -96,8 +97,6 @@ def describe(values: Sequence[float], resamples: int, seed: int) -> dict[str, fl
         "n": len(values),
         "mean": mean,
         "standard_error": standard_error,
-        "normal_low": mean - 1.96 * standard_error,
-        "normal_high": mean + 1.96 * standard_error,
         "bootstrap_low": low,
         "bootstrap_high": high,
         "better": positive,
@@ -108,7 +107,7 @@ def describe(values: Sequence[float], resamples: int, seed: int) -> dict[str, fl
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("payload", type=Path, nargs="?", default=ROOT / ".artifacts/sweeps/popularity-seeds.json")
+    parser.add_argument("payload", type=Path, nargs="?", default=ROOT / ".artifacts/sweeps/popularity-category.json")
     parser.add_argument("--resamples", type=int, default=4000)
     parser.add_argument("--seed", type=int, default=13)
     parser.add_argument("--control-prefix", default="control seed")
