@@ -340,6 +340,32 @@ def coarse_category_signature(values: object) -> str:
     return canonical_signature(normalize_category_text(category))
 
 
+def resolve_coarse_category(words: str, known: set[str]) -> str:
+    """The one catalog category a set of English category words names, or "".
+
+    `_card_bucket_lookup` keys on the exact coarse category string, so a bare
+    "belts" recovered from a Spanish request is not usable as a key by itself.
+    This maps it onto the closed vocabulary the catalog actually files under,
+    and requires the answer to be unique: an ambiguous word resolves to nothing
+    rather than to one of several plausible categories.
+    """
+    wanted = {token for token in words.split() if token}
+    if not wanted or not known:
+        return ""
+    matches = [name for name in known if wanted <= set(name.split())]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        return ""
+    # Several categories contain the word. The shortest is the least qualified
+    # and so the least likely to assert something the customer did not say,
+    # but only when it is uniquely the shortest.
+    matches.sort(key=lambda name: (len(name.split()), name))
+    if len(matches[0].split()) < len(matches[1].split()):
+        return matches[0]
+    return ""
+
+
 def opening_category_signature(message: str) -> str:
     """Category phrase explicitly stated in an opening shopping request."""
 
@@ -629,6 +655,10 @@ class CatalogIndex:
         self.product_count = 0
         self._rating_numbers: dict[str, int] = {}
         self._category_terms: dict[str, frozenset[str]] = {}
+        # Every distinct coarse category the catalog files products under. The
+        # build already reads the field, so this costs one call per product and
+        # gives a closed vocabulary a non-English request can be resolved into.
+        self.coarse_categories: set[str] = set()
         self._max_log_rating = 1.0
         self.signature_index_fallback: str | None = None
         self._build()
@@ -651,6 +681,7 @@ class CatalogIndex:
                 self.product_count = 0
                 self._rating_numbers.clear()
                 self._category_terms.clear()
+                self.coarse_categories.clear()
                 self._max_log_rating = 1.0
                 self._build()
 
@@ -715,6 +746,9 @@ class CatalogIndex:
                 seen.add(parent_asin)
                 rating_number = max(0, int(product.get("rating_number") or 0))
                 self._rating_numbers[parent_asin] = rating_number
+                coarse = coarse_category_signature(product.get("categories"))
+                if coarse:
+                    self.coarse_categories.add(coarse)
                 self._category_terms[parent_asin] = frozenset(
                     query_terms(
                         normalize_category_text(_text(product.get("categories"))),

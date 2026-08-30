@@ -14,7 +14,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from needle.explain import message_for, turn_record  # noqa: E402
-from needle.language import DEFAULT, detect, phrases, supported  # noqa: E402
+from needle.language import (  # noqa: E402
+    DEFAULT,
+    category_mention,
+    detect,
+    phrases,
+    supported,
+)
 
 
 class DetectionTest(unittest.TestCase):
@@ -100,3 +106,59 @@ class PhraseTableTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CategoryLexiconTest(unittest.TestCase):
+    """A non-English request should not lose its category.
+
+    The category is the strongest single key the agent has -- it qualifies the
+    disclosure bucket, not just the sentence -- and before the lexicon a shopper
+    writing in Spanish lost it entirely and was answered about "items".
+    """
+
+    def test_the_noun_is_found_regardless_of_grammar(self) -> None:
+        for text, english in (
+            ("Busco unos cinturones de cuero", "belts"),
+            ("Je cherche des bottes en cuir", "boots"),
+            ("Ich suche Gürtel aus Leder", "belts"),
+            ("मुझे बेल्ट चाहिए", "belts"),
+            ("ベルトを探しています", "belts"),
+            ("我在找腰带", "belts"),
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(category_mention(text)[0], english)
+
+    def test_the_customers_own_spelling_is_echoed_back(self) -> None:
+        self.assertEqual(category_mention("Ich suche Gürtel")[1], "Gürtel")
+        self.assertEqual(category_mention("Busco unos CINTURONES")[1], "CINTURONES")
+
+    def test_an_unknown_noun_resolves_to_nothing_rather_than_a_guess(self) -> None:
+        self.assertEqual(category_mention("Busco algo bonito"), ("", ""))
+
+    def test_a_substring_is_not_a_match(self) -> None:
+        # "rock" is a German skirt; "rocket" is not.
+        self.assertEqual(category_mention("a rocket launcher"), ("", ""))
+
+    def test_english_requests_do_not_use_the_lexicon(self) -> None:
+        """English openings are read by the simulator's own pattern."""
+        self.assertEqual(category_mention("I am looking for Accessories Belts"), ("", ""))
+
+
+class ResolutionTest(unittest.TestCase):
+    def test_a_word_naming_exactly_one_category_resolves(self) -> None:
+        from needle.catalog import resolve_coarse_category
+
+        known = {"accessories wallets", "shoes boots", "women shoes boots"}
+        self.assertEqual(resolve_coarse_category("wallets", known), "accessories wallets")
+
+    def test_an_ambiguous_word_declines(self) -> None:
+        from needle.catalog import resolve_coarse_category
+
+        known = {"men belts", "women belts", "accessories belts"}
+        self.assertEqual(resolve_coarse_category("belts", known), "")
+
+    def test_the_shortest_wins_only_when_uniquely_shortest(self) -> None:
+        from needle.catalog import resolve_coarse_category
+
+        known = {"shoes boots", "women shoes boots"}
+        self.assertEqual(resolve_coarse_category("boots", known), "shoes boots")

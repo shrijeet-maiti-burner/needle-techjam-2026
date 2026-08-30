@@ -8,9 +8,11 @@ from needle.catalog import (
     CatalogIndex,
     disclosed_signature_sequences,
     opening_category_signature,
+    resolve_coarse_category,
 )
 from needle.contracts import TurnResponse
 from needle.explain import message_for, turn_record
+from needle.language import category_mention as lexicon_category
 from needle.language import detect as detect_language
 from needle.questions import build_facet_index, clarifying_options
 from needle.semantic import LexicalNormalizer, NoOpSemanticReranker
@@ -105,6 +107,12 @@ class Agent:
         # speaking Spanish, so the opening decides and later turns only revise
         # it when they positively indicate something else.
         self._language_by_session: dict[str, str] = {}
+        # English category words recovered from a non-English opening. Good
+        # enough to steer retrieval and to name the category back to the
+        # customer, even when it does not resolve to a single catalog category.
+        self._lexicon_words_by_session: dict[str, str] = {}
+        self._lexicon_written_by_session: dict[str, str] = {}
+        self._pinned_language: dict[str, str] = {}
         self.promote_disclosure_bucket = bool(promote_disclosure_bucket)
         self.promotion_bucket_limit = int(promotion_bucket_limit)
         self.promote_opening_category = bool(promote_opening_category)
@@ -161,6 +169,9 @@ class Agent:
             del self._seen_by_version[key]
         self._opening_category_by_session.pop(session_id, None)
         self._language_by_session.pop(session_id, None)
+        self._lexicon_words_by_session.pop(session_id, None)
+        self._lexicon_written_by_session.pop(session_id, None)
+        self._pinned_language.pop(session_id, None)
 
     def respond(
         self,
@@ -215,8 +226,23 @@ class Agent:
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
 
+    def set_language(self, session_id: str, language: str) -> None:
+        """Pin the reply language for a session, overriding detection.
+
+        Script detection cannot separate kanji-only Japanese from Chinese, and
+        a short request can fall back to English. A caller that knows the
+        customer's locale should say so rather than have the agent guess; an
+        unsupported code falls back to English at render time.
+        """
+        code = str(language or "").strip().lower()[:8]
+        if code:
+            self._pinned_language[session_id] = code
+
     def _session_language(self, session_id: str, user_message: str) -> str:
         """The language to answer in, sticky across the conversation."""
+        pinned = self._pinned_language.get(session_id)
+        if pinned:
+            return pinned
         detected = detect_language(user_message)
         if detected != "en" or session_id not in self._language_by_session:
             self._language_by_session[session_id] = detected
@@ -328,16 +354,36 @@ class Agent:
         state = self.state.observe(session_id, user_message, turn)
         limit = self._bounded_limit(top_k)
         if turn == 1:
-            self._opening_category_by_session[session_id] = opening_category_signature(
-                user_message
-            )
+            stated = opening_category_signature(user_message)
+            if not stated:
+                # The opening pattern matches the released simulator's English
+                # phrasing. A request written in another language is not
+                # unparseable, only differently ordered, so fall back to the
+                # shopping lexicon, which keys on the noun rather than the
+                # grammar. English requests never reach this: they either state
+                # a category or genuinely do not have one.
+                words, written = lexicon_category(user_message)
+                if words:
+                    self._lexicon_words_by_session[session_id] = words
+                    self._lexicon_written_by_session[session_id] = written or words
+                    # Usable as a bucket key only when it names exactly one of
+                    # the catalog's 1114 coarse categories. "belts" does not --
+                    # it is filed under several -- so most resolve to nothing
+                    # and the bucket stays unqualified rather than wrong.
+                    stated = resolve_coarse_category(
+                        words, self.catalog.coarse_categories
+                    )
+            self._opening_category_by_session[session_id] = stated
         history_key = (session_id, state.intent_version)
         seen = self._seen_by_version.setdefault(history_key, set())
         excluded = seen if self.exclude_seen else ()
         retrieval_text = state.retrieval_text
         category_evidence = self._opening_category_by_session.get(session_id, "")
+        lexicon_words = self._lexicon_words_by_session.get(session_id, "")
         if category_evidence:
             retrieval_text = f"{retrieval_text} {category_evidence}"
+        elif lexicon_words:
+            retrieval_text = f"{retrieval_text} {lexicon_words}"
         if self.lexical_mode == "normalize":
             retrieval_text = self.lexical.normalize(retrieval_text)
         elif self.lexical_mode == "expand":
@@ -406,7 +452,9 @@ class Agent:
             message = self._explain_turn(
                 session_id,
                 turn=turn,
-                category=category_evidence,
+                category=category_evidence
+                or self._lexicon_written_by_session.get(session_id, "")
+                or lexicon_words,
                 state=state,
                 candidates=len(promoted) if promoted else None,
                 # Bounded: the bucket is popularity-ordered, and counting a

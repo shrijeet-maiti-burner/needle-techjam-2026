@@ -27,15 +27,15 @@ English rather than to a machine rendering of it.
 
 Known limits, stated rather than papered over:
 
-* The coarse category is read out of the opening line by
-  `opening_category_signature`, which matches the released simulator's English
-  phrasing. A request opened in another language is answered in that language
-  but says "items" where English would name the category. Fixing it needs an
-  opening pattern per language, not a translation.
 * A Japanese sentence written entirely in kanji is indistinguishable from
-  Chinese by script alone and will be read as Chinese.
+  Chinese by script alone, and no amount of tuning fixes that: the characters
+  really are the same. A caller that knows better -- a browser locale, an
+  account setting -- can say so with `Agent.set_language`, which is the honest
+  answer to an ambiguity rather than a heuristic dressed up as one.
 * Script detection is by share of letters, so a short request mixing scripts
   can fall back to English. That is the intended direction of failure.
+* The category lexicon is deliberately partial. A shopping noun it does not
+  know resolves to nothing rather than to a wrong category.
 """
 from __future__ import annotations
 
@@ -74,6 +74,8 @@ _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
 _MIN_LATIN_CUES = 2
 # A non-Latin script must carry this share of the letters before it decides.
 _MIN_SCRIPT_SHARE = 0.30
+# Word boundaries for Latin lexicon terms, so "rock" does not match "rocket".
+BOUNDARY = r"\b{term}\b"
 
 
 def detect(text: str) -> str:
@@ -202,6 +204,125 @@ _PHRASES: Mapping[str, Mapping[str, str]] = {
 }
 
 
+# Shopping nouns to the English words the catalog's own coarse categories use.
+# Hand-checked, and deliberately partial: a term is here only when its English
+# mapping is the word the marketplace actually files the product under, so a
+# miss falls through to no category rather than to a wrong one.
+#
+# This exists because the category is the strongest single key the agent has --
+# it qualifies the disclosure bucket, not just the sentence -- and a shopper
+# writing in Spanish was losing it entirely.
+_CATEGORY_TERMS: Mapping[str, str] = {
+    # Spanish
+    "cinturon": "belts", "cinturones": "belts", "zapatos": "shoes", "botas": "boots",
+    "camisa": "shirts", "camisas": "shirts", "pantalones": "pants", "vaqueros": "jeans",
+    "vestido": "dresses", "calcetines": "socks", "sombrero": "hats", "guantes": "gloves",
+    "chaqueta": "jackets", "collar": "necklaces", "anillo": "rings",
+    "pendientes": "earrings", "cartera": "wallets", "mochila": "backpacks",
+    "sueter": "sweaters", "jersey": "sweaters", "reloj": "watches", "relojes": "watches",
+    "bolso": "handbags", "falda": "skirts", "sandalias": "sandals", "bufanda": "scarves",
+    # French
+    "ceinture": "belts", "ceintures": "belts", "chaussures": "shoes", "bottes": "boots",
+    "chemise": "shirts", "pantalon": "pants", "robe": "dresses", "chaussettes": "socks",
+    "chapeau": "hats", "gants": "gloves", "veste": "jackets", "collier": "necklaces",
+    "bague": "rings", "portefeuille": "wallets", "pull": "sweaters", "montre": "watches",
+    "jupe": "skirts", "sandales": "sandals", "echarpe": "scarves",
+    # German
+    "gurtel": "belts", "schuhe": "shoes", "stiefel": "boots", "hemd": "shirts",
+    "hose": "pants", "kleid": "dresses", "socken": "socks", "hut": "hats",
+    "handschuhe": "gloves", "jacke": "jackets", "halskette": "necklaces",
+    "ohrringe": "earrings", "sonnenbrille": "sunglasses", "geldborse": "wallets",
+    "rucksack": "backpacks", "pullover": "sweaters", "uhr": "watches",
+    "handtasche": "handbags", "rock": "skirts", "sandalen": "sandals", "schal": "scarves",
+    # Hindi
+    "बेल्ट": "belts", "जूते": "shoes", "शर्ट": "shirts", "पैंट": "pants",
+    "जींस": "jeans", "मोजे": "socks", "टोपी": "hats", "दस्ताने": "gloves",
+    "जैकेट": "jackets", "हार": "necklaces", "अंगूठी": "rings", "चश्मा": "sunglasses",
+    "बटुआ": "wallets", "घड़ी": "watches", "स्कर्ट": "skirts",
+    # Japanese
+    "ベルト": "belts", "靴": "shoes", "ブーツ": "boots", "シャツ": "shirts",
+    "ズボン": "pants", "ジーンズ": "jeans", "ドレス": "dresses", "靴下": "socks",
+    "帽子": "hats", "手袋": "gloves", "ジャケット": "jackets", "ネックレス": "necklaces",
+    "指輪": "rings", "イヤリング": "earrings", "サングラス": "sunglasses",
+    "財布": "wallets", "リュック": "backpacks", "セーター": "sweaters",
+    "腕時計": "watches", "スカート": "skirts", "サンダル": "sandals",
+    # Chinese
+    "腰带": "belts", "鞋": "shoes", "靴子": "boots", "衬衫": "shirts", "裤子": "pants",
+    "牛仔裤": "jeans", "连衣裙": "dresses", "袜子": "socks", "手套": "gloves",
+    "夹克": "jackets", "项链": "necklaces", "戒指": "rings", "耳环": "earrings",
+    "太阳镜": "sunglasses", "钱包": "wallets", "背包": "backpacks", "毛衣": "sweaters",
+    "手表": "watches", "手提包": "handbags", "裙子": "skirts", "凉鞋": "sandals",
+    "围巾": "scarves",
+}
+
+
+def category_mention(message: str) -> tuple[str, str]:
+    """(English catalog words, the customer's own words) for what they asked for.
+
+    Retrieval needs the English, because that is what the catalog is written in.
+    The customer should be shown the term they typed, because being told
+    "starting from belts" when you wrote "cinturones" is the assistant talking
+    to itself.
+    """
+    english = category_terms(message)
+    if not english:
+        return "", ""
+    wanted = set(english.split())
+    source: list[str] = []
+    folded = _fold(message)
+    for term, mapped in _CATEGORY_TERMS.items():
+        if mapped not in wanted or mapped in {value for value in source}:
+            continue
+        if term.isascii():
+            if not re.search(BOUNDARY.format(term=re.escape(term)), folded):
+                continue
+            # Echo the customer's own spelling, not the fold used to match it:
+            # someone who wrote "Gürtel" should not be answered about "gurtel".
+            written = next(
+                (word for word in _WORD_RE.findall(message) if _fold(word) == term),
+                term,
+            )
+        elif term in message:
+            written = term
+        else:
+            continue
+        if written not in source:
+            source.append(written)
+    return english, " ".join(source[:2])
+
+
+def _fold(message: str) -> str:
+    return "".join(
+        character
+        for character in unicodedata.normalize("NFKD", message.casefold())
+        if not unicodedata.combining(character)
+    )
+
+
+def category_terms(message: str) -> str:
+    """English catalog words for the shopping nouns a request mentions.
+
+    Scans for known terms rather than parsing a sentence, because the grammar
+    differs per language while the noun does not: Hindi and Japanese put it
+    before the verb, Spanish and German after it, and a lexicon needs neither.
+
+    Returns "" when nothing is recognised, which is the same thing an
+    unparseable English opening returns, so the caller has one case to handle.
+    """
+    if not isinstance(message, str) or not message.strip():
+        return ""
+    folded = _fold(message)
+    found: list[str] = []
+    for term, english in _CATEGORY_TERMS.items():
+        # Latin terms need a word boundary; CJK and Devanagari do not word-break.
+        if term.isascii():
+            if re.search(BOUNDARY.format(term=re.escape(term)), folded) and english not in found:
+                found.append(english)
+        elif term in message and english not in found:
+            found.append(english)
+    return " ".join(found[:2])
+
+
 def supported() -> tuple[str, ...]:
     return tuple(sorted(_PHRASES))
 
@@ -211,4 +332,7 @@ def phrases(language: str) -> Mapping[str, str]:
     return _PHRASES.get(language, _PHRASES[DEFAULT])
 
 
-__all__ = ["DEFAULT", "detect", "phrases", "supported"]
+__all__ = [
+    "DEFAULT", "category_mention", "category_terms", "detect", "phrases",
+    "supported",
+]
