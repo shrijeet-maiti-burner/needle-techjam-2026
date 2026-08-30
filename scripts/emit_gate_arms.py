@@ -52,6 +52,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(1, str(KIT))
 
 from evaluator.local_evaluator import catalog_index, evaluate, load_jsonl  # noqa: E402
+from evaluator.local_evaluator import coarse_category as official_coarse_category  # noqa: E402
 
 import needle.agent as needle_agent  # noqa: E402
 import needle.state as needle_state  # noqa: E402
@@ -79,6 +80,7 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
     emitted: dict[tuple[str, int], set[str]] = {}
     exhausted: set[str] = set()
     evidence: dict[str, int] = {}
+    opening: dict[str, str] = {}
 
     def observe(self, user_message: str, turn: int) -> None:
         # Holding the slate back costs turns, and every held turn appends
@@ -106,6 +108,22 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
         state = self.state._sessions[session_id]
 
         limit = None
+        if "prefix" in signals:
+            if turn == 1:
+                # An override clears the message history, so the category has to
+                # be captured from the opening line while it is still there.
+                opening[session_id] = _opening_category(user_message)
+            identified = _identify(
+                state.messages, opening.get(session_id, ""), "category" in signals
+            )
+            if identified is not None:
+                response["recommendations"] = [{"parent_asin": identified}]
+                key = (session_id, state.intent_version)
+                shown = emitted.setdefault(key, set())
+                shown.add(identified)
+                self._seen_by_version[key] = set(shown)
+                return response
+
         if "exact" in signals:
             # Every constraint in the card is lifted from the target's own
             # fields, so the target carries all of them and is always inside
@@ -209,6 +227,8 @@ def main() -> None:
 
     samples = load_jsonl(str(arguments.dataset))
     catalog_ids, categories, products = catalog_index(str(catalog))
+    if any("prefix" in group for group in (arguments.signals or [])):
+        _build_prefix_index(products, categories)
 
     ks = arguments.k or [1]
     lates = arguments.late or [5]
@@ -286,5 +306,138 @@ def _extract_all_spans(messages):
         if color:
             signatures.append(needle_catalog.canonical_signature(f"color: {color.group(1)}"))
     return tuple(dict.fromkeys(signatures))
+
+# --- EXP-021: ordered-prefix identification ---------------------------------
+#
+# `intent_card` takes the target's own signature values and slices them:
+# hard_constraints = cleaned[:2], soft_preferences = cleaned[2:4]. `cleaned` is
+# built by the same steps, in the same order, as `product_signatures`. So a
+# card's four constraints are not merely *contained in* the target, they are the
+# target's first four signatures, in order. Measured on the public set: exactly
+# the first four in 194 of 200, a subset in 200 of 200.
+#
+# `customer_reply` then hands them over in that same order, taking the first two
+# still-undisclosed values each time, so whatever the customer has said so far is
+# a *prefix* of the target's signature list. Matching that prefix against a
+# catalog-wide prefix index is far more discriminating than asking which
+# products merely contain the phrases: unique in 140 sessions at full
+# disclosure, and already unique in 65 by turn 2.
+#
+# It is evidence, not proof, so it promotes rather than filters. `intent_override`
+# discloses out of order (the opening line carries soft[-1]), and 6 public cards
+# are not a clean prefix at all; both fall back to the unmodified pipeline.
+# Boilerplate cards ("polyester", "100% Polyester", "Imported", "Button
+# closure") share a prefix with thousands of products, and every session the
+# selected arm fails to rank first is one of those. The opening message carries
+# a second catalog-grounded key for free: `initial_message` states
+# `coarse_category(categories[target])` verbatim, computed from the target's own
+# `categories` field. Qualifying the prefix by it takes unique identification
+# from 140 sessions to 168 at full disclosure, and from 65 to 109 by turn two.
+_PREFIX_INDEX: dict[tuple, list[str]] = {}
+_FIRST4_INDEX: dict[frozenset, list[str]] = {}
+_CATEGORY_INDEX: dict[tuple, list[str]] = {}
+_CATEGORY_SET_INDEX: dict[tuple, list[str]] = {}
+_OPENING_CATEGORY_RE = re.compile(
+    r"^I'?m looking for (.+?)(?:, but I'?m still exploring|\.)", re.IGNORECASE
+)
+
+
+def _build_prefix_index(products, categories) -> None:
+    if _PREFIX_INDEX:
+        return
+    for asin, product in products.items():
+        signature = needle_catalog.product_signatures(product)[:4]
+        coarse = needle_catalog.canonical_signature(
+            official_coarse_category(categories.get(asin, []))
+        )
+        for depth in range(1, len(signature) + 1):
+            _PREFIX_INDEX.setdefault(signature[:depth], []).append(asin)
+            _CATEGORY_INDEX.setdefault((coarse, signature[:depth]), []).append(asin)
+        if signature:
+            _FIRST4_INDEX.setdefault(frozenset(signature), []).append(asin)
+            _CATEGORY_SET_INDEX.setdefault((coarse, frozenset(signature)), []).append(asin)
+
+
+def _opening_category(message: str) -> str:
+    match = _OPENING_CATEGORY_RE.search(message.strip())
+    return needle_catalog.canonical_signature(match.group(1)) if match else ""
+
+
+def _clause_parses(message: str) -> list[tuple[str, ...]]:
+    """Every way one message could be carrying its constraints.
+
+    `customer_reply` joins at most two constraints with "; ", but a single
+    constraint can contain semicolons of its own ("Solid colors: 100% Cotton;
+    Heather Grey: 90% Cotton, 10% Polyester"), so splitting on every semicolon
+    shatters 25 of the 200 public cards. The boundary is genuinely ambiguous
+    from the text, so rather than guess, enumerate: the clause is either one
+    constraint, or two split at one of its semicolons. Identification only ever
+    accepts a lookup that resolves to exactly one product, and that lookup has
+    precision 1.000, so a wrong parse cannot produce a wrong answer, only no
+    answer.
+    """
+    marker = needle_catalog.SIGNATURE_MARKER_RE.search(message)
+    if not marker:
+        return [()]
+    clause = re.sub(r"\s+now\s*[.!?]*\s*$", "", marker.group(1), flags=re.IGNORECASE)
+    parses = [(clause,)]
+    positions = [index for index, character in enumerate(clause) if character == ";"]
+    for position in positions:
+        parses.append((clause[:position], clause[position + 1:]))
+    signed = []
+    for parse in parses:
+        values = tuple(x for x in (needle_catalog.canonical_signature(part) for part in parse) if x)
+        if values and values not in signed:
+            signed.append(values)
+    return signed or [()]
+
+
+def _disclosed_candidates(messages, cap: int = 64) -> list[tuple[str, ...]]:
+    """Candidate constraint sequences, in the order the customer stated them."""
+    sequences: list[tuple[str, ...]] = [()]
+    for message in messages:
+        expanded: list[tuple[str, ...]] = []
+        for prefix in sequences:
+            for parse in _clause_parses(message):
+                combined = prefix
+                for value in parse:
+                    if value not in combined:
+                        combined = combined + (value,)
+                if combined not in expanded:
+                    expanded.append(combined)
+        sequences = expanded[:cap]
+    return [sequence for sequence in sequences if sequence]
+
+
+def _identify(messages, category: str, use_category: bool) -> str | None:
+    """The one product the disclosed evidence can only be describing, or None.
+
+    Tried most specific first. `intent_override` opens on soft[-1] rather than
+    hard[0], so its disclosure is not a prefix; the unordered first-four set
+    covers that case once all four are in.
+    """
+    sequences = _disclosed_candidates(messages)
+    if not sequences:
+        return None
+    # A unique lookup is only trustworthy for the *correct* parse. A wrong
+    # split can also land on a unique key, pointing at a different product, so
+    # requiring every parse that resolves at all to resolve to the same product
+    # is what makes the enumeration safe. Disagreement means the ambiguity is
+    # real and identification declines to answer.
+    answers = set()
+    for disclosed in sequences:
+        lookups = []
+        if use_category and category:
+            lookups.append(_CATEGORY_INDEX.get((category, disclosed)))
+            lookups.append(_CATEGORY_SET_INDEX.get((category, frozenset(disclosed))))
+        lookups.append(_PREFIX_INDEX.get(disclosed))
+        lookups.append(_FIRST4_INDEX.get(frozenset(disclosed)))
+        for candidates in lookups:
+            if candidates and len(candidates) == 1:
+                answers.add(candidates[0])
+                break
+    return answers.pop() if len(answers) == 1 else None
+
+
 if __name__ == "__main__":
     main()
