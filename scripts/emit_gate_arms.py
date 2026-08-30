@@ -125,6 +125,39 @@ def _install(emit_k: int, late_turn: int, commit_constraints: int, signals: froz
                 self._seen_by_version[key] = set(shown)
                 return response
 
+        if "opening" in signals and turn == 1 and not _promote(
+            state.messages, opening.get(session_id, ""),
+            "category" in signals, _install.promote_cap,
+        ):
+            # The turn-one guess for a browsing or boundary session, which has
+            # disclosed nothing but the coarse category. It is a *fallback*: a
+            # buying session states a hard constraint in its opening line and
+            # its depth-one bucket is a far better guess, so the bare category
+            # is used only where there is no disclosure to promote from at all.
+            # The gate emits exactly
+            # one product on turn one either way, so this swaps one guess for
+            # another and cannot cost a turn: being wrong here is being wrong
+            # where the shipped ranking was going to be wrong too.
+            #
+            # It is deliberately *not* the same thing as promoting the empty
+            # prefix generally. That variant was measured and rejected (see
+            # EXP_023.md): the bare category bucket runs to hundreds of
+            # products, and letting it drive later turns walks a popularity
+            # ordering that never reaches the target, then crowds the shipped
+            # slate out of the release-floor merge. Confining it to turn one
+            # takes the guess and leaves the failure mode behind.
+            opening_list = _promote(
+                [], opening.get(session_id, ""), "category" in signals,
+                _install.promote_cap, empty_prefix=True,
+            )
+            if opening_list:
+                key = (session_id, state.intent_version)
+                shown = emitted.setdefault(key, set())
+                shown.add(opening_list[0])
+                self._seen_by_version[key] = set(shown)
+                response["recommendations"] = [{"parent_asin": opening_list[0]}]
+                return response
+
         if "promote" in signals:
             shortlist = _promote(
                 state.messages, opening.get(session_id, ""),

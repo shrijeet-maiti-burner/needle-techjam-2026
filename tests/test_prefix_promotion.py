@@ -103,3 +103,36 @@ class PromoteTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(arms is None, "official participant kit is not bootstrapped")
+class OpeningGuessTest(unittest.TestCase):
+    """The turn-one guess is a fallback, and the distinction is load-bearing.
+
+    Promoting the empty prefix on *every* turn measured -0.110413 on the shape
+    holdout with hit rate 0.9850 -> 0.8750 (EXP_023.md). Confining it to turn
+    one, and only where the deeper bucket has nothing, is what makes it a swap
+    of one guess for another rather than a walk down a category-sized list.
+    """
+
+    def setUp(self) -> None:
+        for table in (arms._CATEGORY_INDEX, arms._CATEGORY_SET_INDEX,
+                      arms._PREFIX_INDEX, arms._FIRST4_INDEX, arms._POPULARITY):
+            table.clear()
+
+    def test_a_disclosed_prefix_outranks_the_bare_category(self) -> None:
+        arms._POPULARITY.update({"POPULAR": 9000.0, "MATCHED": 1.0})
+        arms._CATEGORY_INDEX[("shirts", ())] = ["POPULAR", "MATCHED"]
+        arms._CATEGORY_INDEX[("shirts", ("cotton",))] = ["MATCHED"]
+        message = ["For that, what matters is: cotton."]
+        # The deeper bucket answers, so the opening guess must never be reached.
+        self.assertEqual(arms._promote(message, "shirts", True, 100), ["MATCHED"])
+
+    def test_the_bare_category_answers_only_when_nothing_is_disclosed(self) -> None:
+        arms._POPULARITY.update({"POPULAR": 9000.0, "OTHER": 1.0})
+        arms._CATEGORY_INDEX[("shirts", ())] = ["OTHER", "POPULAR"]
+        self.assertEqual(
+            arms._promote([], "shirts", True, 100, empty_prefix=True),
+            ["POPULAR", "OTHER"],
+        )
+        self.assertEqual(arms._promote([], "shirts", True, 100), [])
