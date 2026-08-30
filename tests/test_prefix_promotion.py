@@ -199,3 +199,30 @@ class WalkedOutBucketTest(unittest.TestCase):
         # ordering being total and deterministic is what makes "walked out"
         # a well-defined state rather than an infinite loop on the head.
         self.assertEqual(len(order), len(set(order)))
+
+
+@unittest.skipIf(arms is None, "official participant kit is not bootstrapped")
+class CategoryResolutionTest(unittest.TestCase):
+    """The stated category comes from a closed vocabulary, so a miss is recoverable."""
+
+    def setUp(self) -> None:
+        for table in (arms._CATEGORY_INDEX, arms._KNOWN_CATEGORIES):
+            table.clear()
+        for name in ("watches wrist watches", "handbags wallets totes", "shoes boots"):
+            arms._CATEGORY_INDEX[(name, ())] = ["A"]
+            arms._KNOWN_CATEGORIES[name] = frozenset(name.split())
+
+    def test_an_exact_category_is_returned_unchanged(self) -> None:
+        self.assertEqual(arms._resolve_category("shoes boots"), "shoes boots")
+
+    def test_a_substituted_word_resolves_to_the_known_category(self) -> None:
+        self.assertEqual(
+            arms._resolve_category("wristwatches wrist watches"), "watches wrist watches"
+        )
+
+    def test_an_unknown_category_resolves_to_nothing_rather_than_a_guess(self) -> None:
+        self.assertEqual(arms._resolve_category("garden hoses"), "")
+
+    def test_a_bare_majority_is_not_enough(self) -> None:
+        # One shared token out of three is not a resolution, it is a coincidence.
+        self.assertEqual(arms._resolve_category("watches"), "")
