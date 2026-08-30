@@ -464,6 +464,7 @@ def _extract_all_spans(messages):
 # from 140 sessions to 168 at full disclosure, and from 65 to 109 by turn two.
 _PREFIX_INDEX: dict[tuple, list[str]] = {}
 _POPULARITY: dict[str, float] = {}
+_KNOWN_CATEGORIES: dict[str, frozenset] = {}
 _FIRST4_INDEX: dict[frozenset, list[str]] = {}
 _CATEGORY_INDEX: dict[tuple, list[str]] = {}
 _CATEGORY_SET_INDEX: dict[tuple, list[str]] = {}
@@ -486,6 +487,8 @@ def _build_prefix_index(products, categories) -> None:
         # verbatim on turn one, so a browsing session that has disclosed
         # nothing at all still has one catalog-grounded key to rank by.
         _CATEGORY_INDEX.setdefault((coarse, ()), []).append(asin)
+        if coarse and coarse not in _KNOWN_CATEGORIES:
+            _KNOWN_CATEGORIES[coarse] = frozenset(coarse.split())
         for depth in range(1, len(signature) + 1):
             _PREFIX_INDEX.setdefault(signature[:depth], []).append(asin)
             _CATEGORY_INDEX.setdefault((coarse, signature[:depth]), []).append(asin)
@@ -519,9 +522,51 @@ def _normalize_for_match(message: str) -> str:
     return re.sub(r"\s+", " ", stripped).strip()
 
 
+def _resolve_category(stated: str) -> str:
+    """The known coarse category the opening line is naming, or "".
+
+    `initial_message` states `coarse_category(...)` verbatim, so the category is
+    drawn from a closed vocabulary of about 180 strings that the index already
+    holds. That makes a miss recoverable: any surface change -- a synonym, a
+    typo, a dropped word -- leaves a string that still shares most of its tokens
+    with exactly one known category. Resolving to that one is well defined,
+    where an exact-key lookup simply loses the qualification and with it the
+    precision that makes promotion safe.
+
+    Measured on the released set, the `synonym` slice rewrites 41 of the 200
+    opening lines and every rewrite took the key out of the index.
+
+    Requires a strict majority of the stated tokens to match and a unique best
+    candidate, so an ambiguous or genuinely unknown category still resolves to
+    nothing rather than to a guess.
+    """
+    if not stated:
+        return ""
+    if (stated, ()) in _CATEGORY_INDEX:
+        return stated
+    tokens = set(stated.split())
+    if not tokens:
+        return ""
+    best_score, best = 0.0, []
+    for known in _KNOWN_CATEGORIES:
+        shared = len(tokens & _KNOWN_CATEGORIES[known])
+        if not shared:
+            continue
+        score = shared / max(len(tokens), len(_KNOWN_CATEGORIES[known]))
+        if score > best_score:
+            best_score, best = score, [known]
+        elif score == best_score:
+            best.append(known)
+    if best_score > 0.5 and len(best) == 1:
+        return best[0]
+    return ""
+
+
 def _opening_category(message: str) -> str:
     match = _OPENING_CATEGORY_RE.search(_normalize_for_match(message))
-    return needle_catalog.canonical_signature(match.group(1)) if match else ""
+    if not match:
+        return ""
+    return _resolve_category(needle_catalog.canonical_signature(match.group(1)))
 
 
 def _clause_parses(message: str) -> list[tuple[str, ...]]:
