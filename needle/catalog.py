@@ -685,6 +685,37 @@ class CatalogIndex:
                 # close() exists to release resources, never to raise.
                 pass
 
+    def clarification_facets(
+        self,
+        parent_asins: Sequence[str],
+    ) -> dict[str, tuple[str, str]]:
+        """Return catalog-stated material and colour for a bounded product set.
+
+        The searchable catalog already contains every field needed by the
+        clarification policy. Querying only the candidates avoids reparsing the
+        source JSONL on the first customer turn. Unknown identifiers are simply
+        absent and are counted as unknown by the policy.
+        """
+        identifiers = tuple(dict.fromkeys(str(value) for value in parent_asins if value))
+        facets: dict[str, tuple[str, str]] = {}
+        for offset in range(0, len(identifiers), 400):
+            batch = identifiers[offset:offset + 400]
+            placeholders = ", ".join("?" for _ in batch)
+            rows = self.connection.execute(
+                "SELECT parent_asin, title, features, details FROM products "
+                f"WHERE parent_asin IN ({placeholders})",
+                batch,
+            ).fetchall()
+            for parent_asin, title, features, details in rows:
+                blob = " ".join(str(value or "") for value in (title, features, details))
+                material = MATERIAL_RE.search(blob)
+                colour = COLOR_RE.search(blob)
+                facets[str(parent_asin)] = (
+                    material.group(1).lower() if material else "",
+                    colour.group(1).lower() if colour else "",
+                )
+        return facets
+
     def __enter__(self) -> "CatalogIndex":
         return self
 
