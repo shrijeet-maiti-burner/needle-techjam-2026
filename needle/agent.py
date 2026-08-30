@@ -31,6 +31,7 @@ class Agent:
         exclude_seen: bool = False,
         override_policy: str = "full_reset",
         lexical_mode: str = "none",
+        correct_unmatched_terms: bool = False,
     ) -> None:
         if not 1 <= int(candidate_pool) <= 500:
             raise ValueError("candidate_pool must be in 1..500")
@@ -47,6 +48,7 @@ class Agent:
             category_strength=category_strength,
             signature_bucket_limit=signature_bucket_limit,
             signature_index_path=signature_index_path,
+            correct_unmatched_terms=correct_unmatched_terms,
         )
         self.state = StateStore(override_policy=override_policy)
         self.semantic = NoOpSemanticReranker()
@@ -72,6 +74,7 @@ class Agent:
             "exclude_seen": self.exclude_seen,
             "override_policy": override_policy,
             "lexical_mode": lexical_mode,
+            "correct_unmatched_terms": bool(correct_unmatched_terms),
         }
         self._seen_by_version: dict[tuple[str, int], set[str]] = {}
         # Degradations are recorded rather than raised; an empty list is the

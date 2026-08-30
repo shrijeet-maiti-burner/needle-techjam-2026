@@ -307,6 +307,7 @@ class CatalogIndex:
         category_strength: float = 0.0,
         signature_bucket_limit: int = 100,
         signature_index_path: str | Path | None = None,
+        correct_unmatched_terms: bool = False,
     ) -> None:
         if retrieval_mode not in RETRIEVAL_MODES:
             raise ValueError(f"unsupported retrieval mode: {retrieval_mode}")
@@ -340,6 +341,11 @@ class CatalogIndex:
             if signature_index_path is not None
             else None
         )
+        self.correct_unmatched_terms = bool(correct_unmatched_terms)
+        self._corrector: object | None = None
+        # (term, replacement-or-None) for every unmatched term seen. Read by
+        # the experiment record; never consulted by ranking.
+        self.recovered_terms: list[tuple[str, str | None]] = []
         self.connection = sqlite3.connect(":memory:")
         self._external_signature_connection: sqlite3.Connection | None = None
         self._signature_count_cache: dict[str, int] = {}
@@ -552,8 +558,52 @@ class CatalogIndex:
         rows = self._signature_rows(matched, fetch_limit)
         return tuple(matched), frozenset(str(row[0]) for row in rows)
 
+    def _vocabulary_corrector(self) -> "VocabularyCorrector | None":
+        """Corrector over this index's own vocabulary, built on first use.
+
+        Read from `fts5vocab` rather than re-derived from the catalog file, so
+        it sees exactly the terms the tokenizer produced -- if the two ever
+        disagreed, a correction could name a term that matches nothing.
+        """
+        if not self.correct_unmatched_terms:
+            return None
+        if self._corrector is None:
+            from needle.semantic import VocabularyCorrector
+
+            self.connection.execute(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS product_vocabulary "
+                "USING fts5vocab(products, 'row')"
+            )
+            document_frequency = {
+                str(term): int(documents)
+                for term, documents in self.connection.execute(
+                    "SELECT term, doc FROM product_vocabulary"
+                )
+            }
+            self._corrector = VocabularyCorrector(document_frequency)
+        return self._corrector
+
+    def _recover_unmatched(self, terms: list[str]) -> list[str]:
+        """Replace terms the corpus does not contain with their nearest known
+        neighbour. A term that matches no document contributes nothing to an OR
+        query and empties an AND query, so substitution cannot lose signal that
+        was being used -- there was none."""
+        corrector = self._vocabulary_corrector()
+        if corrector is None:
+            return terms
+        recovered: list[str] = []
+        for term in terms:
+            if corrector.is_known(term):
+                recovered.append(term)
+                continue
+            replacement = corrector.correct(term)
+            self.recovered_terms.append((term, replacement))
+            recovered.append(replacement if replacement is not None else term)
+        # Substitution can collide with a term already present.
+        return list(dict.fromkeys(recovered))
+
     def _sparse_rows(self, text: str, limit: int) -> list[tuple[str, float]]:
-        terms = query_terms(text)
+        terms = self._recover_unmatched(query_terms(text))
         if limit == 0 or not terms:
             return []
         operator = " OR " if self.query_mode == "any" else " AND "
