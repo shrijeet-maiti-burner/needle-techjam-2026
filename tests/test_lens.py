@@ -107,6 +107,34 @@ class LensTraceTest(unittest.TestCase):
         finally:
             agent.close()
 
+    def test_trace_certifies_the_grounded_message_returned_on_that_turn(self) -> None:
+        agent = Agent(
+            self.catalog,
+            **self.kwargs,
+            explain=True,
+            trace_enabled=True,
+        )
+        try:
+            agent.reset("session", {})
+            response = agent.respond(
+                "session",
+                "I'm looking for Shirts T-Shirts, but I'm still exploring.",
+                1,
+                10,
+            )
+            trace = agent.trace_for("session")[-1]
+            self.assertEqual(trace["response"]["message"], response["message"])
+            self.assertEqual(
+                trace["response"]["ask_attribute"],
+                response["ask_attribute"],
+            )
+            self.assertNotEqual(
+                response["message"],
+                "What else matters most for the item you want?",
+            )
+        finally:
+            agent.close()
+
     def test_override_is_visible_as_a_versioned_state_transition(self) -> None:
         agent = Agent(self.catalog, **self.kwargs, trace_enabled=True)
         try:

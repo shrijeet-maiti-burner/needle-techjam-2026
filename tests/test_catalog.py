@@ -77,6 +77,26 @@ class CatalogValidationTest(unittest.TestCase):
             )
         )
 
+    def test_marker_value_stops_before_trailing_discourse_filler(self) -> None:
+        self.assertEqual(
+            extract_query_signatures(
+                ["I'm looking for shirts. A key requirement is: cotton., kind of"]
+            )[0],
+            "cotton",
+        )
+        self.assertEqual(
+            disclosed_signature_sequences(
+                ["I'm looking for shirts. A key requirement is: cotton., kind of"]
+            ),
+            (("cotton",),),
+        )
+        self.assertEqual(
+            extract_query_signatures(
+                ["What matters is: budget around $30.99. I can be flexible."]
+            )[0],
+            "budget around 30 99",
+        )
+
     def test_nested_request_uses_the_final_category_phrase(self) -> None:
         self.assertEqual(
             extract_category_terms(
@@ -114,6 +134,26 @@ class CatalogValidationTest(unittest.TestCase):
         path = self.write_catalog([{"parent_asin": "KNOWN", "title": "known"}])
         with self.assertRaisesRegex(ValueError, "field_weights"):
             CatalogIndex(path, field_weights=(1.0, 2.0))
+
+    def test_clarification_facets_only_describe_requested_products(self) -> None:
+        path = self.write_catalog(
+            [
+                {
+                    "parent_asin": "TARGET",
+                    "title": "black leather bag",
+                    "features": ["cotton lining"],
+                },
+                {
+                    "parent_asin": "OTHER",
+                    "title": "red nylon bag",
+                },
+            ]
+        )
+        with CatalogIndex(path) as index:
+            self.assertEqual(
+                index.clarification_facets(["TARGET", "MISSING", "TARGET"]),
+                {"TARGET": ("leather", "black")},
+            )
 
     def test_signature_normalization_is_case_and_punctuation_stable(self) -> None:
         self.assertEqual(canonical_signature("  Color: Café-Blue! "), "color cafe blue")
