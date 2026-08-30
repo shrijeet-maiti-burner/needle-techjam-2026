@@ -110,17 +110,33 @@ def _clean_constraint(value: object, limit: int = 180) -> str:
     return re.sub(r"\s+", " ", str(value)).strip(" -;,.\t\n")[:limit].rstrip()
 
 
+def fold_marks(text: str) -> str:
+    """Case-fold and drop combining marks, mirroring the FTS5 tokenizer.
+
+    The products table is built with `unicode61 remove_diacritics 2`, so the
+    corpus side already stores `café` as `cafe`. `TOKEN_RE` only matches ASCII
+    alphanumerics, so without this fold a query term breaks *at* the accent
+    rather than past it: `cótton` tokenizes to `tton`, which matches nothing.
+    Folding first keeps the query and corpus tokenizers symmetric.
+
+    Pure-ASCII input is returned unchanged, so this cannot alter retrieval for
+    text that has no marks to fold.
+    """
+    if text.isascii():
+        return text.casefold()
+    normalized = unicodedata.normalize("NFKD", text.casefold())
+    return "".join(character for character in normalized if not unicodedata.combining(character))
+
+
 def canonical_signature(value: object) -> str:
-    normalized = unicodedata.normalize("NFKD", _clean_constraint(value).casefold())
-    without_marks = "".join(character for character in normalized if not unicodedata.combining(character))
-    return " ".join(TOKEN_RE.findall(without_marks))
+    return " ".join(TOKEN_RE.findall(fold_marks(_clean_constraint(value))))
 
 
 def query_terms(text: str, limit: int = 60) -> list[str]:
     terms = (
-        token.lower()
-        for token in TOKEN_RE.findall(text)
-        if len(token) > 1 and token.lower() not in STOPWORDS
+        token
+        for token in TOKEN_RE.findall(fold_marks(text))
+        if len(token) > 1 and token not in STOPWORDS
     )
     return list(dict.fromkeys(terms))[:limit]
 
@@ -354,6 +370,31 @@ class CatalogIndex:
                 self._category_terms.clear()
                 self._max_log_rating = 1.0
                 self._build()
+
+    def close(self) -> None:
+        """Release both SQLite handles. Idempotent, and safe to call mid-session.
+
+        The signature index is opened as a real file (`file:...?mode=ro`), so on
+        Windows the open handle holds a lock: until it is closed the asset cannot
+        be replaced or deleted, and a caller that builds an index inside a
+        temporary directory cannot clean that directory up.
+        """
+        external, self._external_signature_connection = self._external_signature_connection, None
+        for connection in (external, getattr(self, "connection", None)):
+            if connection is None:
+                continue
+            try:
+                connection.close()
+            except sqlite3.Error:
+                # Already closed or failing to close is not worth surfacing:
+                # close() exists to release resources, never to raise.
+                pass
+
+    def __enter__(self) -> "CatalogIndex":
+        return self
+
+    def __exit__(self, *exception: object) -> None:
+        self.close()
 
     def _build(self) -> None:
         cursor = self.connection.cursor()

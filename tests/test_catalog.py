@@ -181,6 +181,9 @@ class CatalogValidationTest(unittest.TestCase):
             retrieval_mode="signature_first",
             signature_index_path=index_path,
         )
+        # The index holds an open read-only handle on `index_path`; on Windows
+        # that blocks the TemporaryDirectory cleanup this test registered.
+        self.addCleanup(index.close)
 
         _, candidates = index.signature_candidates(
             ["For that, what matters is: Cloudsoft cotton."]
