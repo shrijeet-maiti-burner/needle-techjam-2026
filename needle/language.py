@@ -62,12 +62,32 @@ _SCRIPT_RANGES: tuple[tuple[int, int, str], ...] = (
 
 # Inexact: Latin-script languages share an alphabet, so these are function-word
 # cues. Two distinct hits are required before English is abandoned.
+# Two cues are required, so the sets need enough coverage that an ordinary short
+# request reaches the threshold: "Busco unos cinturones de cuero" is
+# unmistakably Spanish and was falling back to English on one cue. Every entry
+# is a word that is not also ordinary English, for the same reason the category
+# lexicon drops such terms.
 _LATIN_CUES: Mapping[str, frozenset[str]] = {
-    "es": frozenset({"busco", "quiero", "para", "algo", "que", "con", "una", "los", "las", "pero"}),
-    "fr": frozenset({"je", "cherche", "veux", "pour", "avec", "une", "des", "mais", "quelque", "qui"}),
-    "de": frozenset({"ich", "suche", "moechte", "möchte", "für", "fuer", "mit", "eine", "und", "aber"}),
-    "pt": frozenset({"procuro", "quero", "para", "algo", "com", "uma", "mas", "que", "dos", "das"}),
-    "it": frozenset({"cerco", "voglio", "per", "qualcosa", "con", "una", "ma", "che", "degli", "delle"}),
+    "es": frozenset({
+        "busco", "buscando", "quiero", "necesito", "estoy", "para", "algo",
+        "que", "con", "una", "unos", "unas", "los", "las", "pero", "del",
+    }),
+    "fr": frozenset({
+        "je", "cherche", "recherche", "veux", "besoin", "pour", "avec", "une",
+        "des", "mais", "quelque", "qui", "du", "aux",
+    }),
+    "de": frozenset({
+        "ich", "suche", "moechte", "möchte", "brauche", "für", "fuer", "mit",
+        "eine", "einen", "und", "aber", "aus", "noch",
+    }),
+    "pt": frozenset({
+        "procuro", "quero", "preciso", "para", "algo", "com", "uma", "mas",
+        "que", "dos", "das", "ainda",
+    }),
+    "it": frozenset({
+        "cerco", "voglio", "per", "qualcosa", "con", "una", "ma", "che",
+        "degli", "delle", "sto", "ancora",
+    }),
 }
 
 _WORD_RE = re.compile(r"[^\W\d_]+", re.UNICODE)
@@ -205,6 +225,25 @@ _PHRASES: Mapping[str, Mapping[str, str]] = {
 
 
 # Shopping nouns to the English words the catalog's own coarse categories use.
+#
+# A term that is also an ordinary English word cannot be here. The lexicon is
+# consulted whenever the opening pattern finds no category, including on English
+# requests the pattern simply did not match, and "collar" (Spanish, necklace),
+# "pull" (French, sweater), "hose" and "rock" (German, trousers and skirt) then
+# read English text as a request for something else:
+#
+#   "For that, what matters is: Pull On closure."  -> sweaters
+#   "a shirt with a button collar"                 -> necklaces
+#
+# which keys the disclosure bucket on a category the customer never asked for.
+# The EXP-010 gates do not move either way -- they are identical to main with
+# these terms in or out -- so this is a latent correctness fix, not a measured
+# score or robustness one.
+#
+# They are dropped rather than gated behind language detection, because
+# detection is deliberately conservative and a short request like "Busco unos
+# cinturones" does not reach its two-cue threshold. Gating would lose the
+# category for exactly the customers this exists for.
 # Hand-checked, and deliberately partial: a term is here only when its English
 # mapping is the word the marketplace actually files the product under, so a
 # miss falls through to no category rather than to a wrong one.
@@ -217,23 +256,23 @@ _CATEGORY_TERMS: Mapping[str, str] = {
     "cinturon": "belts", "cinturones": "belts", "zapatos": "shoes", "botas": "boots",
     "camisa": "shirts", "camisas": "shirts", "pantalones": "pants", "vaqueros": "jeans",
     "vestido": "dresses", "calcetines": "socks", "sombrero": "hats", "guantes": "gloves",
-    "chaqueta": "jackets", "collar": "necklaces", "anillo": "rings",
-    "pendientes": "earrings", "cartera": "wallets", "mochila": "backpacks",
+    "chaqueta": "jackets",  "anillo": "rings",
+    "pendientes": "earrings",  "mochila": "backpacks",
     "sueter": "sweaters", "jersey": "sweaters", "reloj": "watches", "relojes": "watches",
     "bolso": "handbags", "falda": "skirts", "sandalias": "sandals", "bufanda": "scarves",
     # French
     "ceinture": "belts", "ceintures": "belts", "chaussures": "shoes", "bottes": "boots",
-    "chemise": "shirts", "pantalon": "pants", "robe": "dresses", "chaussettes": "socks",
-    "chapeau": "hats", "gants": "gloves", "veste": "jackets", "collier": "necklaces",
-    "bague": "rings", "portefeuille": "wallets", "pull": "sweaters", "montre": "watches",
-    "jupe": "skirts", "sandales": "sandals", "echarpe": "scarves",
+    "chemise": "shirts", "pantalon": "pants",  "chaussettes": "socks",
+ "gants": "gloves",  "collier": "necklaces",
+ "portefeuille": "wallets",  
+ "sandales": "sandals", "echarpe": "scarves",
     # German
     "gurtel": "belts", "schuhe": "shoes", "stiefel": "boots", "hemd": "shirts",
-    "hose": "pants", "kleid": "dresses", "socken": "socks", "hut": "hats",
+ "kleid": "dresses", "socken": "socks", 
     "handschuhe": "gloves", "jacke": "jackets", "halskette": "necklaces",
     "ohrringe": "earrings", "sonnenbrille": "sunglasses", "geldborse": "wallets",
-    "rucksack": "backpacks", "pullover": "sweaters", "uhr": "watches",
-    "handtasche": "handbags", "rock": "skirts", "sandalen": "sandals", "schal": "scarves",
+    "rucksack": "backpacks", "pullover": "sweaters", 
+    "handtasche": "handbags",  "sandalen": "sandals", 
     # Hindi
     "बेल्ट": "belts", "जूते": "shoes", "शर्ट": "shirts", "पैंट": "pants",
     "जींस": "jeans", "मोजे": "socks", "टोपी": "hats", "दस्ताने": "gloves",
