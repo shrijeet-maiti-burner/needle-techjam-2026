@@ -1,8 +1,17 @@
 # Architecture
 
+This is the working document. The judge-facing description is
+[`submission/REPORT.md`](../submission/REPORT.md), which ships in the archive;
+this one carries the detail that report has no room for.
+
 ## Decision boundary
 
-The code currently implements only the minimum fields and behavior needed for a valid end-to-end run. Detailed confidence, provenance, ambiguity, cluster, and trace contracts are target architecture. They do not need to exist by H6 unless a running experiment consumes them.
+The line that held all the way through: nothing outside the scored path may
+change a scored response. Confidence, provenance, clarification ranking,
+explanations, translation and the multi-item planner all exist now, and every
+one of them is downstream of, or beside, the ranking rather than inside it. The
+guard is mechanical rather than cultural: a test walks the import graph from the
+entry point and fails if a scored module reaches the interface layer.
 
 ```text
 official evaluator
@@ -15,7 +24,14 @@ versioned state -> safe category-bound disclosure ranking/identification
        -> no-op semantic boundary -> strict response
 ```
 
-## Stable H6 interfaces
+Beside that path, and reaching none of it: `needle/questions.py` ranks the
+catalog facet worth asking a person about, `needle/explain.py` writes the
+customer-facing sentence from the state that produced the turn,
+`needle/language.py` answers in the language the customer wrote in, and
+`storefront/` is the multi-item journey interface. The scored
+`ask_attribute` and the scored ranking are untouched by all four.
+
+## Stable interfaces
 
 - `StateStore.reset/observe` owns session lifecycle and raw active-intent history.
 - `CatalogIndex.search` returns ordered catalog-valid `Candidate` values.
@@ -69,7 +85,11 @@ development diagnostics, not private-score estimates.
 1. EXP-013 is closed: question specificity was measured across ten arms and every alternative to repeated `other` lost (docs/evidence/EXP_013.md). EXP-014 may still test later-rank cluster coverage, but only behind the selected deterministic path.
 2. Robustness work targets general normalization and retrieval invariants; more released-template phrase patches are not acceptable evidence.
 3. Any optional model must beat the no-op and lexical controls on released score, disjoint targets, perturbation slices, license, offline startup, latency, memory, disk, and clean packaging.
-4. Final release work rebuilds the optional current-schema asset from the exact scoring catalog and repeats both source-only and asset-bundled clean extracted-bundle commands.
+4. Closed. The release asset is rebuilt from the frozen scoring catalog and
+   both paths are rerun from a clean extraction on every release candidate: the
+   bundled index and the refused-index rebuild score identically at 0.978500,
+   and the asset now carries the fingerprint of the parser that produced its
+   facets so a stale one is refused rather than served.
 
 ## Invariants
 
