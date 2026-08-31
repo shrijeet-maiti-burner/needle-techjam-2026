@@ -8,6 +8,8 @@ The final Devpost project description must truthfully list all development tools
 |---|---|---|---|
 | development tool | Git | version control | no |
 | development tool | GitHub and GitHub Actions | collaboration and CI | no |
+| development tool | PowerShell | local automation and release checks | no |
+| development tool | Google Chrome headless mode and DevTools Protocol | responsive rendered-interface QA | no |
 | language/runtime | Python 3.10+ | implementation and tests | yes |
 | library/framework | Python standard library, including `sqlite3` FTS5 | retrieval, state, scripts, and tests | yes |
 | API | official local Python `Agent` interface | evaluator integration | yes |

@@ -446,6 +446,19 @@ class StorefrontService:
         if "trace_enabled" not in self.enabled_optional:
             return None
         try:
+            reader = getattr(self.agent, "trace_for", None)
+            if callable(reader):
+                recorded = reader(session_id)
+                if recorded:
+                    latest = recorded[-1]
+                    if isinstance(latest, Mapping):
+                        return dict(latest)
+                return None
+
+            # Compatibility with the short-lived review shape that exposed a
+            # public mapping instead of ``trace_for``. The selected Agent uses
+            # the method above; keeping this read-only fallback costs nothing
+            # and lets the storefront degrade across a partially merged tree.
             traces = getattr(self.agent, "traces", None)
             if isinstance(traces, Mapping):
                 recorded = traces.get(session_id)

@@ -4,6 +4,7 @@ import unittest
 
 from needle.diagnostics import surface_noise
 from needle.state import (
+    ATTRIBUTE_VOCABULARY,
     ConstraintStatus, Polarity, SessionState, StateStore, extract_constraints,
     extract_subject_anchor,
 )
@@ -46,6 +47,60 @@ class ExtractionTest(unittest.TestCase):
         message = "no rush on delivery, I would really like a soft cotton shirt"
         found = extract_constraints(message)
         self.assertIn(("material", "cotton", Polarity.POSITIVE), found)
+
+    def test_negation_stops_at_a_contrastive_clause(self) -> None:
+        for message in (
+            "not black but blue",
+            "no, not black — blue",
+            "Actually, no black — make it blue and lightweight.",
+            "Actually, no black - make it blue and lightweight.",
+        ):
+            with self.subTest(message=message):
+                found = extract_constraints(message)
+                self.assertIn(("color", "black", Polarity.NEGATIVE), found)
+                self.assertIn(("color", "blue", Polarity.POSITIVE), found)
+
+    def test_relational_exclusions_assign_both_sides_correctly(self) -> None:
+        cases = {
+            "anything except leather": (
+                ("material", "leather", Polarity.NEGATIVE),
+            ),
+            "blue instead of black": (
+                ("color", "blue", Polarity.POSITIVE),
+                ("color", "black", Polarity.NEGATIVE),
+            ),
+            "black rather than blue": (
+                ("color", "black", Polarity.POSITIVE),
+                ("color", "blue", Polarity.NEGATIVE),
+            ),
+        }
+        for message, expected in cases.items():
+            with self.subTest(message=message):
+                found = extract_constraints(message)
+                for constraint in expected:
+                    self.assertIn(constraint, found)
+
+    def test_not_only_is_additive_not_negative(self) -> None:
+        found = extract_constraints("not only black but blue")
+        self.assertIn(("color", "black", Polarity.POSITIVE), found)
+        self.assertIn(("color", "blue", Polarity.POSITIVE), found)
+
+    def test_contrastive_correction_generalizes_across_every_attribute(self) -> None:
+        for attribute, vocabulary in ATTRIBUTE_VOCABULARY:
+            old, new = vocabulary[:2]
+            with self.subTest(attribute=attribute, old=old, new=new):
+                found = extract_constraints(f"not {old} but {new}")
+                self.assertIn((attribute, old, Polarity.NEGATIVE), found)
+                self.assertIn((attribute, new, Polarity.POSITIVE), found)
+
+    def test_except_generalizes_across_the_entire_attribute_vocabulary(self) -> None:
+        for attribute, vocabulary in ATTRIBUTE_VOCABULARY:
+            for value in vocabulary:
+                with self.subTest(attribute=attribute, value=value):
+                    self.assertIn(
+                        (attribute, value, Polarity.NEGATIVE),
+                        extract_constraints(f"anything except {value}"),
+                    )
 
 
 class BoundaryTest(unittest.TestCase):
@@ -130,6 +185,34 @@ class CorrectionTest(unittest.TestCase):
         state.observe("make it blue", 2)
         blue = next(c for c in state.active_constraints() if c.value == "blue")
         self.assertEqual(blue.supersedes, "color:black:positive")
+
+    def test_inline_contrast_records_the_rejection_and_replacement(self) -> None:
+        state = _state()
+        state.observe(
+            "Actually, no black — make it blue and lightweight.",
+            1,
+        )
+        self.assertEqual(_active_map(state).get("color"), "blue")
+        self.assertEqual(state.excluded_values("color"), ("black",))
+
+    def test_natural_activity_correction_keeps_the_replacement(self) -> None:
+        state = _state()
+        state.observe("i said running but meant walking", 1)
+        self.assertEqual(_active_map(state).get("use_case"), "walking")
+
+    def test_negative_value_is_removed_only_from_the_retrieval_surface(self) -> None:
+        state = _state()
+        message = "no, not black — blue"
+        state.observe(message, 1)
+        self.assertEqual(state.messages, [message])
+        self.assertNotIn("black", state.retrieval_text.lower())
+        self.assertIn("blue", state.retrieval_text.lower())
+
+    def test_reinstated_value_returns_to_the_retrieval_surface(self) -> None:
+        state = _state()
+        state.observe("not black", 1)
+        state.observe("actually black is fine", 2)
+        self.assertIn("black", state.retrieval_text.lower())
 
 
 class NegationTest(unittest.TestCase):

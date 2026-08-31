@@ -14,14 +14,18 @@ versioned constraint list. Constraints carry a polarity, a turn, and an intent
 version, and are superseded rather than deleted so the history stays auditable.
 A stated value and its own exclusion cannot be active simultaneously.
 
-**Question policy.** The agent asks `other` on every turn before the last. This
-is not a heuristic. The released simulator answers a specific attribute only
+**Question policy.** The scored contract asks `other` on every answerable turn
+before the last. This is not a heuristic. The released simulator answers a specific attribute only
 when the target actually has a constraint of that type, and returns nothing
 otherwise, while `other` returns up to two undisclosed constraints regardless of
 type. The target has at most four constraints. So `other` strictly dominates any
 attribute-specific question and two questions exhaust the customer. Asking also
 costs nothing, because the evaluator scores `recommendations` and may end the
-session before it reads `ask_attribute`.
+session before it reads `ask_attribute`. The human-facing message independently
+names the catalog facet with the greatest positive cost-adjusted expected
+candidate reduction. That choice, its coverage, residual-set estimate, and
+stopping evidence are emitted in the target-blind trace; it never changes the
+scored `ask_attribute` or ranking policy.
 
 **Retrieval.** Exact full-value and punctuation-delimited clause signatures are
 looked up in a catalog-bound SQLite index, with fielded FTS5 BM25 as the fallback
@@ -40,8 +44,10 @@ candidates remain eligible. FTS5, soft category coverage, and the bounded
 **Surface robustness.** Structural parsers fold accents and normalize
 whitespace. A catalog-derived one-edit corrector operates only on the explicit
 opening category and disclosure clauses. Conservative category variants such
-as `trousers`/`pants` share a category key. Arbitrary customer prose is not
-rewritten and no fixed product identifiers are encoded.
+as `trousers`/`pants` share a category key. Negation is scoped to its clause;
+contrastive punctuation and conjunctions let `not black - make it blue` reject
+the old value without rejecting its replacement. Arbitrary customer prose is
+not rewritten and no fixed product identifiers are encoded.
 
 **Intent override.** An explicit override retracts the preference the customer
 stated, not the answers they gave to our questions. The opening message is
@@ -72,16 +78,14 @@ datasets and assets for the final Devpost description.
 | estimated model cost | $0.00 |
 | network access required | no |
 | credentials required | no |
-| per-response latency, p50 | 64.3 ms |
-| per-response latency, p95 | 218.9 ms |
-| per-response latency, p99 | 331.7 ms |
-| per-response latency, max | 733.8 ms |
-| construction with bundled index | 6.774 s |
+| per-response latency, p50 | 6.529 ms |
+| per-response latency, p95 | 147.513 ms |
+| per-response latency, p99 | 254.434 ms |
+| per-response latency, max | 631.962 ms |
+| construction with bundled index | 8.364 s |
 | construction without bundled index | 84.788 s |
-| generated index size | 64,884,736 bytes |
-| generated index SHA-256 | `73c91b4473772532cc22a39918885e00898b8eadbada8544bfad84dd8e9904e4` |
-| complete evaluator peak working set, bundled | 507,654,144 bytes |
-| complete evaluator peak working set, source-only | 594,825,216 bytes |
+| generated index schema and size | 8; 68,702,208 bytes |
+| generated index SHA-256 | `797dd7ef14911a43966599f7157e41db8e80e3feda56e9e09f197cad0e1917e3` |
 | contract violations | 0 of 405 responses |
 
 Measured on the 200 official public sessions, `retrieval_mode=signature_first`,
@@ -97,16 +101,17 @@ These are stated plainly because they bear on how the result should be read.
 are deterministically materialised from the target catalog row. Three separate
 200-target proxies exclude every released ground-truth target and match public
 rating, price-presence, broad-category, profile, and scenario marginals. They
-score 0.979075, 0.965725, and 0.961950. They still reuse the released simulator,
-so they are evidence against direct target memorising, not private-score
-estimates.
+score 0.979075, 0.965625, and 0.959900 when rerun from the release-candidate
+tree. They still reuse the released simulator, so they are evidence against
+direct target memorising, not private-score estimates.
 
 **Sensitivity to message wording is measured and real.** The exact surface has
-HR@10 1.000 and MRR 0.996667. Several perturbation slices still remove targets,
-including filler, paraphrase, single-edit typo, and word order; the larger
-meaning-changing attribute-swap and constraint-drop edits also fail the
-registered zero-removal gate. The exact rates and ranking metrics are retained
-in the dated final evidence record. The gates were not weakened.
+HR@10 1.000 and MRR 0.996667. Paraphrase removes one target out of 200 and word
+order removes two of 158 changed targets. Single-edit typo removes none but
+reduces MRR to 0.988958. The meaning-changing negation, attribute-swap, and
+constraint-drop edits also fail the registered zero-removal gate against the
+original target. The exact rates and ranking metrics are retained in the dated
+final evidence record. The gates were not weakened.
 
 **Override handling still depends on a structural trigger.** Accent folding and
 independent paraphrases pass, and later question answers now survive a scoped
@@ -127,11 +132,13 @@ signature/FTS path must carry the session. An exhaustive public audit records
 117 correct direct identifications and zero wrong; all 386 non-empty promoted
 buckets retain the public target. Neither result proves private behavior.
 
-**Negative constraints are tracked but not enforced.** The belief state records
-exclusions and exposes them, but retrieval does not currently filter on them. A
-probe that applied them as hard filters scored materially worse, 0.7054 against
-0.8817, because precision without recall promotes confident wrong items to rank
-one. Wiring them in remains an open measured question rather than an oversight.
+**Negative constraints are soft, not absolute filters.** The belief state records
+exclusions, removes their values from the bag-of-words retrieval surface, and
+stably demotes candidates whose catalog facets conflict. Conflicting products
+remain after compatible ones because catalog metadata and natural-language
+parsing can both be incomplete. A probe that used hard filters scored materially
+worse, 0.7054 against 0.8817, because precision without recall promotes
+confident wrong items to rank one.
 
 **Boundary sessions pay an unavoidable one-turn tax.** The first question asked
 in a boundary session always returns a deflection. No policy avoids it; it can
@@ -139,6 +146,12 @@ only be paid early.
 
 
 ## Demonstrated session
+
+`python scripts/needle_storefront.py --warm` runs an unscripted local storefront
+against the selected primary. Each turn renders the active/superseded belief
+ledger, grounded product fields, latency, and an expandable decision receipt
+read directly from the same target-blind trace as Needle Lens. There is no
+demo-only reranking path.
 
 `python3 scripts/demo_session.py --scenario intent_override` prints one full
 multi-turn session. It is a real transcript, not a staged one: the customer
@@ -164,7 +177,7 @@ directly.
 | belief state, override policy, question policy | Athul Krishna Boban | versioned constraint state with correction, negation and supersession (#1); `retract_stated` override policy (#6); contradiction invalidation (#9); retraction-rule override trigger (#10); submission packaging and run-safety (#8); EXP-006/013 closures and the popularity transfer review (#12) |
 | retrieval, ranking, integration | Shrijeet Maiti | reproducible experiment harness (#2); catalog validation and sparse controls, measured primary and rollback paths (#5); transfer-gated primary selection (#11) |
 | robustness, lexical normalization | Aryaman Anand | offline lexical normalizer and robustness fixtures (#3); EXP-010 perturbation library (#4); session-level robustness driver, slice runner and comparison report (#7); query/corpus tokenizer symmetry and resource safety (#13) |
-| evaluation baseline and reruns | Yazhiniyan | <!-- CONFIRM BEFORE SUBMISSION: no merged pull requests are attributable to this owner in the repository history. Replace this line with the actual contribution or remove the row. --> |
+| evaluation baseline and reruns | Yazhiniyan | no merged repository contribution is recorded in this release candidate; add only independently verifiable release or submission work before the final description is frozen |
 
 Every experiment in `docs/evidence/` names an independent rerun owner, and the
 headline arms were reproduced by a second person before being cited.

@@ -87,7 +87,13 @@ class StorefrontHandler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.end_headers()
         if self.command != "HEAD":
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                # A navigation or closed tab may abandon an in-flight response.
+                # The request is already over from that client's perspective;
+                # do not turn a routine disconnect into a server traceback.
+                return
 
     def _json(self, status: HTTPStatus, payload: object) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

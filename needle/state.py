@@ -4,6 +4,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field, replace
 from enum import Enum
+from functools import lru_cache
 from typing import Mapping
 
 from needle.semantic import fold_diacritics, repair_trigger_text, trigger_keywords
@@ -119,10 +120,18 @@ def _declined_attributes(message: str, regions: list[tuple[int, int]]) -> set[st
 # looser stays positive rather than silently creating an exclusion, because a
 # wrong hard exclusion can remove the target for the rest of the session.
 NEGATION_RE = re.compile(
-    r"\b(?:no|not|without|non|avoid|skip|dislike|don'?t want|nothing)\b",
+    r"\b(?:no|not|without|non|avoid|skip|dislike|don'?t want|nothing|"
+    r"except|excluding|instead\s+of|rather\s+than)\b",
     re.IGNORECASE,
 )
 NEGATION_WINDOW = 24
+# Negation cannot bleed across a contrastive clause.  This is structural rather
+# than a phrase-to-output rule: the same boundary applies to every catalog value
+# and fixes constructions such as "not black but blue" and "not black — blue".
+NEGATION_RESET_RE = re.compile(
+    r"[;.!?\u2014\u2013]|\s-\s|\b(?:but|however|though|yet)\b",
+    re.IGNORECASE,
+)
 
 MATERIALS = (
     "cotton", "polyester", "nylon", "leather", "wool", "spandex", "silk",
@@ -147,7 +156,7 @@ STYLES = (
     "crew neck", "button down", "zip up",
 )
 USE_CASES = (
-    "hiking", "running", "gym", "winter", "outdoor", "work", "wedding",
+    "hiking", "running", "walking", "gym", "winter", "outdoor", "work", "wedding",
     "party", "beach", "travel", "yoga", "workout", "everyday", "summer",
     "office", "school", "rain", "cold weather",
 )
@@ -200,23 +209,31 @@ class Constraint:
         return f"{self.attribute}:{self.value}:{self.polarity.value}"
 
 
+@lru_cache(maxsize=None)
+def _vocabulary_pattern(vocabulary: tuple[str, ...]) -> re.Pattern[str]:
+    alternatives = "|".join(
+        re.escape(phrase) for phrase in sorted(vocabulary, key=len, reverse=True)
+    )
+    return re.compile(rf"\b(?:{alternatives})\b", re.IGNORECASE)
+
+
 def _find_values(message: str, vocabulary: tuple[str, ...]) -> list[tuple[str, int]]:
-    """Every vocabulary hit with its start offset, longest match first so
-    'stainless steel' is preferred over a bare substring."""
-    found: list[tuple[str, int]] = []
-    for phrase in sorted(vocabulary, key=len, reverse=True):
-        for match in re.finditer(rf"\b{re.escape(phrase)}\b", message, re.IGNORECASE):
-            if any(
-                start <= match.start() < start + len(existing)
-                for existing, start in found
-            ):
-                continue
-            found.append((phrase, match.start()))
-    return found
+    """Every non-overlapping vocabulary hit, with longest values preferred."""
+    canonical = {phrase.casefold(): phrase for phrase in vocabulary}
+    return [
+        (canonical[match.group(0).casefold()], match.start())
+        for match in _vocabulary_pattern(vocabulary).finditer(message)
+    ]
 
 
 def _is_negated(message: str, offset: int) -> bool:
-    window = message[max(0, offset - NEGATION_WINDOW):offset]
+    prefix = message[max(0, offset - NEGATION_WINDOW):offset]
+    resets = list(NEGATION_RESET_RE.finditer(prefix))
+    window = prefix[resets[-1].end():] if resets else prefix
+    # "not only black" is additive emphasis, not rejection.  Removing the
+    # paired discourse marker before the ordinary negation test is safer than
+    # teaching the state machine a product-specific exception.
+    window = re.sub(r"\bnot\s+only\b", "", window, flags=re.IGNORECASE)
     return bool(NEGATION_RE.search(window))
 
 
@@ -497,10 +514,35 @@ class SessionState:
         )
 
     @property
+    def retrieval_messages(self) -> tuple[str, ...]:
+        """Current messages with active negative values removed from retrieval.
+
+        The raw messages remain in the replayable state ledger.  Only the
+        search surface is redacted: a bag-of-words retriever cannot understand
+        ``not leather`` and otherwise treats ``leather`` as positive evidence.
+        If the customer later reinstates leather, the negative constraint is
+        superseded and no redaction occurs.
+        """
+        excluded = sorted(
+            {
+                constraint.value
+                for constraint in self.active_constraints()
+                if constraint.polarity is Polarity.NEGATIVE
+            },
+            key=len,
+            reverse=True,
+        )
+        if not excluded:
+            return tuple(self.messages)
+        pattern = re.compile(
+            r"\b(?:" + "|".join(re.escape(value) for value in excluded) + r")\b",
+            re.IGNORECASE,
+        )
+        return tuple(pattern.sub(" ", message) for message in self.messages)
+
+    @property
     def retrieval_text(self) -> str:
-        """Message history for the current intent version. Deliberately
-        unchanged from the previous implementation, so this branch is a pure
-        structural refactor with no retrieval effect.
+        """Search-safe message history for the current intent version.
 
         Appending active constraint values here was tried and removed: every
         active constraint is extracted from a message still in `self.messages`
@@ -509,14 +551,12 @@ class SessionState:
         redundant. Measured: byte-identical results across all 200 public
         sessions. Dead code was not worth shipping.
 
-        This changes once targeted invalidation lands (EXP-006), because
-        constraints will then survive an override that clears messages. At
-        that point surviving values must be injected here, and negatives must
-        still be withheld: adding an excluded term to a bag-of-words query
-        retrieves exactly what the customer rejected. Filtering on negatives
-        belongs to retrieval, which reads `excluded_values`.
+        Active negative values are removed by :attr:`retrieval_messages`:
+        adding an excluded term to a bag-of-words query retrieves exactly what
+        the customer rejected. The original messages remain intact for the
+        audit ledger.
         """
-        return " ".join(self.messages).strip()
+        return " ".join(self.retrieval_messages).strip()
 
 
 class StateStore:

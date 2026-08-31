@@ -51,8 +51,8 @@ and rebuilds the equivalent in-memory index rather than aborting the run.
 
 The selected primary measures TechnicalScore 0.978500 on the released set,
 with HR@10 1.000, MRR 0.996667, and MTTC 2.025. Three distribution-matched
-200-target panels disjoint from released targets score 0.979075, 0.965725, and
-0.961950. An exhaustive ground-truth audit records 117 correct direct
+200-target panels disjoint from released targets score 0.979075, 0.965625, and
+0.959900 when rerun from this exact tree. An exhaustive ground-truth audit records 117 correct direct
 identifications and zero wrong ones; across 386 non-empty disclosure-bucket
 promotions, all 386 retain the target. The registered robustness matrix still
 has target-removal failures under several surface and meaning-changing edits.
@@ -69,7 +69,7 @@ development diagnostics, not private-score estimates.
 1. EXP-013 is closed: question specificity was measured across ten arms and every alternative to repeated `other` lost (docs/evidence/EXP_013.md). EXP-014 may still test later-rank cluster coverage, but only behind the selected deterministic path.
 2. Robustness work targets general normalization and retrieval invariants; more released-template phrase patches are not acceptable evidence.
 3. Any optional model must beat the no-op and lexical controls on released score, disjoint targets, perturbation slices, license, offline startup, latency, memory, disk, and clean packaging.
-4. Final release work rebuilds the optional schema-v6 asset from the exact scoring catalog and repeats both source-only and asset-bundled clean extracted-bundle commands.
+4. Final release work rebuilds the optional current-schema asset from the exact scoring catalog and repeats both source-only and asset-bundled clean extracted-bundle commands.
 
 ## Invariants
 

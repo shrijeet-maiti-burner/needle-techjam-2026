@@ -12,9 +12,9 @@ from needle.catalog import (
 )
 from needle.contracts import TurnResponse
 from needle.explain import message_for, turn_record
-from needle.questions import clarifying_options
+from needle.questions import QuestionDecision, choose_clarification
 from needle.semantic import LexicalNormalizer, NoOpSemanticReranker
-from needle.state import Polarity, StateStore
+from needle.state import Polarity, SessionState, StateStore
 
 
 LEXICAL_MODES = frozenset({"none", "normalize", "expand"})
@@ -23,7 +23,8 @@ LEXICAL_MODES = frozenset({"none", "normalize", "expand"})
 # over. Counting a facet across tens of thousands of products would cost more
 # than the question is worth; beyond this the values are still real but the
 # counts are of the sample, and are not shown.
-_FACET_SAMPLE = 400
+_FACET_SAMPLE = 200
+_EXCLUSION_SAMPLE = 500
 
 
 class Agent:
@@ -215,17 +216,57 @@ class Agent:
             "usage": {"prompt_tokens": 0, "completion_tokens": 0},
         }
 
-    def _options_for(
-        self, candidate_ids: Sequence[str], already_said: Sequence[str]
-    ) -> tuple[str, tuple[tuple[str, int], ...]]:
-        """The facet worth asking about next, from the products still in play."""
-        if not candidate_ids:
-            return "", ()
-        return clarifying_options(
+    def _question_for(
+        self,
+        candidate_ids: Sequence[str],
+        already_said: Sequence[str],
+        *,
+        turns_left: int,
+        sampled: bool,
+        excluded_values: Sequence[str],
+    ) -> QuestionDecision:
+        """The cost-adjusted facet worth asking about next, if there is one."""
+        return choose_clarification(
             candidate_ids,
             self.catalog.clarification_facets(candidate_ids),
             already_said=already_said,
+            turns_left=turns_left,
+            sampled=sampled,
+            excluded_values=excluded_values,
         )
+
+    def _respect_exclusions(
+        self,
+        parent_asins: Sequence[str],
+        state: SessionState,
+    ) -> tuple[str, ...]:
+        """Stably prefer candidates that do not contradict explicit exclusions.
+
+        This is deliberately a soft partition, not a hard filter. Catalog text
+        can be incomplete and language can be misparsed; conflicting products
+        remain available after the compatible products instead of disappearing.
+        Only a bounded prefix is inspected, so a negative preference cannot
+        turn one response into a full-catalog scan.
+        """
+        exclusions: dict[str, set[str]] = {}
+        for constraint in state.active_constraints():
+            if constraint.polarity is Polarity.NEGATIVE:
+                exclusions.setdefault(constraint.attribute, set()).add(constraint.value)
+        ordered = tuple(parent_asins)
+        if not exclusions or len(ordered) < 2:
+            return ordered
+        sample = ordered[:_EXCLUSION_SAMPLE]
+        facets = self.catalog.clarification_facets(sample)
+
+        def conflicts(parent_asin: str) -> int:
+            product = facets.get(parent_asin, {})
+            return sum(
+                product.get(attribute) in values
+                for attribute, values in exclusions.items()
+            )
+
+        compatible_first = tuple(sorted(sample, key=conflicts))
+        return (*compatible_first, *ordered[len(sample):])
 
     def _explain_turn(
         self,
@@ -241,7 +282,7 @@ class Agent:
         emitted: Sequence[str],
         withheld: bool,
         asking: bool,
-    ) -> str:
+    ) -> tuple[str, QuestionDecision]:
         """Record what this turn did and say it. Never raises.
 
         The message is not scored, so this can only ever cost a turn by throwing,
@@ -250,23 +291,33 @@ class Agent:
         used before rather than to no answer.
         """
         try:
-            # The values the *bucket* keyed on, not just the belief state's
-            # active constraints: after an override the two diverge, and naming
-            # the smaller set makes a correct count look inconsistent with the
-            # previous turn's. The longest sequence is the maximal disclosure
-            # under the most likely parse.
+            # Say back the structured beliefs first. A signature sequence is a
+            # retrieval key, not necessarily a sentence fragment a person
+            # would recognise: free text such as "something nice for a wedding"
+            # can otherwise be repeated verbatim inside an awkward generated
+            # clause. The candidate count is still described independently of
+            # these values, so this does not turn a union bucket into a false
+            # "N products match X" claim.
             wanted: list[str] = []
-            sequences = disclosed_signature_sequences(state.messages)
-            for value in max(sequences, key=len, default=()):
-                if value not in wanted:
-                    wanted.append(value)
             unwanted: list[str] = []
             for constraint in state.active_constraints():
-                if constraint.polarity is Polarity.NEGATIVE:
-                    if constraint.value not in unwanted:
-                        unwanted.append(constraint.value)
-                elif not wanted and constraint.value not in wanted:
-                    wanted.append(constraint.value)
+                destination = (
+                    unwanted
+                    if constraint.polarity is Polarity.NEGATIVE
+                    else wanted
+                )
+                if constraint.value not in destination:
+                    destination.append(constraint.value)
+
+            # The released simulator sometimes supplies exact catalog
+            # disclosures that are not members of the compact belief-state
+            # vocabulary. Preserve those as a truthful fallback when the
+            # structured parser found no positive value at all.
+            sequences = disclosed_signature_sequences(state.retrieval_messages)
+            if not wanted:
+                for value in max(sequences, key=len, default=()):
+                    if value not in wanted:
+                        wanted.append(value)
             record = turn_record(
                 turn=turn,
                 category=category,
@@ -278,18 +329,50 @@ class Agent:
                 withheld=withheld,
                 sampled=sampled,
             )
+            question = QuestionDecision(
+                candidate_count=len(candidate_ids),
+                sampled=sampled,
+                reason="the response does not ask another question",
+            )
             if asking:
-                record["options"] = self._options_for(candidate_ids, record["wanted"])
-            return message_for(record, asking=asking)
+                already_said = [
+                    *record["wanted"],
+                    *(
+                        constraint.attribute
+                        for constraint in state.active_constraints()
+                        if constraint.polarity is Polarity.POSITIVE
+                    ),
+                ]
+                excluded_values = [
+                    constraint.value
+                    for constraint in state.active_constraints()
+                    if constraint.polarity is Polarity.NEGATIVE
+                ]
+                question = self._question_for(
+                    candidate_ids,
+                    already_said,
+                    turns_left=max(0, 10 - self._safe_turn(turn)),
+                    sampled=sampled,
+                    excluded_values=excluded_values,
+                )
+                record["options"] = (question.attribute, question.options)
+            return message_for(record, asking=asking), question
         except Exception as error:  # noqa: BLE001 - a dull message beats a lost turn
             self.respond_failures.append(
                 f"session={session_id} turn={turn!r}: explain: "
                 f"{type(error).__name__}: {error}"
             )
             return (
-                "What else matters most for the item you want?"
-                if asking
-                else "These are the closest catalog matches for your current request."
+                (
+                    "What else matters most for the item you want?"
+                    if asking
+                    else "These are the closest catalog matches for your current request."
+                ),
+                QuestionDecision(
+                    candidate_count=len(candidate_ids),
+                    sampled=sampled,
+                    reason=f"question policy unavailable: {type(error).__name__}",
+                ),
             )
 
     @staticmethod
@@ -319,8 +402,8 @@ class Agent:
         state = self.state.observe(session_id, user_message, turn)
         limit = self._bounded_limit(top_k)
         if turn == 1:
-            self._opening_category_by_session[session_id] = opening_category_signature(
-                user_message
+            self._opening_category_by_session[session_id] = self.catalog.resolve_category(
+                opening_category_signature(user_message)
             )
         history_key = (session_id, state.intent_version)
         seen = self._seen_by_version.setdefault(history_key, set())
@@ -334,22 +417,29 @@ class Agent:
             retrieval_text = self.lexical.normalize(retrieval_text)
         elif self.lexical_mode == "expand":
             retrieval_text = self.lexical.expand_query(retrieval_text)
+        disclosure_order_stable = self.catalog.ordered_disclosures_stable(
+            state.retrieval_messages
+        )
+        ordered_disclosures_safe = (
+            state.intent_version == 1 and disclosure_order_stable
+        )
         promoted = (
             self.catalog.rank_disclosure_bucket(
-                state.messages,
+                state.retrieval_messages,
                 category=category_evidence,
-                allow_ordered=state.intent_version == 1,
+                allow_ordered=ordered_disclosures_safe,
                 include_empty=self.promote_opening_category and turn == 1,
                 limit=self.promotion_bucket_limit,
             )
             if self.promote_disclosure_bucket and limit
             else ()
         )
+        promoted = self._respect_exclusions(promoted, state)
         identified = (
             self.catalog.identify_from_disclosures(
-                state.messages,
+                state.retrieval_messages,
                 category=self._opening_category_by_session.get(session_id, ""),
-                allow_ordered=state.intent_version == 1,
+                allow_ordered=ordered_disclosures_safe,
             )
             if self.identify_from_disclosures and limit
             else None
@@ -377,10 +467,19 @@ class Agent:
                 sparse = self.catalog.search(
                     retrieval_text,
                     self.candidate_pool,
-                    messages=state.messages,
+                    messages=state.retrieval_messages,
                     excluded_ids=excluded,
                 )
                 ranked = self.semantic.rerank(sparse, retrieval_text)
+                ranked_by_id = {
+                    candidate.parent_asin: candidate for candidate in ranked
+                }
+                ranked = [
+                    ranked_by_id[parent_asin]
+                    for parent_asin in self._respect_exclusions(
+                        tuple(ranked_by_id), state
+                    )
+                ]
                 promoted_set = set(recommendation_ids)
                 recommendation_ids.extend(
                     candidate.parent_asin
@@ -403,8 +502,19 @@ class Agent:
             if ask_attribute
             else "These are the closest catalog matches for your current request."
         )
+        question_decision: QuestionDecision | None = None
         if self.explain:
-            message = self._explain_turn(
+            question_candidates = (
+                tuple(promoted[:_FACET_SAMPLE])
+                if promoted
+                else tuple(candidate.parent_asin for candidate in sparse[:_FACET_SAMPLE])
+            )
+            question_sampled = (
+                len(promoted) > _FACET_SAMPLE
+                if promoted
+                else len(sparse) > _FACET_SAMPLE
+            )
+            message, question_decision = self._explain_turn(
                 session_id,
                 turn=turn,
                 category=category_evidence,
@@ -413,8 +523,8 @@ class Agent:
                 # Bounded: the bucket is popularity-ordered, and counting a
                 # facet over every one of tens of thousands of products would
                 # cost more than the question is worth.
-                candidate_ids=tuple(promoted[:_FACET_SAMPLE]),
-                sampled=len(promoted) > _FACET_SAMPLE if promoted else False,
+                candidate_ids=question_candidates,
+                sampled=question_sampled,
                 identified=identified is not None,
                 emitted=recommendation_ids,
                 withheld=len(recommendation_ids) < limit,
@@ -449,6 +559,12 @@ class Agent:
                     response=response,
                     promotion_limit=self.promotion_bucket_limit,
                     include_empty=self.promote_opening_category and turn == 1,
+                    ordered_disclosures_safe=ordered_disclosures_safe,
+                    question_decision=(
+                        question_decision.as_dict()
+                        if question_decision is not None
+                        else None
+                    ),
                 )
             except Exception as error:  # noqa: BLE001 - tracing is non-operative
                 trace = {

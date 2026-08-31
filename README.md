@@ -13,7 +13,7 @@ This is a hypothesis, not a result. Architecture decisions are accepted only aft
 
 ## Current status
 
-H0 began on 29 August 2026 at 12:00 SGT. The contract-valid integration path is complete and the selected development primary plus pure-sparse rollback are encoded in `needle/presets.py`. The primary measures TechnicalScore 0.978500 on the 200 released sessions, with HR@10 1.000, MRR 0.996667, MTTC 2.025, and zero contract violations. Three 200-target, distribution-matched catalog-disjoint panels score 0.979075, 0.965725, and 0.961950. A full registered robustness run is reported with its unresolved target-removal gates rather than being converted into a blanket robustness claim. These are development measurements, not a private-score estimate or winning claim.
+H0 began on 29 August 2026 at 12:00 SGT. The contract-valid integration path is complete and the selected development primary plus pure-sparse rollback are encoded in `needle/presets.py`. The primary measures TechnicalScore 0.978500 on the 200 released sessions, with HR@10 1.000, MRR 0.996667, MTTC 2.025, and zero contract violations. Three 200-target, distribution-matched catalog-disjoint panels rerun from this exact tree score 0.979075, 0.965625, and 0.959900. A full registered robustness run is reported with its unresolved target-removal gates rather than being converted into a blanket robustness claim. These are development measurements, not a private-score estimate or winning claim.
 
 ## Quick start
 

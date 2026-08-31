@@ -241,13 +241,22 @@ class VocabularyCorrector:
     far more plausible-but-wrong neighbours, and is a separate decision that
     would need its own measurement rather than an assumed default.
 
-    Candidate blocking is a property of that scope rather than a heuristic: a
-    single edit changes at most one of a term's first and last character, so
-    every distance-one neighbour appears in some bucket keyed by (length in
-    L-1..L+1) x (first character or last character).
+    Candidate generation is exact for the ASCII-alphanumeric query grammar:
+    enumerate every one-edit string and retain only catalog vocabulary members.
+    That bounds work by token length instead of scanning a broad first/last-
+    character bucket, which matters when structured signatures contain a real
+    but rare catalog word.
     """
 
-    __slots__ = ("_vocabulary", "_document_frequency", "_buckets", "_min_length")
+    __slots__ = (
+        "_vocabulary",
+        "_document_frequency",
+        "_min_length",
+        "_correction_cache",
+        "_dominated_cache",
+    )
+
+    _ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789"
 
     def __init__(
         self,
@@ -258,20 +267,35 @@ class VocabularyCorrector:
         self._document_frequency = document_frequency
         self._vocabulary = frozenset(document_frequency)
         self._min_length = int(min_length)
-        self._buckets: dict[tuple[int, int, str], list[str]] | None = None
+        self._correction_cache: dict[str, str | None] = {}
+        self._dominated_cache: dict[tuple[str, int, int], str | None] = {}
 
-    def _index(self) -> dict[tuple[int, int, str], list[str]]:
-        """Built on first use. Clean text almost never contains an unmatched
-        term, so a session that needs no correction never pays for this."""
-        if self._buckets is None:
-            buckets: dict[tuple[int, int, str], list[str]] = {}
-            for term in self._vocabulary:
-                if len(term) < self._min_length - 1:
-                    continue
-                buckets.setdefault((len(term), 0, term[0]), []).append(term)
-                buckets.setdefault((len(term), -1, term[-1]), []).append(term)
-            self._buckets = buckets
-        return self._buckets
+    def _known_neighbors(self, term: str) -> set[str]:
+        """Every in-vocabulary insertion/deletion/substitution/transposition."""
+
+        splits = [(term[:index], term[index:]) for index in range(len(term) + 1)]
+        proposals = {
+            *(left + right[1:] for left, right in splits if right),
+            *(
+                left + right[1] + right[0] + right[2:]
+                for left, right in splits
+                if len(right) > 1
+            ),
+            *(
+                left + character + right[1:]
+                for left, right in splits
+                if right
+                for character in self._ALPHABET
+                if character != right[0]
+            ),
+            *(
+                left + character + right
+                for left, right in splits
+                for character in self._ALPHABET
+            ),
+        }
+        proposals.discard(term)
+        return proposals.intersection(self._vocabulary)
 
     def is_known(self, term: str) -> bool:
         return term in self._vocabulary
@@ -285,20 +309,66 @@ class VocabularyCorrector:
         """
         if len(term) < self._min_length or term in self._vocabulary:
             return None
-        buckets = self._index()
-        candidates: set[str] = set()
-        for length in (len(term) - 1, len(term), len(term) + 1):
-            candidates.update(buckets.get((length, 0, term[0]), ()))
-            candidates.update(buckets.get((length, -1, term[-1]), ()))
-        near = [candidate for candidate in candidates if _within_one_edit(candidate, term)]
+        if term in self._correction_cache:
+            return self._correction_cache[term]
+        near = self._known_neighbors(term)
         if not near:
+            self._correction_cache[term] = None
             return None
         if len(near) == 1:
-            return near[0]
+            result = next(iter(near))
+            self._correction_cache[term] = result
+            return result
         # Several terms are equally close. Prefer the one the corpus actually
         # uses most; ties break on the term itself so the result is stable
         # across runs and platforms.
-        return max(near, key=lambda candidate: (self._document_frequency[candidate], candidate))
+        result = max(
+            near,
+            key=lambda candidate: (self._document_frequency[candidate], candidate),
+        )
+        self._correction_cache[term] = result
+        return result
+
+    def correct_dominated(
+        self,
+        term: str,
+        *,
+        frequency_ratio: int = 100,
+        runner_up_ratio: int = 4,
+    ) -> str | None:
+        """Correct a known but overwhelmingly dominated one-edit variant.
+
+        This is intentionally unavailable to ordinary sparse queries: a known
+        token is normally real evidence. It is used only when a complete
+        structured catalog signature has already been proven absent. The best
+        neighbor must dominate both the observed token and the next plausible
+        neighbor, so common near-spellings cannot rewrite each other.
+        """
+        if len(term) < self._min_length or term not in self._vocabulary:
+            return None
+        cache_key = (term, int(frequency_ratio), int(runner_up_ratio))
+        if cache_key in self._dominated_cache:
+            return self._dominated_cache[cache_key]
+        near = sorted(
+            self._known_neighbors(term),
+            key=lambda candidate: (-self._document_frequency[candidate], candidate),
+        )
+        if not near:
+            self._dominated_cache[cache_key] = None
+            return None
+        best = near[0]
+        best_frequency = self._document_frequency[best]
+        if best_frequency < frequency_ratio * max(1, self._document_frequency[term]):
+            self._dominated_cache[cache_key] = None
+            return None
+        if (
+            len(near) > 1
+            and best_frequency < runner_up_ratio * self._document_frequency[near[1]]
+        ):
+            self._dominated_cache[cache_key] = None
+            return None
+        self._dominated_cache[cache_key] = best
+        return best
 
 
 # The override trigger is a fixed phrase list, so any surface change inside it

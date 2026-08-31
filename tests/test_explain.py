@@ -50,8 +50,16 @@ class ClaimTest(unittest.TestCase):
 
     def test_nothing_disclosed_makes_no_claim_about_matches(self) -> None:
         message = message_for(record(candidates=None), asking=True)
-        self.assertIn("Starting from", message)
+        self.assertIn("starting with", message.lower())
         self.assertNotIn("candidates", message)
+
+    def test_generic_category_never_reads_as_in_items(self) -> None:
+        message = message_for(
+            record(category="items", wanted=["wedding"], candidates=23),
+            asking=True,
+        )
+        self.assertNotIn("in items", message.lower())
+        self.assertIn("narrowing with wedding", message.lower())
 
     def test_negated_values_are_reported_as_ruled_out(self) -> None:
         message = message_for(
@@ -72,6 +80,22 @@ class ClaimTest(unittest.TestCase):
                 message = message_for(broken, asking=True)
                 self.assertIsInstance(message, str)
                 self.assertTrue(message)
+
+    def test_category_evidence_is_not_repeated_as_a_wanted_value(self) -> None:
+        phrase = "something nice for a wedding"
+        message = message_for(
+            record(category=phrase, wanted=[phrase]),
+            asking=True,
+        )
+        self.assertEqual(message.lower().count(phrase), 1)
+
+    def test_specific_catalog_question_replaces_the_vague_prompt(self) -> None:
+        current = record(wanted=[])
+        current["options"] = ("color", (("black", 2), ("blue", 1)))
+        message = message_for(current, asking=True)
+        self.assertIn("Which color?", message)
+        self.assertIn("black (2)", message)
+        self.assertNotIn("one thing that matters most", message)
 
 
 @unittest.skipUnless(CATALOG.is_file(), "official catalog is not bootstrapped")
@@ -129,7 +153,7 @@ class IntegrationTest(unittest.TestCase):
             second = agent.respond("s", self.REPLY, 2, 10)["message"]
             self.assertNotEqual(first, second)
             # Turn one has nothing disclosed; turn two has two values and a count.
-            self.assertIn("Starting from", first)
+            self.assertIn("starting with", first.lower())
             self.assertIn("candidates", second)
 
 

@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from needle.catalog import CatalogIndex, canonical_signature
 from needle.contracts import Candidate, TurnResponse
-from needle.state import Polarity, SessionState, extract_constraints
+from needle.questions import clarification_board
+from needle.state import Polarity, SessionState
 
 
 TRACE_VERSION = "needle-lens-v1"
@@ -51,64 +51,44 @@ def _constraint_record(constraint: object) -> dict[str, object]:
 
 
 def _question_board(
-    evidence: dict[str, dict[str, object]],
+    candidate_ids: Sequence[str],
+    facets: dict[str, dict[str, str]],
     *,
     population_size: int,
+    already_said: Sequence[str],
+    turns_left: int,
+    excluded_values: Sequence[str],
 ) -> list[dict[str, object]]:
-    """Estimate presupposition-safe partition value over a bounded sample.
+    """Serialize the same bounded value-of-information board the agent uses.
 
     Unknown is an explicit answer group.  This avoids the classic information-
     gain error of pretending every product, or customer, can answer a proposed
-    attribute question.  The board is a human-shopping shadow; the official
-    evaluator policy remains `other` because that protocol can return any two
-    constraints and the registered experiment shows it dominates.
+    attribute question. The official evaluator channel remains ``other``
+    because that protocol can return any two constraints; these rows govern
+    only the natural-language question shown to a person.
     """
-
-    if not evidence:
-        return []
-    extracted_by_id: dict[str, dict[str, set[str]]] = {}
-    for parent_asin, product in evidence.items():
-        text = " ".join(
-            str(product.get(field) or "")
-            for field in ("title", "categories", "features", "details", "description")
-        )
-        attributes: defaultdict[str, set[str]] = defaultdict(set)
-        for attribute, value, polarity in extract_constraints(text):
-            if polarity is Polarity.POSITIVE:
-                attributes[attribute].add(value)
-        extracted_by_id[parent_asin] = dict(attributes)
-
-    count = len(extracted_by_id)
-    board: list[dict[str, object]] = []
-    for attribute in QUESTION_ATTRIBUTES:
-        groups: Counter[tuple[str, ...]] = Counter()
-        known = 0
-        for attributes in extracted_by_id.values():
-            values = tuple(sorted(attributes.get(attribute, ())))
-            if values:
-                known += 1
-                groups[values] += 1
-            else:
-                groups[("unknown",)] += 1
-        expected_remaining = sum(size * size for size in groups.values()) / count
-        expected_reduction = 1.0 - expected_remaining / count
-        coverage = known / count
-        board.append({
-            "attribute": attribute,
-            "catalog_coverage": round(coverage, 6),
-            "distinct_answer_groups": len(groups) - int(("unknown",) in groups),
-            "unknown_count": groups[("unknown",)],
-            "expected_candidate_reduction": round(expected_reduction, 6),
-            "shadow_value": round(coverage * expected_reduction, 6),
+    sampled = len(candidate_ids) < population_size
+    rows: list[dict[str, object]] = []
+    for decision in clarification_board(
+        candidate_ids,
+        facets,
+        already_said=already_said,
+        turns_left=turns_left,
+        sampled=sampled,
+        excluded_values=excluded_values,
+    ):
+        row = decision.as_dict()
+        row.update({
+            "shadow_value": round(
+                decision.catalog_coverage * decision.expected_candidate_reduction,
+                6,
+            ),
             "presupposition_safe": True,
-            "sample_count": count,
+            "sample_count": len(candidate_ids),
             "population_count": population_size,
-            "sampled": count < population_size,
         })
-    return sorted(
-        board,
-        key=lambda item: (-float(item["shadow_value"]), str(item["attribute"])),
-    )
+        rows.append(row)
+    return rows
 
 
 def _candidate_evidence(
@@ -168,13 +148,21 @@ def build_turn_trace(
     response: TurnResponse,
     promotion_limit: int,
     include_empty: bool,
+    ordered_disclosures_safe: bool | None = None,
+    question_decision: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Build one target-blind certificate from the actual response path."""
 
+    ordered_safe = (
+        state.intent_version == 1
+        and catalog.ordered_disclosures_stable(state.retrieval_messages)
+        if ordered_disclosures_safe is None
+        else bool(ordered_disclosures_safe)
+    )
     diagnostics = catalog.disclosure_diagnostics(
-        state.messages,
+        state.retrieval_messages,
         category=category,
-        allow_ordered=state.intent_version == 1,
+        allow_ordered=ordered_safe,
         include_empty=include_empty,
         limit=promotion_limit,
     )
@@ -192,6 +180,26 @@ def build_turn_trace(
     population_count = len(population_ids)
     active = state.active_constraints()
     active_attributes = {constraint.attribute for constraint in active}
+    question_facets = catalog.clarification_facets(sampled_ids)
+    already_said = tuple(
+        value
+        for constraint in active
+        if constraint.polarity is Polarity.POSITIVE
+        for value in (constraint.attribute, constraint.value)
+    )
+    excluded_values = tuple(
+        constraint.value
+        for constraint in active
+        if constraint.polarity is Polarity.NEGATIVE
+    )
+    question_board = _question_board(
+        sampled_ids,
+        question_facets,
+        population_size=population_count,
+        already_said=already_said,
+        turns_left=max(0, 10 - int(turn)),
+        excluded_values=excluded_values,
+    )
     union_count = int(diagnostics["union_count"])
     residual_count = union_count or len(sparse_ids)
     ambiguity_status = (
@@ -216,6 +224,7 @@ def build_turn_trace(
             ],
         },
         "interpretation_lattice": diagnostics,
+        "ordered_disclosures_safe": ordered_safe,
         "candidate_funnel": [
             {"stage": "frozen_catalog", "count": catalog.product_count},
             {"stage": "opening_category", "count": int(category_diagnostics["union_count"])},
@@ -253,11 +262,14 @@ def build_turn_trace(
                 "the official simulator's open channel can return any two remaining constraints; "
                 "registered exp-013 found every named-attribute arm worse"
             ),
-            "human_shadow_only": True,
-            "human_shadow_board": _question_board(
-                {parent_asin: evidence[parent_asin] for parent_asin in sampled_ids if parent_asin in evidence},
-                population_size=population_count,
+            "human_message_causal": bool(
+                question_decision and question_decision.get("asks")
             ),
+            "human_message_decision": dict(question_decision or {}),
+            "human_shadow_only": not bool(
+                question_decision and question_decision.get("asks")
+            ),
+            "human_shadow_board": question_board,
         },
         "response": {
             "message": response["message"],
