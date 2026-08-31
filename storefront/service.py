@@ -730,21 +730,38 @@ class StorefrontService:
             for group in getattr(item, "negative_groups", lambda: ())()
             for value in group.values
         ]
+        asked: list[str] = getattr(item, "asked_facets", [])
+
+        def remember(payload: dict[str, object]) -> dict[str, object]:
+            """A facet already put to this customer is not a better question the
+            second time. Without this the wedding journey asks "which wearer"
+            five turns running, because the slate shrinks under every answer and
+            the same facet keeps winning on the new numbers."""
+            attribute = str(payload.get("attribute") or "")
+            if payload.get("asks") and attribute and attribute not in asked:
+                asked.append(attribute)
+            return payload
+
         board = clarification_board(
             candidate_ids,
             facets,
             already_said=said,
+            already_asked=asked,
             turns_left=max(0, SCORED_TURN_BUDGET - turn_number),
             excluded_values=excluded,
         )
         selected: QuestionDecision | None = None
-        audience_question = self._audience_question(item, candidate_ids, turn_number)
+        audience_question = (
+            None
+            if "wearer" in asked
+            else self._audience_question(item, candidate_ids, turn_number)
+        )
         anchor_facets: Mapping[str, str] = {}
         if anchor_id:
             anchor_facets = product_clarification_facets(self.view.raw(anchor_id) or {})
 
         if audience_question is not None:
-            payload = audience_question
+            payload = remember(audience_question)
             return self._render_question(payload, language=language), payload
 
         if board:
@@ -783,7 +800,7 @@ class StorefrontService:
             payload = selected.as_dict()
             payload["source"] = "released-candidate clarification board"
             payload["relationship_aware"] = bool(anchor_id)
-            return self._render_question(payload, language=language), payload
+            return self._render_question(remember(payload), language=language), payload
 
         if anchor_id:
             payload = {

@@ -77,6 +77,10 @@ class LineItem:
     last_ids: list[str] = field(default_factory=list)
     messages: list[str] = field(default_factory=list)
     audience: str | None = None
+    # Facets this item has already put to the customer. The candidate set
+    # shrinks every turn, so without this the same facet keeps winning on fresh
+    # numbers and the interface asks it again while they answer.
+    asked_facets: list[str] = field(default_factory=list)
 
     def positive_groups(self) -> tuple[ConstraintGroup, ...]:
         return tuple(
@@ -104,6 +108,7 @@ class LineItem:
             "selected_id": self.selected_id,
             "last_ids": list(self.last_ids),
             "audience": self.audience,
+            "asked_facets": list(self.asked_facets),
         }
 
 
@@ -301,6 +306,16 @@ class DeterministicJourneyPlanner:
                 related_item_id=related.item_id if related is not None else None,
                 audience=stated_audience or (related.audience if related is not None else None),
             )
+            # The placeholder item is not a separate thing the customer is
+            # shopping for, it is this conversation before they named it. So
+            # the named item inherits what has already been put to them, or
+            # they are asked the same question twice in consecutive turns.
+            if (
+                related is not None
+                and related.category == "item"
+                and not related.constraints
+            ):
+                item.asked_facets = list(related.asked_facets)
             plan.items.append(item)
             plan.active_item_id = item.item_id
             previous = item
