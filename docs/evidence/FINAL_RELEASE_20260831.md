@@ -43,21 +43,21 @@ so they test target disjointness rather than estimating private performance.
 
 ## Tests and clean bundle
 
-- `python -m unittest discover -s tests -v`: 435 ran, 432 passed and three
+- `python -m unittest discover -s tests -v`: 463 ran, 460 passed and three
   skipped because the generated bundled index is intentionally absent from the
   tracked tree;
 - the release builder copied only tracked shipping paths, injected the
-  catalog-bound schema-8 index, and reproduced the official metrics above from
+  catalog- and parser-bound schema-9 index, and reproduced the official metrics above from
   an empty staging tree;
 - `python scripts/bundle_rehearsal.py`: ten turns completed with non-empty,
   in-catalog slates and no recorded degradation;
-- the resulting archive contained 24 entries and no `.artifacts/`, `data/`, or
+- the resulting archive contained 27 entries and no `.artifacts/`, `data/`, or
   `evaluator/` path.
 
 The verified submission archive is
-`.artifacts/releases/needle-submission-freeze-20260831.zip`: 24,881,689 bytes, 22 tracked
-source files plus the generated manifest and schema-8 asset, SHA-256
-`70a24e3ccaf2f076ecacf655fc64d4920c4205c03996fe0a8b6526f26b8d9585`.
+`.artifacts/releases/needle-submission-final-schema9.zip`: 24,890,213 bytes, 25 tracked
+source files plus the generated manifest and schema-9 asset, SHA-256
+`3d8e4e935a332420e40b52cdfcd3e6b3e2b07ac260656213358a68bcd4fd8268`.
 The builder extracted it into an empty staging tree and reproduced
 TechnicalScore 0.978500 through `starter.agent:Agent` before writing the zip.
 
@@ -125,6 +125,13 @@ identical, all three catalog-disjoint panels remained 0.979075, 0.965625, and
 0.959900, and the full robustness matrix retained the same five gate names.
 Meaning-changing negation MTTC improved from 2.595 to 2.590; every other
 comparison metric was identical.
+
+The fully integrated rerun at `5a278dd` reproduced all three catalog-disjoint
+panels at 0.979075, 0.965625 and 0.959900 with zero contract violations. Its
+full 16-slice robustness `summary`, `comparison` and `gate_failures` were
+byte-identical to the earlier freeze report, including the five disclosed
+residual gates above. The official released-set rerun was also identical at
+TechnicalScore 0.978500 with zero violations.
 
 ## Release decision
 
