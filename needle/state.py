@@ -209,7 +209,7 @@ NEGATION_RESET_RE = re.compile(
 # wool") available to the ordinary negation rule.
 NON_EXCLUDING_NEGATION_RE = re.compile(
     r"\bnot\s+(?:only|sure|certain|opposed\s+to|against)\b"
-    r"|\b(?:do|does|did|would|could|should)\s+not\s+"
+    r"|\b(?:do|does|did|would|could|should)(?:\s+not|n[’']?t)\s+"
     r"(?:mind|dislike|hate|object\s+to)\b",
     re.IGNORECASE,
 )
