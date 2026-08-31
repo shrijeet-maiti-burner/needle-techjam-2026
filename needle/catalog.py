@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import math
 import re
 import sqlite3
 from collections.abc import Iterable, Sequence
+from functools import lru_cache
 from pathlib import Path
 
 from needle.contracts import Candidate
@@ -60,7 +62,14 @@ DEFAULT_FIELD_WEIGHTS = (6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
 RETRIEVAL_MODES = frozenset({"sparse", "signature_first"})
 QUERY_MODES = frozenset({"any", "all"})
 CORRECTION_SCOPES = frozenset({"all", "structured"})
-SIGNATURE_INDEX_SCHEMA_VERSION = "6"
+SIGNATURE_INDEX_SCHEMA_VERSION = "8"
+
+
+@lru_cache(maxsize=65_536)
+def _category_token_similarity(left: str, right: str) -> float:
+    """Bounded memo for the category resolver's symmetric token score."""
+
+    return difflib.SequenceMatcher(None, left, right).ratio()
 
 # Discourse markers and request-frame verbs. `query_terms` drops these from the
 # query, and the same tokenizer runs over the corpus, so this removes a matchable
@@ -235,6 +244,17 @@ def _marker_value(match: re.Match[str]) -> str:
     return re.split(r"[!?]|\.(?=\s|,|$)", match.group(1), maxsplit=1)[0]
 
 
+def _explicit_marker_value(match: re.Match[str]) -> str:
+    """The first bounded marker span with trailing discourse removed."""
+
+    return re.sub(
+        r"\s+now\s*[.!?]*\s*$",
+        "",
+        _marker_value(match).split(";", 1)[0],
+        flags=re.IGNORECASE,
+    )
+
+
 def extract_query_signatures(messages: Iterable[str]) -> tuple[str, ...]:
     """Extract catalog-grounded fragments from released-style dialogue.
 
@@ -252,24 +272,25 @@ def extract_query_signatures(messages: Iterable[str]) -> tuple[str, ...]:
             # but catalog features can contain them too. Only the first span
             # is structurally unambiguous. Later spans remain available to
             # sparse retrieval instead of becoming unsafe exact evidence.
-            explicit_value = re.sub(
-                r"\s+now\s*[.!?]*\s*$",
-                "",
-                _marker_value(marker).split(";", 1)[0],
-                flags=re.IGNORECASE,
-            )
+            explicit_value = _explicit_marker_value(marker)
             signature = canonical_signature(explicit_value)
             if signature:
                 signatures.append(signature)
 
-        material = MATERIAL_RE.search(message)
-        if material:
+        # Attribute mentions are indexed symmetrically on the product side.
+        # Taking only the first mention is not safe after a customer reorders a
+        # composition such as "75% polyester, 20% rayon": whichever material
+        # moves first would otherwise become a false hard intersection.
+        for material in MATERIAL_RE.finditer(message):
             signatures.append(canonical_signature(material.group(1)))
-        color = COLOR_RE.search(message)
-        if color:
+        for color in COLOR_RE.finditer(message):
             signatures.append(canonical_signature(f"color: {color.group(1)}"))
         for clause in re.split(r"[;,]", message):
-            if SIGNATURE_MARKER_RE.search(clause):
+            local_marker = _signature_marker(clause)
+            if local_marker is not None:
+                local_value = canonical_signature(_explicit_marker_value(local_marker))
+                if local_value:
+                    signatures.append(local_value)
                 continue
             signature = canonical_signature(clause)
             if 2 <= len(signature.split()) <= 20:
@@ -283,12 +304,9 @@ def product_signatures(product: dict[str, object]) -> tuple[str, ...]:
         *_flatten_values(product.get("features")),
         *_flatten_values(product.get("details")),
     ]
-    material = MATERIAL_RE.search(searchable)
-    if material:
-        values.insert(0, material.group(1).lower())
-    color = COLOR_RE.search(searchable)
-    if color:
-        values.insert(1, f"color: {color.group(1).lower()}")
+    materials = [match.group(1).lower() for match in MATERIAL_RE.finditer(searchable)]
+    colors = [f"color: {match.group(1).lower()}" for match in COLOR_RE.finditer(searchable)]
+    values[:0] = [*materials, *colors]
     if product.get("price") not in (None, ""):
         values.append(f"budget around ${product['price']}")
     return tuple(
@@ -298,6 +316,21 @@ def product_signatures(product: dict[str, object]) -> tuple[str, ...]:
             for signature in constraint_signature_fragments(value)
         )
     )
+
+
+def product_clarification_facets(product: dict[str, object]) -> dict[str, str]:
+    """Catalog-grounded values the conversation state can consume verbatim."""
+
+    # Lazy import keeps the retrieval module's ordinary startup surface small
+    # and avoids making state construction a prerequisite for sparse search.
+    from needle.state import Polarity, extract_constraints
+
+    blob = " ".join(_text(product.get(field)) for field in SEARCH_FIELDS)
+    values: dict[str, str] = {}
+    for attribute, value, polarity in extract_constraints(blob):
+        if polarity is Polarity.POSITIVE and attribute not in values:
+            values[attribute] = value
+    return values
 
 
 def card_signature_sequence(product: dict[str, object]) -> tuple[str, ...]:
@@ -510,8 +543,13 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
             "parent_asin TEXT NOT NULL, "
             "PRIMARY KEY(key, rating_number DESC, parent_asin)) WITHOUT ROWID"
         )
+        connection.execute(
+            "CREATE TABLE clarification_facets("
+            "parent_asin TEXT PRIMARY KEY, payload TEXT NOT NULL) WITHOUT ROWID"
+        )
         batch: list[tuple[str, str]] = []
         card_bucket_batch: list[tuple[bytes, int, str]] = []
+        facet_batch: list[tuple[str, str]] = []
         with catalog.open(encoding="utf-8") as handle:
             for line_number, line in enumerate(handle, start=1):
                 if not line.strip():
@@ -529,6 +567,16 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
                 rating_number = max(0, int(product.get("rating_number") or 0))
                 for key in _card_keys(product):
                     card_bucket_batch.append((key, rating_number, parent_asin))
+                facet_batch.append(
+                    (
+                        parent_asin,
+                        json.dumps(
+                            product_clarification_facets(product),
+                            sort_keys=True,
+                            separators=(",", ":"),
+                        ),
+                    )
+                )
                 if len(batch) >= 5_000:
                     connection.executemany("INSERT INTO signatures VALUES (?, ?)", batch)
                     signature_count += len(batch)
@@ -539,6 +587,12 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
                         card_bucket_batch,
                     )
                     card_bucket_batch.clear()
+                if len(facet_batch) >= 5_000:
+                    connection.executemany(
+                        "INSERT INTO clarification_facets VALUES (?, ?)",
+                        facet_batch,
+                    )
+                    facet_batch.clear()
         if batch:
             connection.executemany("INSERT INTO signatures VALUES (?, ?)", batch)
             signature_count += len(batch)
@@ -546,6 +600,11 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
             connection.executemany(
                 "INSERT INTO card_buckets VALUES (?, ?, ?)",
                 card_bucket_batch,
+            )
+        if facet_batch:
+            connection.executemany(
+                "INSERT INTO clarification_facets VALUES (?, ?)",
+                facet_batch,
             )
         card_key_count = int(
             connection.execute("SELECT COUNT(DISTINCT key) FROM card_buckets").fetchone()[0]
@@ -641,6 +700,9 @@ class CatalogIndex:
         self.product_count = 0
         self._rating_numbers: dict[str, int] = {}
         self._category_terms: dict[str, frozenset[str]] = {}
+        self._known_categories: dict[str, frozenset[str]] = {}
+        self._resolved_category_cache: dict[str, str] = {}
+        self._clarification_facets_cache: dict[str, dict[str, str]] = {}
         self._max_log_rating = 1.0
         self.signature_index_fallback: str | None = None
         self._build()
@@ -663,6 +725,9 @@ class CatalogIndex:
                 self.product_count = 0
                 self._rating_numbers.clear()
                 self._category_terms.clear()
+                self._known_categories.clear()
+                self._resolved_category_cache.clear()
+                self._clarification_facets_cache.clear()
                 self._max_log_rating = 1.0
                 self._build()
 
@@ -688,8 +753,8 @@ class CatalogIndex:
     def clarification_facets(
         self,
         parent_asins: Sequence[str],
-    ) -> dict[str, tuple[str, str]]:
-        """Return catalog-stated material and colour for a bounded product set.
+    ) -> dict[str, dict[str, str]]:
+        """Return catalog-stated clarification facets for a bounded product set.
 
         The searchable catalog already contains every field needed by the
         clarification policy. Querying only the candidates avoids reparsing the
@@ -697,23 +762,57 @@ class CatalogIndex:
         absent and are counted as unknown by the policy.
         """
         identifiers = tuple(dict.fromkeys(str(value) for value in parent_asins if value))
-        facets: dict[str, tuple[str, str]] = {}
-        for offset in range(0, len(identifiers), 400):
-            batch = identifiers[offset:offset + 400]
+        facets = {
+            parent_asin: dict(self._clarification_facets_cache[parent_asin])
+            for parent_asin in identifiers
+            if parent_asin in self._clarification_facets_cache
+        }
+        missing = tuple(
+            parent_asin
+            for parent_asin in identifiers
+            if parent_asin not in self._clarification_facets_cache
+        )
+        if self._external_signature_connection is not None:
+            for offset in range(0, len(missing), 400):
+                batch = missing[offset:offset + 400]
+                placeholders = ", ".join("?" for _ in batch)
+                rows = self._external_signature_connection.execute(
+                    "SELECT parent_asin, payload FROM clarification_facets "
+                    f"WHERE parent_asin IN ({placeholders})",
+                    batch,
+                ).fetchall()
+                for parent_asin, payload in rows:
+                    key = str(parent_asin)
+                    values = {
+                        str(attribute): str(value)
+                        for attribute, value in json.loads(payload).items()
+                    }
+                    self._clarification_facets_cache[key] = values
+                    facets[key] = dict(values)
+            return facets
+
+        # The fallback path has no bundled facet table. Parse only the bounded
+        # products requested by the question policy, using the same extractor
+        # that consumes a customer's eventual answer.
+        from needle.state import Polarity, extract_constraints
+
+        for offset in range(0, len(missing), 400):
+            batch = missing[offset:offset + 400]
             placeholders = ", ".join("?" for _ in batch)
             rows = self.connection.execute(
-                "SELECT parent_asin, title, features, details FROM products "
-                f"WHERE parent_asin IN ({placeholders})",
+                "SELECT parent_asin, title, categories, features, details, description "
+                f"FROM products WHERE parent_asin IN ({placeholders})",
                 batch,
             ).fetchall()
-            for parent_asin, title, features, details in rows:
-                blob = " ".join(str(value or "") for value in (title, features, details))
-                material = MATERIAL_RE.search(blob)
-                colour = COLOR_RE.search(blob)
-                facets[str(parent_asin)] = (
-                    material.group(1).lower() if material else "",
-                    colour.group(1).lower() if colour else "",
-                )
+            for parent_asin, *fields in rows:
+                blob = " ".join(str(value or "") for value in fields)
+                values: dict[str, str] = {}
+                for attribute, value, polarity in extract_constraints(blob):
+                    if polarity is Polarity.POSITIVE and attribute not in values:
+                        values[attribute] = value
+                key = str(parent_asin)
+                self._clarification_facets_cache[key] = values
+                facets[key] = dict(values)
         return facets
 
     def __enter__(self) -> "CatalogIndex":
@@ -764,6 +863,12 @@ class CatalogIndex:
                         limit=30,
                     )
                 )
+                coarse_category = coarse_category_signature(product.get("categories"))
+                if coarse_category:
+                    self._known_categories.setdefault(
+                        coarse_category,
+                        frozenset(coarse_category.split()),
+                    )
                 batch.append(
                     (
                         parent_asin,
@@ -927,6 +1032,145 @@ class CatalogIndex:
         rows = self._signature_rows(matched, fetch_limit)
         return tuple(matched), frozenset(str(row[0]) for row in rows)
 
+    def ordered_disclosures_stable(self, messages: Iterable[str]) -> bool:
+        """Whether marker order is safe to treat as catalog-card order.
+
+        The official clean surface emits each disclosed value after its marker.
+        A human or a meaning-preserving rewrite may move a real catalog
+        fragment before that marker. In that case the values remain useful as
+        an unordered exact intersection, but their textual order is no longer
+        evidence for a unique card prefix.
+
+        Only fragments that exist in the catalog signature index trip the
+        guard. Politeness wrappers such as ``for that`` or ``could you show``
+        therefore cannot disable an otherwise clean prefix.
+        """
+        for index, raw_message in enumerate(messages):
+            if index == 0:
+                # The opening category necessarily precedes the first hard
+                # constraint and is keyed separately; it is not a reordered
+                # card value.
+                continue
+            message = _structural_text(raw_message)
+            marker = _signature_marker(message)
+            if marker is None:
+                continue
+            prefix = message[:marker.start()]
+            for fragment in re.split(r"[;,!?]|\.(?=\s|,|$)", prefix):
+                signature = canonical_signature(fragment)
+                if signature and self._signature_count(signature) > 0:
+                    return False
+        return True
+
+    def _disclosure_sequences(
+        self,
+        messages: Iterable[str],
+    ) -> tuple[tuple[str, ...], ...]:
+        """Plausible card sequences with bounded unknown-token correction.
+
+        Correction is enabled only by the existing structured correction
+        preset. Known catalog terms are never rewritten; an unknown term may
+        move by at most one edit to the FTS vocabulary, using the same
+        deterministic corrector as sparse retrieval.
+        """
+        sequences = disclosed_signature_sequences(messages)
+        if not self.correct_unmatched_terms or self.correction_scope != "structured":
+            return sequences
+        corrector = self._vocabulary_corrector()
+        if corrector is None:
+            return sequences
+        corrected_sequences: list[tuple[str, ...]] = []
+        for sequence in sequences:
+            corrected: list[str] = []
+            for signature in sequence:
+                terms: list[str] = []
+                signature_is_absent = self._signature_count(signature) == 0
+                for term in signature.split():
+                    if corrector.is_known(term):
+                        replacement = (
+                            corrector.correct_dominated(term)
+                            if signature_is_absent
+                            else None
+                        )
+                        if replacement is not None:
+                            self.recovered_terms.append((term, replacement))
+                        terms.append(replacement or term)
+                        continue
+                    replacement = corrector.correct(term)
+                    self.recovered_terms.append((term, replacement))
+                    terms.append(replacement if replacement is not None else term)
+                corrected.append(" ".join(terms))
+            candidate = tuple(corrected)
+            if candidate not in corrected_sequences:
+                corrected_sequences.append(candidate)
+        return tuple(corrected_sequences)
+
+    def resolve_category(self, stated: str) -> str:
+        """Resolve a surface-corrupted category to one catalog category or none.
+
+        Coarse categories are a small closed vocabulary derived from the
+        catalog itself. Exact keys pass through. A fuzzy recovery requires a
+        high token-aligned score, one unique best category, and a margin over
+        the runner-up; otherwise the method declines instead of guessing.
+        """
+        normalized = canonical_signature(normalize_category_text(stated))
+        if not normalized:
+            return ""
+        cached = self._resolved_category_cache.get(normalized)
+        if cached is not None:
+            return cached
+        if normalized in self._known_categories:
+            self._resolved_category_cache[normalized] = normalized
+            return normalized
+        stated_tokens = tuple(normalized.split())
+        # The original implementation recomputed the same token-pair ratio for
+        # every category containing that token. The released catalog has more
+        # than a thousand category paths but a much smaller shared token
+        # vocabulary, so one local matrix preserves the exact scoring formula
+        # while removing tens of thousands of duplicate SequenceMatcher runs on
+        # an open-ended human request.
+        known_token_vocabulary = {
+            token
+            for tokens in self._known_categories.values()
+            for token in tokens
+        }
+        token_similarity = {
+            (stated_token, known_token): _category_token_similarity(
+                stated_token, known_token
+            )
+            for stated_token in set(stated_tokens)
+            for known_token in known_token_vocabulary
+        }
+        ranked: list[tuple[float, str]] = []
+        for known, known_tokens in self._known_categories.items():
+            if not known_tokens:
+                continue
+            token_scores = [
+                max(
+                    token_similarity[(token, candidate)]
+                    for candidate in known_tokens
+                )
+                for token in stated_tokens
+            ]
+            reverse_scores = [
+                max(
+                    token_similarity[(token, candidate)]
+                    for token in stated_tokens
+                )
+                for candidate in known_tokens
+            ]
+            score = (
+                sum(token_scores) + sum(reverse_scores)
+            ) / (len(token_scores) + len(reverse_scores))
+            ranked.append((score, known))
+        ranked.sort(key=lambda item: (-item[0], item[1]))
+        resolved = ""
+        if ranked and ranked[0][0] >= 0.78:
+            if len(ranked) == 1 or ranked[0][0] - ranked[1][0] >= 0.08:
+                resolved = ranked[0][1]
+        self._resolved_category_cache[normalized] = resolved
+        return resolved
+
     def _unique_card_lookup(
         self,
         disclosed: tuple[str, ...],
@@ -988,7 +1232,7 @@ class CatalogIndex:
 
         if self.retrieval_mode != "signature_first" or not 1 <= limit <= 50_000:
             return ()
-        sequences = disclosed_signature_sequences(messages)
+        sequences = self._disclosure_sequences(messages)
         if not sequences and include_empty:
             sequences = ((),)
         candidates: set[str] = set()
@@ -1054,7 +1298,7 @@ class CatalogIndex:
                 "declined": True,
                 "decline_reason": "signature retrieval disabled or limit invalid",
             }
-        sequences = disclosed_signature_sequences(messages)
+        sequences = self._disclosure_sequences(messages)
         if not sequences and include_empty:
             sequences = ((),)
         parsed: list[dict[str, object]] = []
@@ -1159,7 +1403,7 @@ class CatalogIndex:
         if self.retrieval_mode != "signature_first":
             return None
         answers: set[str] = set()
-        for disclosed in disclosed_signature_sequences(messages):
+        for disclosed in self._disclosure_sequences(messages):
             lookups: list[str | None] = []
             if allow_ordered:
                 lookups.append(

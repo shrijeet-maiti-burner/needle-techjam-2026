@@ -112,7 +112,13 @@ def message_for(record: dict, *, asking: bool) -> str:
 
 def _message_for(record: dict, *, asking: bool) -> str:
     category = record.get("category") or "items"
+    generic_category = " ".join(str(category).lower().split()) == "items"
     wanted = list(record.get("wanted") or ())
+    category_key = " ".join(str(category).lower().split())
+    wanted = [
+        value for value in wanted
+        if " ".join(str(value).lower().split()) != category_key
+    ]
     unwanted = list(record.get("unwanted") or ())
     candidates = record.get("candidates")
     facet, options = record.get("options") or ("", ())
@@ -127,7 +133,10 @@ def _message_for(record: dict, *, asking: bool) -> str:
             offered = ", ".join(value for value, _ in options)
         else:
             offered = ", ".join(f"{value} ({count})" for value, count in options)
-        tail = f" Which {facet}? {offered} -- or say anything else that matters."
+        tail = (
+            f" Which {facet}? {offered}."
+            " You can also tell me anything else you prefer."
+        )
     else:
         tail = " What else matters?" if asking else ""
 
@@ -137,14 +146,22 @@ def _message_for(record: dict, *, asking: bool) -> str:
         ruled_out = ""
 
     if record.get("identified") or (candidates == 1 and wanted):
+        scope = "in the catalog" if generic_category else f"among {category}"
         return (
-            f"One candidate left in {category} on {_join(wanted)}, so that is what "
-            f"I am showing.{ruled_out}"
+            f"One candidate remains {scope} using {_join(wanted)}, so that is "
+            f"what I am showing.{ruled_out}"
         ).strip()
 
     if not wanted:
+        opening = (
+            "I need one more detail to narrow the catalog"
+            if generic_category
+            else f"I am starting with {category}"
+        )
+        if asking and facet and options:
+            return f"{opening}.{ruled_out}{tail}".strip()
         return (
-            f"Starting from {category}. Tell me the one thing that matters most "
+            f"{opening}. Tell me the one thing that matters most "
             f"and I will narrow it down.{ruled_out}"
         ).strip()
 
@@ -155,14 +172,14 @@ def _message_for(record: dict, *, asking: bool) -> str:
         # "N items match X" would be looser than the state supports, because the
         # bucket unions several plausible parses of the same clause and is not
         # keyed on X alone.
+        scope = "in the catalog" if generic_category else f"among {category}"
         return (
-            f"Down to {candidates} candidates in {category}, going on "
+            f"I have {candidates} candidates {scope} and am narrowing with "
             f"{_join(wanted)}. Showing {shown}.{ruled_out}{tail}"
         ).strip()
 
-    return (
-        f"Going on {_join(wanted)} in {category}.{ruled_out}{tail}"
-    ).strip()
+    scope = "the catalog" if generic_category else category
+    return f"I am narrowing {scope} using {_join(wanted)}.{ruled_out}{tail}".strip()
 
 
 __all__ = ["turn_record", "message_for"]

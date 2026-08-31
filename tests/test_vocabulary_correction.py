@@ -70,6 +70,18 @@ class CorrectorTest(unittest.TestCase):
             with self.subTest(term=term):
                 self.assertIsNone(self.corrector.correct(term))
 
+    def test_dominated_mode_requires_overwhelming_corpus_evidence(self) -> None:
+        corrector = VocabularyCorrector({"ployester": 20, "polyester": 10_884})
+        self.assertEqual(corrector.correct_dominated("ployester"), "polyester")
+        # Ordinary correction still preserves any known corpus term.
+        self.assertIsNone(corrector.correct("ployester"))
+
+    def test_dominated_mode_declines_without_a_large_frequency_margin(self) -> None:
+        corrector = VocabularyCorrector(
+            {"basale": 10, "basalt": 700, "basals": 300}
+        )
+        self.assertIsNone(corrector.correct_dominated("basale"))
+
     def test_refuses_when_nothing_is_close(self) -> None:
         for term in ("xylophone", "helicopter", "zzzzzzzz"):
             with self.subTest(term=term):

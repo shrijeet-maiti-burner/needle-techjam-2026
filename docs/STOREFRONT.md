@@ -29,7 +29,8 @@ The value is read as JSON, so `false` is a bool and `10` an int. A keyword the i
 - the reply and the recommended slate, joined back to catalog display fields;
 - per card: title, store, price where the catalog carries one, rating, category path, and the disclosed values that appear in that product's text, labelled with the field they appear in;
 - a belief panel with active constraints, ruled-out values, and values dropped at a change of mind, plus the intent version;
-- per turn: number, latency, and `ask_attribute`; after turn ten the composer locks rather than exercising the agent's degraded-response fallback;
+- per turn: number, latency, and the attribute named in the human question; after turn ten the composer locks rather than exercising the agent's degraded-response fallback;
+- an expandable decision receipt taken from the same target-blind trace as Needle Lens: the candidate funnel, ambiguity status, retrieval path, released slate size, and the catalog-derived expected value of the question;
 - whether the run deviates from `PRIMARY_AGENT_KWARGS`, and whether the bundled signature index was accepted or rejected.
 
 ## Boundaries
@@ -40,14 +41,20 @@ The value is read as JSON, so `false` is a bool and `10` an int. A keyword the i
 
 **Degradation is reported.** `Agent.respond` cannot raise by design, so a failure appears only as a slightly worse answer. `respond_failures` is read after every turn and a degraded turn is labelled in the transcript.
 
+**The decision receipt is not reconstructed in JavaScript.** The service reads `Agent.trace_for(session_id)` after the turn succeeds and sends that exact trace beside the response. The interface selects a bounded set of fields to render; it does not recompute candidate counts, question utility, evidence, or a second confidence score.
+
 **Matched terms are not a rank explanation.** A chip states that a value the customer disclosed appears in that product's text, compared after the same fold and tokenization retrieval uses. It is deliberately not a claim about why the product ranked where it did — BM25 field weights, the popularity prior and disclosure promotion decide that together, and the lens is where that is certified.
 
-## Two behaviours worth knowing before you demo
+## Behaviours worth knowing before you demo
 
 **A stale chip is not a bug.** Under `override_policy="retract_stated"` an override supersedes every active constraint but deliberately keeps the answers the customer gave to our questions (`needle/state.py`). So the belief panel can report a value as dropped while the text retrieval reads still contains it. Those chips are marked stale rather than hidden. On the released override sessions the retained answers stay compatible with the new intent and the policy measures 100% — see `docs/evidence/EXP_006_SHAPES.md`. In free text they need not be compatible: "ignore my earlier preference, I need a leather belt" keeps an earlier "soft cotton" and can return a cotton product. This is a known consequence of a measured decision, not a defect to patch around in the interface.
 
 **A single-product slate is expected early.** `adaptive_slate` with `early_slate_size=1` holds the wider slate back until turn `full_slate_turn` or `full_slate_constraints` disclosures. The interface renders a one-product slate as a spotlight and says why, rather than looking broken.
 
+**Natural corrections are clause scoped.** A spaced hyphen, en/em dash, semicolon, sentence boundary, or contrastive conjunction ends the preceding negation scope. Thus `no black - make it blue` records `black` as excluded and `blue` as active. This rule is shared by every catalog-derived attribute value; it is not a color-specific demo phrase.
+
 ## Interface notes
 
 Single HTML file, no build step, no package, no network, no font or asset fetch. Everything user- or catalog-supplied is written through `textContent`; no path builds markup from either. The server binds the loopback interface only and is not written to be exposed to a network.
+
+The release-candidate interface was rendered in headless Chrome at 1440x1000 and a 390x844 mobile viewport. Both dimensions reported `scrollWidth == clientWidth`; the live two-turn correction flow displayed two decision receipts, active `blue`, excluded `black`, and no degraded turn. This is browser evidence for the tested Chromium build, not a blanket cross-browser claim.

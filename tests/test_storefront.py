@@ -200,6 +200,17 @@ class StorefrontServiceTest(unittest.TestCase):
             all(card["parent_asin"] in {"BELT", "SHIRT", "SHOE"} for card in turn.cards)
         )
 
+    def test_a_turn_surfaces_the_same_target_blind_trace_as_the_agent(self) -> None:
+        conversation = self.service.start()
+        turn = self.service.send(conversation.session_id, "I need a leather belt")
+        self.assertIsNotNone(turn.trace)
+        assert turn.trace is not None
+        self.assertTrue(turn.trace["target_blind"])
+        self.assertEqual(
+            turn.trace,
+            self.service.agent.trace_for(conversation.session_id)[-1],
+        )
+
     def test_an_empty_message_is_rejected_rather_than_sent(self) -> None:
         conversation = self.service.start()
         with self.assertRaisesRegex(ValueError, "message is empty"):
@@ -214,6 +225,23 @@ class StorefrontServiceTest(unittest.TestCase):
         self.assertIn(
             "leather", [entry["value"] for entry in turn.beliefs["wanted"]]
         )
+
+    def test_natural_correction_keeps_the_replacement_and_excludes_only_the_old_value(self) -> None:
+        conversation = self.service.start()
+        self.service.send(
+            conversation.session_id,
+            "I need something nice for a summer wedding, but I am not sure what.",
+        )
+        turn = self.service.send(
+            conversation.session_id,
+            "Actually, no black - make it blue and lightweight.",
+        )
+        wanted = {entry["value"] for entry in turn.beliefs["wanted"]}
+        excluded = {entry["value"] for entry in turn.beliefs["excluded"]}
+        self.assertIn("blue", wanted)
+        self.assertIn("black", excluded)
+        self.assertNotIn("blue", excluded)
+        self.assertNotIn("in items", turn.message.lower())
 
     def test_an_eleventh_turn_is_refused_instead_of_silently_degrading(self) -> None:
         conversation = self.service.start()

@@ -132,6 +132,33 @@ class AgentTest(unittest.TestCase):
         self.assertEqual(len(response["recommendations"]), 1)
         self.assertEqual(len(agent._seen_by_version[("adaptive", 1)]), 1)
 
+    def test_intent_override_keeps_the_early_slate_when_text_order_is_stable(self) -> None:
+        agent = Agent(
+            self.catalog_path,
+            retrieval_mode="signature_first",
+            adaptive_slate=True,
+            early_slate_size=1,
+            full_slate_turn=5,
+            exclude_seen=True,
+        )
+        agent.reset("override-slate", {})
+        agent.respond(
+            "override-slate",
+            "I'm looking for coats. A key requirement is: wool.",
+            1,
+            10,
+        )
+
+        response = agent.respond(
+            "override-slate",
+            "Actually, ignore my earlier preference. I'm looking for shirts.",
+            2,
+            10,
+        )
+
+        self.assertEqual(agent.state._sessions["override-slate"].intent_version, 2)
+        self.assertEqual(len(response["recommendations"]), 1)
+
     def test_unique_disclosure_identification_emits_only_the_target(self) -> None:
         agent = Agent(
             self.catalog_path,

@@ -77,6 +77,115 @@ class CatalogValidationTest(unittest.TestCase):
             )
         )
 
+    def test_reordered_catalog_fragments_are_extracted_independently(self) -> None:
+        signatures = extract_query_signatures(
+            [
+                "20% Rayon, For that, 5% Spandex., what matters is: "
+                "polyester, 75% Polyester"
+            ]
+        )
+        self.assertTrue(
+            {"polyester", "rayon", "20 rayon", "5 spandex", "75 polyester"}
+            .issubset(signatures)
+        )
+
+    def test_every_stated_material_is_indexed_symmetrically(self) -> None:
+        product = {
+            "parent_asin": "TARGET",
+            "features": ["75% Polyester, 20% Rayon, 5% Spandex"],
+        }
+        from needle.catalog import product_signatures
+
+        signatures = product_signatures(product)
+        self.assertTrue({"polyester", "rayon", "spandex"}.issubset(signatures))
+
+    def test_reordered_catalog_evidence_disables_ordered_prefix_certainty(self) -> None:
+        path = self.write_catalog(
+            [
+                {
+                    "parent_asin": "TARGET",
+                    "features": ["100% Leather", "Manmade sole"],
+                }
+            ]
+        )
+        with CatalogIndex(path, retrieval_mode="signature_first") as index:
+            self.assertTrue(
+                index.ordered_disclosures_stable(
+                    [
+                        "I'm looking for loafers.",
+                        "For that, what matters is: 100% Leather.",
+                    ]
+                )
+            )
+            self.assertFalse(
+                index.ordered_disclosures_stable(
+                    [
+                        "I'm looking for loafers.",
+                        "100% Leather., could you show what matters is: leather",
+                    ]
+                )
+            )
+
+    def test_non_catalog_wrapper_does_not_disable_ordered_prefix_certainty(self) -> None:
+        path = self.write_catalog(
+            [{"parent_asin": "TARGET", "features": ["100% Leather"]}]
+        )
+        with CatalogIndex(path, retrieval_mode="signature_first") as index:
+            self.assertTrue(
+                index.ordered_disclosures_stable(
+                    [
+                        "I'm looking for loafers.",
+                        "Could you help me, for that, what matters is: leather.",
+                    ]
+                )
+            )
+
+    def test_category_resolver_recovers_a_unique_one_edit_surface_error(self) -> None:
+        path = self.write_catalog(
+            [
+                {
+                    "parent_asin": "TARGET",
+                    "categories": [
+                        "Clothing, Shoes & Jewelry",
+                        "Novelty & More",
+                        "Novelty",
+                        "Women",
+                    ],
+                },
+                {
+                    "parent_asin": "OTHER",
+                    "categories": [
+                        "Clothing, Shoes & Jewelry",
+                        "Women",
+                        "Shoes",
+                        "Loafers & Slip-Ons",
+                    ],
+                },
+            ]
+        )
+        with CatalogIndex(path) as index:
+            self.assertEqual(
+                index.resolve_category("novetly women"),
+                "novelty women",
+            )
+
+    def test_category_resolver_declines_an_unknown_or_ambiguous_phrase(self) -> None:
+        path = self.write_catalog(
+            [
+                {
+                    "parent_asin": "A",
+                    "categories": ["Clothing", "Women", "Shoes"],
+                },
+                {
+                    "parent_asin": "B",
+                    "categories": ["Clothing", "Men", "Shoes"],
+                },
+            ]
+        )
+        with CatalogIndex(path) as index:
+            self.assertEqual(index.resolve_category("garden hoses"), "")
+            self.assertEqual(index.resolve_category("shoes"), "")
+
     def test_marker_value_stops_before_trailing_discourse_filler(self) -> None:
         self.assertEqual(
             extract_query_signatures(
@@ -152,8 +261,18 @@ class CatalogValidationTest(unittest.TestCase):
         with CatalogIndex(path) as index:
             self.assertEqual(
                 index.clarification_facets(["TARGET", "MISSING", "TARGET"]),
-                {"TARGET": ("leather", "black")},
+                {"TARGET": {"material": "leather", "color": "black"}},
             )
+
+    def test_clarification_facets_cache_does_not_alias_caller_mutation(self) -> None:
+        path = self.write_catalog(
+            [{"parent_asin": "TARGET", "title": "black leather bag"}]
+        )
+        with CatalogIndex(path) as index:
+            first = index.clarification_facets(["TARGET"])
+            first["TARGET"]["color"] = "red"
+            second = index.clarification_facets(["TARGET"])
+            self.assertEqual(second["TARGET"]["color"], "black")
 
     def test_signature_normalization_is_case_and_punctuation_stable(self) -> None:
         self.assertEqual(canonical_signature("  Color: Café-Blue! "), "color cafe blue")
@@ -466,6 +585,13 @@ class CatalogValidationTest(unittest.TestCase):
 
         self.assertEqual(record["product_count"], 2)
         self.assertEqual(candidates, {"TARGET"})
+        self.assertEqual(
+            index.clarification_facets(["TARGET", "OTHER"]),
+            {
+                "TARGET": {"material": "cotton"},
+                "OTHER": {"material": "polyester"},
+            },
+        )
 
 
 if __name__ == "__main__":

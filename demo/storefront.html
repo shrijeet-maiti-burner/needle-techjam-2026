@@ -126,9 +126,9 @@
     .thread-inner { width: min(780px, 100%); margin: 0 auto; display: flex; flex-direction: column; gap: 22px; }
 
     /* empty state */
-    .opening { padding: 26px 2px 8px; }
+    .opening { min-width: 0; padding: 26px 2px 8px; }
     .opening h2 { margin: 0 0 8px; font-size: 21px; letter-spacing: -.02em; }
-    .opening p { margin: 0 0 18px; color: var(--muted); max-width: 54ch; }
+    .opening p { margin: 0 0 18px; color: var(--muted); max-width: 54ch; overflow-wrap: anywhere; }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; }
     .chip {
       padding: 7px 12px;
@@ -138,6 +138,8 @@
       color: var(--muted);
       cursor: pointer;
       font-size: 13px;
+      max-width: 100%;
+      white-space: normal;
       transition: border-color .14s, color .14s, transform .14s;
     }
     .chip:hover { color: var(--lime); border-color: var(--lime); }
@@ -185,6 +187,104 @@
       border-left: 2px solid var(--lime);
       color: var(--ink);
       overflow-wrap: anywhere;
+    }
+
+    /* A compact rendering of the exact target-blind trace emitted by the
+       selected Agent. This is an audit receipt, not a second explanation
+       policy: every number below arrives on the same response as the slate. */
+    details.receipt {
+      border: 1px solid rgba(85, 232, 207, .24);
+      border-radius: 10px;
+      background: rgba(85, 232, 207, .045);
+      overflow: hidden;
+    }
+    details.receipt[open] { border-color: rgba(85, 232, 207, .38); }
+    details.receipt summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 11px;
+      cursor: pointer;
+      color: var(--aqua);
+      font: 10.5px/1.4 "SFMono-Regular", Consolas, monospace;
+      letter-spacing: .055em;
+      text-transform: uppercase;
+      list-style: none;
+    }
+    details.receipt summary::-webkit-details-marker { display: none; }
+    details.receipt summary::before {
+      content: "+";
+      display: grid;
+      place-items: center;
+      width: 17px;
+      height: 17px;
+      border: 1px solid rgba(85, 232, 207, .34);
+      border-radius: 5px;
+      color: var(--aqua);
+    }
+    details.receipt[open] summary::before { content: "−"; }
+    .receipt-body {
+      display: grid;
+      gap: 10px;
+      padding: 0 11px 11px;
+      border-top: 1px solid rgba(85, 232, 207, .13);
+    }
+    .receipt-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 7px;
+      padding-top: 10px;
+    }
+    .receipt-stat {
+      min-width: 0;
+      padding: 7px 8px;
+      border-radius: 7px;
+      background: rgba(8, 12, 11, .48);
+      border: 1px solid var(--line-soft);
+    }
+    .receipt-stat .r-label {
+      color: var(--dim);
+      font: 9px/1.25 "SFMono-Regular", Consolas, monospace;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+    }
+    .receipt-stat .r-value {
+      margin-top: 3px;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 650;
+      overflow-wrap: anywhere;
+    }
+    .funnel {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-wrap: wrap;
+      color: var(--dim);
+      font: 10px/1.4 "SFMono-Regular", Consolas, monospace;
+    }
+    .funnel-step {
+      padding: 3px 6px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--muted);
+      background: rgba(8, 12, 11, .35);
+    }
+    .receipt-note {
+      color: var(--muted);
+      font-size: 11.5px;
+      overflow-wrap: anywhere;
+    }
+    .receipt-note b { color: var(--lime); font-weight: 650; }
+    .receipt-proof {
+      color: var(--dim);
+      font: 9.5px/1.4 "SFMono-Regular", Consolas, monospace;
+      text-transform: uppercase;
+      letter-spacing: .045em;
+    }
+
+    @media (max-width: 600px) {
+      .receipt-grid { grid-template-columns: 1fr 1fr; }
     }
 
     /* ---------- product cards ---------- */
@@ -311,6 +411,7 @@
     .composer:focus-within { border-color: rgba(201, 255, 100, .45); }
     .composer textarea {
       flex: 1;
+      min-width: 0;
       min-height: 24px;
       max-height: 168px;
       padding: 4px 0;
@@ -551,6 +652,15 @@
       return out;
     }
 
+    function human(value) {
+      return String(value || "none").replace(/_/g, " ");
+    }
+
+    function percent(value) {
+      const number = Number(value);
+      return isFinite(number) ? (number * 100).toFixed(1) + "%" : "—";
+    }
+
     /* Keeping the newest turn in view is not a single scroll. A turn can add
        ten cards, and their final height is not known when they are appended --
        text wraps, the font swaps, `details` resolves -- so any one-shot
@@ -660,6 +770,95 @@
       return wrap;
     }
 
+    function renderDecisionReceipt(trace, turnNumber) {
+      if (!trace || typeof trace !== "object") return null;
+
+      const receipt = node("details", "receipt");
+      receipt.open = turnNumber === 1;
+      if (trace.trace_error) {
+        receipt.appendChild(node("summary", "", "Decision trace unavailable"));
+        const body = node("div", "receipt-body");
+        body.appendChild(node("div", "receipt-note", trace.trace_error));
+        receipt.appendChild(body);
+        return receipt;
+      }
+
+      const certificate = trace.ambiguity_certificate || {};
+      const decision = trace.decision || {};
+      const policy = trace.question_policy || {};
+      const question = policy.human_message_decision || {};
+      const candidateCount = Number(certificate.candidate_count || 0);
+      const questionLabel = question.asks && question.attribute
+        ? "asked " + human(question.attribute)
+        : "no extra question";
+      const reductionLabel = question.asks
+        ? percent(question.expected_candidate_reduction) + " expected reduction"
+        : human(question.reason || "stopping rule");
+      receipt.appendChild(node(
+        "summary",
+        "",
+        "Why this turn · " + numberFormat.format(candidateCount) +
+          " candidates · " + questionLabel + " · " + reductionLabel
+      ));
+
+      const body = node("div", "receipt-body");
+      const grid = node("div", "receipt-grid");
+      [
+        ["ambiguity", human(certificate.status)],
+        ["candidates", numberFormat.format(candidateCount)],
+        ["decision path", human(decision.path)],
+        ["slate released", numberFormat.format(Number(decision.output_limit || 0))],
+      ].forEach(([label, value]) => {
+        const stat = node("div", "receipt-stat");
+        stat.appendChild(node("div", "r-label", label));
+        stat.appendChild(node("div", "r-value", value));
+        grid.appendChild(stat);
+      });
+      body.appendChild(grid);
+
+      const funnelRows = Array.isArray(trace.candidate_funnel)
+        ? trace.candidate_funnel.filter((row) => row && typeof row === "object")
+        : [];
+      if (funnelRows.length) {
+        const funnel = node("div", "funnel");
+        funnelRows.forEach((row, index) => {
+          if (index) funnel.appendChild(node("span", "", "→"));
+          funnel.appendChild(node(
+            "span",
+            "funnel-step",
+            human(row.stage) + " " + numberFormat.format(Number(row.count || 0))
+          ));
+        });
+        body.appendChild(funnel);
+      }
+
+      if (question.asks) {
+        const note = node("div", "receipt-note");
+        note.appendChild(node("b", "", "Why ask " + human(question.attribute) + ": "));
+        note.appendChild(node(
+          "span",
+          "",
+          percent(question.catalog_coverage) + " of this candidate pool can answer it; " +
+            "the expected residual set is " +
+            Number(question.expected_remaining || 0).toFixed(1) + "."
+        ));
+        body.appendChild(note);
+      } else {
+        body.appendChild(node(
+          "div",
+          "receipt-note",
+          "The stopping rule found no positive-value clarification for this turn."
+        ));
+      }
+      body.appendChild(node(
+        "div",
+        "receipt-proof",
+        "target-blind · catalog-derived · same agent and response as evaluation"
+      ));
+      receipt.appendChild(body);
+      return receipt;
+    }
+
     function renderTurn(turn) {
       const wrap = node("div", "agent");
 
@@ -668,7 +867,13 @@
       meta.appendChild(node("span", "", "Needle · turn " + turn.turn));
       meta.appendChild(node("span", "", turn.latency_ms.toFixed(1) + " ms"));
       if (turn.ask_attribute) {
-        meta.appendChild(node("span", "tag", "asking: " + turn.ask_attribute));
+        const question = turn.trace && turn.trace.question_policy
+          ? turn.trace.question_policy.human_message_decision
+          : null;
+        const visibleAttribute = question && question.asks && question.attribute
+          ? question.attribute
+          : turn.ask_attribute;
+        meta.appendChild(node("span", "tag", "asking: " + human(visibleAttribute)));
       }
       if (turn.degraded) {
         meta.appendChild(node("span", "tag bad", "degraded turn"));
@@ -679,6 +884,9 @@
       wrap.appendChild(meta);
 
       if (turn.message) wrap.appendChild(node("div", "agent-message", turn.message));
+
+      const receipt = renderDecisionReceipt(turn.trace, turn.turn);
+      if (receipt) wrap.appendChild(receipt);
 
       const cards = Array.isArray(turn.cards) ? turn.cards : [];
       if (!cards.length) {

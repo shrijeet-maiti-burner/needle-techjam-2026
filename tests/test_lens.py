@@ -132,6 +132,16 @@ class LensTraceTest(unittest.TestCase):
                 response["message"],
                 "What else matters most for the item you want?",
             )
+            question = trace["question_policy"]
+            self.assertTrue(question["human_message_causal"])
+            self.assertFalse(question["human_shadow_only"])
+            decision = question["human_message_decision"]
+            self.assertTrue(decision["asks"])
+            self.assertIn(f"Which {decision['attribute']}?", response["message"])
+            self.assertEqual(
+                decision["attribute"],
+                question["human_shadow_board"][0]["attribute"],
+            )
         finally:
             agent.close()
 
@@ -155,6 +165,59 @@ class LensTraceTest(unittest.TestCase):
             self.assertTrue(
                 any(event["value"] == "cotton" and event["status"] == "active" for event in events)
             )
+        finally:
+            agent.close()
+
+    def test_explicit_exclusion_softly_demotes_the_conflicting_product(self) -> None:
+        agent = Agent(
+            self.catalog,
+            **self.kwargs,
+            explain=True,
+            trace_enabled=True,
+        )
+        try:
+            agent.reset("session", {})
+            response = agent.respond(
+                "session",
+                "I'm looking for Shirts T-Shirts. no, not black — blue.",
+                1,
+                10,
+            )
+            self.assertEqual(response["recommendations"][0]["parent_asin"], "A2")
+            trace = agent.trace_for("session")[-1]
+            evidence = trace["recommendation_evidence"][0]
+            self.assertEqual(evidence["conflicting_active_exclusions"], [])
+            options = trace["question_policy"]["human_message_decision"].get(
+                "options", ()
+            )
+            self.assertFalse(any(value == "black" for value, _ in options))
+        finally:
+            agent.close()
+
+    def test_reordered_catalog_evidence_keeps_the_measured_early_slate(self) -> None:
+        agent = Agent(
+            self.catalog,
+            **self.kwargs,
+            trace_enabled=True,
+        )
+        try:
+            agent.reset("session", {})
+            agent.respond(
+                "session",
+                "I'm looking for Shirts T-Shirts, but I'm still exploring.",
+                1,
+                10,
+            )
+            response = agent.respond(
+                "session",
+                "cotton, what matters is: running.",
+                2,
+                10,
+            )
+            trace = agent.trace_for("session")[-1]
+            self.assertFalse(trace["ordered_disclosures_safe"])
+            self.assertEqual(trace["decision"]["output_limit"], 1)
+            self.assertEqual(len(response["recommendations"]), 1)
         finally:
             agent.close()
 

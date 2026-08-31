@@ -15,14 +15,18 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from needle.explain import message_for, turn_record  # noqa: E402
-from needle.questions import clarifying_options  # noqa: E402
+from needle.questions import (  # noqa: E402
+    choose_clarification,
+    clarification_board,
+    clarifying_options,
+)
 
 FACETS = {
-    "a": ("leather", "black"),
-    "b": ("leather", "brown"),
-    "c": ("nylon", "black"),
-    "d": ("canvas", ""),
-    "e": ("nylon", "black"),
+    "a": {"material": "leather", "color": "black"},
+    "b": {"material": "leather", "color": "brown"},
+    "c": {"material": "nylon", "color": "black"},
+    "d": {"material": "canvas"},
+    "e": {"material": "nylon", "color": "black"},
 }
 ALL = ["a", "b", "c", "d", "e"]
 
@@ -39,7 +43,7 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(facet, "color")
 
     def test_a_facet_that_cannot_divide_anything_is_declined(self) -> None:
-        uniform = {key: ("leather", "") for key in ALL}
+        uniform = {key: {"material": "leather"} for key in ALL}
         self.assertEqual(clarifying_options(ALL, uniform), ("", ()))
 
     def test_one_candidate_is_not_worth_a_question(self) -> None:
@@ -56,6 +60,46 @@ class SelectionTest(unittest.TestCase):
     def test_counts_are_counts_of_the_candidates_given(self) -> None:
         _, options = clarifying_options(ALL, FACETS)
         self.assertEqual(sum(count for _, count in options), len(ALL))
+
+    def test_value_of_information_math_includes_turn_cost(self) -> None:
+        decision = choose_clarification(ALL, FACETS, turns_left=9)
+        self.assertEqual(decision.attribute, "material")
+        self.assertEqual(decision.expected_remaining, 1.8)
+        self.assertEqual(decision.expected_candidate_reduction, 0.64)
+        self.assertEqual(decision.catalog_coverage, 1.0)
+        self.assertEqual(decision.interaction_cost, 0.1)
+        self.assertEqual(decision.net_value, 0.54)
+
+    def test_no_question_is_claimed_when_the_turn_cost_exceeds_its_value(self) -> None:
+        decision = choose_clarification(ALL, FACETS, turns_left=0)
+        self.assertFalse(decision.asks)
+        self.assertEqual(decision.attribute, "")
+        self.assertIn("does not repay", decision.reason)
+
+    def test_five_facet_board_can_choose_a_non_material_facet(self) -> None:
+        facets = {
+            "a": {"material": "cotton", "style": "formal"},
+            "b": {"material": "cotton", "style": "casual"},
+            "c": {"material": "cotton", "style": "athletic"},
+        }
+        self.assertEqual(choose_clarification(tuple(facets), facets).attribute, "style")
+
+    def test_sampled_status_survives_the_ranked_board(self) -> None:
+        board = clarification_board(ALL, FACETS, sampled=True)
+        self.assertTrue(board)
+        self.assertTrue(all(decision.sampled for decision in board))
+
+    def test_an_excluded_value_is_never_offered_back_as_an_option(self) -> None:
+        facets = {
+            "a": {"color": "black"},
+            "b": {"color": "blue"},
+            "c": {"color": "red"},
+        }
+        decision = choose_clarification(
+            tuple(facets), facets, excluded_values=["black"]
+        )
+        self.assertEqual(decision.attribute, "color")
+        self.assertEqual(decision.options, (("blue", 1), ("red", 1)))
 
 
 class RenderingTest(unittest.TestCase):

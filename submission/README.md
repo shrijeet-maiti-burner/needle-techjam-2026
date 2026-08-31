@@ -53,15 +53,16 @@ Note the capitalisation: the exported symbol is `Agent`, not `agent`.
 
 - optional asset: `submission/assets/catalog-signatures.sqlite3`
 
-The schema-v6 signature index is a startup optimisation, not a requirement. It
+The versioned signature index is a startup optimisation, not a requirement. It
 is bound to a specific catalog by SHA-256. If it is absent, unreadable, or was
 built against any other catalog, the agent records the reason in
 `CatalogIndex.signature_index_fallback` and rebuilds the equivalent index in
-process. The 64,884,736-byte asset contains 869,240 product-signature rows,
-177,768 distinct category-bound card keys, and 296,951 popularity-ordered card
-rows. It has SHA-256
-`73c91b4473772532cc22a39918885e00898b8eadbada8544bfad84dd8e9904e4`.
-The recorded bundled construction takes 6.774s; the source-only fallback takes
+process. The schema-8, 68,702,208-byte asset contains 897,046
+product-signature rows, 177,768 distinct category-bound card keys, 296,951
+popularity-ordered card rows, and catalog-derived clarification facets for all
+50,000 products. It has SHA-256
+`797dd7ef14911a43966599f7157e41db8e80e3feda56e9e09f197cad0e1917e3`.
+The recorded bundled construction takes 8.364s; the source-only fallback takes
 84.788s on the same machine. Both reproduce TechnicalScore 0.978500. A stale
 index is never trusted.
 
