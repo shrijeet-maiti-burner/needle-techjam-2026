@@ -125,11 +125,13 @@ NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 NEGATION_WINDOW = 24
-# Negation cannot bleed across a contrastive clause.  This is structural rather
-# than a phrase-to-output rule: the same boundary applies to every catalog value
-# and fixes constructions such as "not black but blue" and "not black — blue".
+# Negation cannot bleed across a terminated or contrastive clause. This is
+# structural rather than a phrase-to-output rule: the same boundary applies to
+# every catalog value and fixes constructions such as "not black but blue",
+# "not black, blue", and "not black - blue". Coordination is deliberately not
+# a boundary, so "no black and navy" still excludes both values.
 NEGATION_RESET_RE = re.compile(
-    r"[;.!?\u2014\u2013]|\s-\s|\b(?:but|however|though|yet)\b",
+    r"[,;.!?\u2014\u2013]|\s-\s|\b(?:but|however|though|yet)\b",
     re.IGNORECASE,
 )
 
@@ -227,6 +229,7 @@ def _find_values(message: str, vocabulary: tuple[str, ...]) -> list[tuple[str, i
 
 
 def _is_negated(message: str, offset: int) -> bool:
+    """Whether a nearby negator still governs the value at ``offset``."""
     prefix = message[max(0, offset - NEGATION_WINDOW):offset]
     resets = list(NEGATION_RESET_RE.finditer(prefix))
     window = prefix[resets[-1].end():] if resets else prefix
