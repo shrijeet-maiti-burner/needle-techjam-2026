@@ -51,7 +51,21 @@ The value is read as JSON, so `false` is a bool and `10` an int. A keyword the i
 
 **A single-product slate is expected early.** `adaptive_slate` with `early_slate_size=1` holds the wider slate back until turn `full_slate_turn` or `full_slate_constraints` disclosures. The interface renders a one-product slate as a spotlight and says why, rather than looking broken.
 
-**Natural corrections are clause scoped.** A spaced hyphen, en/em dash, semicolon, sentence boundary, or contrastive conjunction ends the preceding negation scope. Thus `no black - make it blue` records `black` as excluded and `blue` as active. This rule is shared by every catalog-derived attribute value; it is not a color-specific demo phrase.
+**Natural corrections are clause scoped.** A comma, spaced hyphen, en/em dash, semicolon, sentence boundary, or contrastive conjunction ends the preceding negation scope. Thus `no black - make it blue` records `black` as excluded and `blue` as active. This rule is shared by every catalog-derived attribute value; it is not a color-specific demo phrase.
+
+## Concurrent smoke gate
+
+With the warm storefront running, exercise the real HTTP boundary rather than
+only the service object:
+
+```bash
+python scripts/storefront_smoke.py --clients 12 --max-p95-ms 750
+```
+
+The gate fails on a degraded turn, empty slate, malformed response, missing
+target-blind trace, bad error status, accepted eleventh turn, or p95 latency
+above the supplied ceiling. The freeze run completed 36 traced turns in 6.62s
+at p50 140.6ms, p95 430.0ms, and max 820.3ms; error paths and turn budget passed.
 
 ## Interface notes
 

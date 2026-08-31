@@ -146,9 +146,10 @@ Nothing measurable, in either direction.
 | per-session `best_rank`, `first_hit_turn` | | identical on all 200 |
 | tests | 379 | 398 |
 
-That the robustness report is byte-identical is expected for F1 and F2, and
-worth stating plainly: **nothing in retrieval reads `excluded_values` today**.
-Constraint polarity reaches the customer-facing turn record and nothing else.
+That the robustness report is byte-identical is expected for F1 and F2 at the
+historical `4e36df6` base: retrieval there did not read `excluded_values`.
+Later integration added a bounded soft exclusion partition, so that statement
+must not be read as a description of the release-candidate tree.
 
 F3 is neutral for a different reason and the distinction matters. Those three
 sessions really did carry a wrong constraint into the shipped agent, and the
@@ -156,6 +157,26 @@ count of active constraints really is read, by the slate-width gate. It
 happened that none of the three crossed the threshold, which is luck rather
 than design, and it is the reason the per-session row above is in the table:
 neutrality there is measured, not argued.
+
+### Integration rerun on the human-loop release candidate
+
+The five commits were rebased onto `45b8b26`, preserving the broader clause
+boundaries and additive `not only` handling already selected there. The merged
+scope boundary now covers comma, semicolon, sentence punctuation, spaced ASCII
+hyphen, en/em dash, and contrastive conjunctions while leaving coordination
+open for `no black and navy`.
+
+- official TechnicalScore remained 0.978500 with HR@10 1.000000, MRR 0.996667,
+  MTTC 2.025, and zero violations;
+- the full perturbation matrix retained the same five failing gate names;
+- every comparison metric was identical except meaning-changing negation MTTC,
+  which improved from 2.595 to 2.590;
+- 70 focused state, scope, override, and budget tests passed.
+
+Raw ignored records:
+`.artifacts/qa/experiments/FREEZE-STATE-HARDENING/20260831T040410Z-7cfd093f`
+and
+`.artifacts/qa/robustness-freeze/20260831T040850Z-7cfd093f/report.json`.
 
 So these are correctness fixes whose live effect is on what a person is told
 and on typed storefront input, not on the leaderboard number. That they cannot
