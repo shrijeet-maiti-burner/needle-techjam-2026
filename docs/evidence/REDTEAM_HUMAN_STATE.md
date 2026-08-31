@@ -131,6 +131,82 @@ more than" is a budget idiom that the negation rule reads as an exclusion, and
 separating the two needs an idiom list, so that case is left exactly as it was
 rather than half-fixed.
 
+### F5 A retraction verb kept a false object
+
+Recorded as out of scope in the first pass, closed in the second.
+
+```
+"Drop it in my basket if it's under $50."           -> override
+"Cancel that shipping upgrade, not my preference."  -> override
+"Drop that jacket into my cart."                    -> override
+```
+
+A bare pronoun is only a reference to the conversation when it ends the clause.
+"Cancel that shipping upgrade" uses "that" as a determiner introducing a noun
+phrase; "Drop it in my basket" uses "it" as the object of a preposition.
+Requiring the pronoun to be clause final separates both from "ignore that."
+without needing to know what a noun is, so the exempt-object list the first
+pass expected to need did not materialise.
+
+Every other `_PRIOR` branch is unambiguous and untouched, including "my earlier
+preference", which is what the released simulator sends. Both simulator
+templates are asserted in the tests. The one word list is a closed class of
+trailing degree adverbs ("too", "also", "entirely", "completely", "all", "as
+well"), kept because "ignore that too" is ordinary and losing it costs a
+retraction.
+
+### F6 The negation was on the auxiliary, not on one chosen verb
+
+```
+"I don't like black."     color:black POSITIVE      -> NEGATIVE
+"I don't need leather."   material:leather POSITIVE -> NEGATIVE
+"I dont like black."      color:black POSITIVE      -> NEGATIVE
+"I never wear black."     color:black POSITIVE      -> NEGATIVE
+```
+
+`NEGATION_RE` carried `don'?t want`, hardcoding one verb. Matching the negated
+auxiliary covers every verb at once.
+
+The blocker recorded in the first pass was that this inverts idioms of
+indifference. That was a misplacement rather than a blocker: "I don't mind
+black" is neither a request for black nor a ban on it, it is the customer
+declining to constrain, which is exactly what `NO_PREFERENCE_RE` already means.
+Moving the indifference verbs there is better than the exemption list the first
+pass proposed, because those phrasings now yield **no constraint at all**
+rather than a wrong one. Before this, `"I don't mind black"` recorded black as
+a value the customer *wanted*.
+
+Still missed on purpose, and asserted so the limit fails loudly if it moves
+quietly: `"I hate black"` and `"black is out"`. Catching those means a list of
+opinion verbs rather than a rule.
+
+### F6a A negator does not reach inside a subordinate clause
+
+Not a probe finding. Generalising F6 introduced a false exclusion on a live
+public disclosure, and this is the fix that makes F6 shippable:
+
+```
+public_0113  "...so they won't fly off when walking, especially on stairs."
+             excluded use_case:walking
+```
+
+"won't" sits inside the lookbehind width and nothing punctuated the gap. The
+negation is on "fly off"; "when" is where it stops. Subordinators now reset the
+scope for the same reason contrastives already did: they open a new clause.
+
+### What the second pass did not reintroduce
+
+Two things from the superseded branch were deliberately dropped, because the
+tree they were written against has moved:
+
+- a narrower `NEGATION_SCOPE_END_RE`. `NEGATION_RESET_RE` on main is a superset
+  of it, adding dashes, `!?` and "however/though/yet".
+- a sort of disclosures into reading order. The single-alternation
+  `_vocabulary_pattern` from #34 already returns matches positionally, which
+  solves the same defect without the sort.
+
+Both were checked rather than assumed, by probing the current tree.
+
 ### What the fixes cost
 
 Nothing measurable, in either direction.
@@ -185,37 +261,7 @@ that they win anything.
 
 ## Recorded, not fixed
 
-### F5 Verb-sense ambiguity still fires a false override
-
-```
-"Drop it in my basket if it's under $50."      -> override
-"Cancel that shipping upgrade, not my preference." -> override
-```
-
-`drop` and `cancel` are retraction verbs here only by coincidence of sense.
-Distinguishing them needs a list of exempt objects, which is a phrase list, so
-it is out of scope for this pass. Lower severity than F2: neither reads as the
-customer reinforcing a requirement.
-
-### F6 Negation surfaces that carry no negator the extractor knows
-
-```
-"I don't like black."     -> color:black POSITIVE
-"I don't need leather."   -> material:leather POSITIVE
-"I never wear black."     -> color:black POSITIVE
-"anything except black"   -> color:black POSITIVE
-"black is out"            -> color:black POSITIVE
-"I hate black."           -> color:black POSITIVE
-```
-
-`NEGATION_RE` carries `don'?t want`, which hardcodes one verb where the
-negation is actually on the auxiliary. Generalising to `(?:do|does|did)n't
-<verb>` is a grammar rule and would be in scope, but it inverts idioms that
-mean the opposite: `I don't mind black` and `I wouldn't say no to black` would
-both become exclusions. Correcting that needs an exemption list. Left alone
-rather than half-done under a freeze.
-
-### F7 Mixed-language requests reach the belief state empty
+### Mixed-language requests reach the belief state empty
 
 ```
 "Busco unas botas de cuero."                    -> no constraints
@@ -232,7 +278,7 @@ language.py`, its two test files and the `set_language` wiring did not survive
 the squash into #28, and nothing on main references them. That is a merge
 decision for the release owner, not a red-team fix.
 
-### F8 Coordinated values on one attribute collapse to the last one
+### Coordinated values on one attribute collapse to the last one
 
 ```
 "I want a black and white striped shirt."  -> color:white only
@@ -245,6 +291,14 @@ it would need multi-valued positive constraints, which is a data-model change
 and not a freeze-week edit.
 
 ## Reproduction
+
+Second pass, against `1c5b005`:
+
+```bash
+python3 -m pytest tests/test_human_state_surfaces.py tests/test_signature_index_cli.py
+```
+
+
 
 ```bash
 python3 -m pytest tests/test_negation_scope.py \
