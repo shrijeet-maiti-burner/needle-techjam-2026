@@ -812,7 +812,12 @@ class StorefrontService:
             return "", payload
 
         fallback = self._trace_question_decision(trace)
-        if fallback is None:
+        fallback_attribute = (
+            str(fallback.get("attribute") or "")
+            if isinstance(fallback, Mapping)
+            else ""
+        )
+        if fallback is None or fallback_attribute in asked:
             payload = {
                 "asks": False,
                 "source": "catalog stop decision",
@@ -822,7 +827,7 @@ class StorefrontService:
         payload = dict(fallback)
         payload["source"] = "single-target policy fallback"
         payload["relationship_aware"] = False
-        return self._render_question(payload, language=language), payload
+        return self._render_question(remember(payload), language=language), payload
 
     def _audience_question(
         self,
