@@ -197,7 +197,8 @@ staged one: the customer messages come from the official `local_evaluator`'s own
 `initial_message`, `customer_reply` and override injection, and the hit test is
 the evaluator's, so what is printed is what the scorer saw.
 
-Reproduce it from this bundle with:
+Reproduce it from this bundle after setting `TECHJAM_KIT_ROOT` to the extracted
+official participant-kit root:
 
 ```
 python3 scripts/demo_session.py --scenario intent_override
@@ -235,8 +236,8 @@ turn 2
 
 turn 3
   customer Actually, ignore my earlier preference. What I need is: leather.
-  agent    I am narrowing accessories belts using leather. Which style? casual (51),
-           classic (25), elegant (21), vintage (11). You can also tell me
+  agent    I am narrowing accessories belts using leather. Which color? black (61),
+           brown (13), silver (12), gold (10). You can also tell me
            anything else you prefer.
   asks     other
      1. B06XYH8FH8  Hanks 1.5" Freedom Men’s Heavy Duty [...]
@@ -244,9 +245,9 @@ turn 3
 turn 4
   customer For that, what matters is: Imported; Buckle closure.
   agent    I have 4 candidates among accessories belts and am narrowing with leather.
-           Showing the most reviewed. Which style? classic (1), formal
-           (1), vintage (1). You can also tell me anything else you
-           prefer.
+           Showing the most reviewed. Which brand? Fossil (1), Hide &
+           Drink (1), X-COSTUME (1), find. (1). You can also tell me
+           anything else you prefer.
   asks     other
      1. B071X54486  Hide & Drink, Rustic Handmade Full Grain [...]  <-- target
 
@@ -269,8 +270,16 @@ in a worse rank than waiting one turn would have earned.
 
 A local storefront (`scripts/needle_storefront.py --warm`) and its target-blind
 decision receipt ship in this archive as an optional judge-facing demonstration.
-They do not alter the `starter.agent:Agent` scoring entry point; the transcript
-above remains the required evaluator-shaped artefact.
+Its labelled journey layer supports multiple linked items, catalog-evidenced
+compatibility and typed price, rating and review-count preferences. Explicit
+numeric orderings use the complete catalog-derived category pool; natural
+phrases such as `highly rated` and `well reviewed` use the same disclosed
+review-count-adjusted average as `best rated`, while a stated rating floor is a
+hard filter. The interface also exposes ranked question alternatives,
+correction history, an evidence-bounded comparison tray, seven reply languages
+and measured accessible themes. None of this alters the `starter.agent:Agent`
+scoring entry point; the transcript above remains the required evaluator-shaped
+artefact.
 
 ## Team contributions
 
@@ -281,10 +290,10 @@ directly.
 
 | area | owner | delivered |
 |---|---|---|
-| belief state, override policy, question policy | Athul Krishna Boban | versioned constraint state with correction, negation and supersession (#1); `retract_stated` override policy (#6); contradiction invalidation (#9); retraction-rule override trigger (#10); submission packaging and run-safety (#8); EXP-006/013 closures and the popularity transfer review (#12) |
-| retrieval, ranking, integration | Shrijeet Maiti | reproducible experiment harness (#2); catalog validation and sparse controls, measured primary and rollback paths (#5); transfer-gated primary selection (#11) |
+| belief state, override policy, question policy | Athul Krishna Boban | versioned constraint state with correction, negation and supersession (#1); `retract_stated` override policy (#6); contradiction invalidation (#9); retraction-rule override trigger (#10); submission packaging and run-safety (#8); EXP-006/013 closures and the popularity transfer review (#12); correction-query retirement, language selector, accessible themes, comparison, correction timeline and question alternatives (#51 content integrated through #50) |
+| retrieval, ranking, integration | Shrijeet Maiti | reproducible experiment harness (#2); catalog validation and sparse controls, measured primary and rollback paths (#5); transfer-gated primary selection (#11); complete-category typed price/rating/review filtering, confidence-adjusted rating language, final integration and release verification (#50) |
 | robustness, lexical normalization, conversational interface | Aryaman Anand | offline lexical normalizer and robustness fixtures (#3); EXP-010 perturbation library (#4); session-level robustness driver, slice runner and comparison report (#7); query/corpus tokenizer symmetry, SQLite handle release and the never-failing turn guard (#13); override-trigger tolerance to surface corruption (#15); vocabulary-derived typo recovery, measured and retained default-off as a negative result (#16); the conversational storefront interface (#27); concurrent traced storefront smoke gate (#35) |
-| evaluation baseline and adversarial language QA | Yazhiniyan | independently reviewed negation scope and supplied idiomatic counterexamples (`would not mind`, `anything but`, contrastive preference and uncertainty phrasing) used to harden and re-test the final state parser |
+| evaluation baseline, adversarial language QA and release verification | Yazhiniyan | independently reviewed negation scope and supplied idiomatic counterexamples (`would not mind`, `anything but`, contrastive preference and uncertainty phrasing) used to harden and re-test the final state parser; reproduced the released TechnicalScore 0.978500 from a clean committed tree without `--allow-dirty`, and again from the extracted archive under the unmodified official evaluator |
 
 Every experiment in the source repository's `docs/evidence/` names an
 independent rerun owner, and the

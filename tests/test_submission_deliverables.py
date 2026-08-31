@@ -131,6 +131,7 @@ class TheRequiredDeliverablesArePresent(unittest.TestCase):
                 self.assertIn(marker, transcript)
         self.assertIn("scripts/demo_session.py", self.shipped,
                       "the transcript must also be reproducible from the archive")
+        self.assertIn("TECHJAM_KIT_ROOT", transcript)
 
 
 class TheDisclosedAssetIsTheShippedAsset(unittest.TestCase):

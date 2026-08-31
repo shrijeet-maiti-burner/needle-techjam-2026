@@ -58,7 +58,10 @@ def main() -> None:
     dataset_path = KIT / "data" / "public_set.jsonl"
     missing = [str(path) for path in (catalog_path, dataset_path) if not path.is_file()]
     if missing:
-        raise SystemExit(f"official kit is incomplete ({', '.join(missing)}); run python scripts/bootstrap.py")
+        raise SystemExit(
+            f"official kit is incomplete ({', '.join(missing)}); "
+            "set TECHJAM_KIT_ROOT to the extracted participant-kit root"
+        )
 
     samples = official.load_jsonl(str(dataset_path))
     catalog_ids, categories, products = official.catalog_index(str(catalog_path))

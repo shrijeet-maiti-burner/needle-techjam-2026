@@ -10,10 +10,11 @@ because retrieval has no use for them. Reading its internal schema to recover
 display fields would couple this module to a private layout and still not
 return the missing ones.
 
-*Do not hold 50000 products in memory to show ten.* One pass records the byte
-offset of each line, then a card is a `seek` and one `json.loads`. The index is
-about 5MB for the released catalog against roughly 400MB to retain the parsed
-products, and a turn pays for the ten rows it displays.
+*Do not hold 50000 parsed products in memory.* One pass records the byte offset
+of each line and compact catalog-taxonomy memberships. Ordinary cards remain a
+`seek` and one `json.loads`; an explicit numeric comparison reads only the
+matching category rows through one file handle. The service never retains the
+catalog's full product dictionaries.
 
 Matched terms are stated as what they are. `query_terms` and `fold_marks` are
 imported from `needle.catalog` rather than reimplemented, so a term is shown as
@@ -26,7 +27,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -70,7 +71,7 @@ class ProductCard:
 
     @property
     def category_path(self) -> str:
-        return " › ".join(self.categories)
+        return " > ".join(self.categories)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -105,6 +106,8 @@ class CatalogView:
         self._category_counts: Counter[str] | None = None
         self._category_aliases: Counter[str] | None = None
         self._audience_counts: Counter[str] | None = None
+        self._category_members: dict[str, list[str]] | None = None
+        self._audience_by_id: dict[str, str] | None = None
 
     # -- index ---------------------------------------------------------------
 
@@ -126,6 +129,8 @@ class CatalogView:
         counts: Counter[str] = Counter()
         aliases: Counter[str] = Counter()
         audiences: Counter[str] = Counter()
+        members: defaultdict[str, list[str]] = defaultdict(list)
+        audience_by_id: dict[str, str] = {}
         with self.catalog_path.open("rb") as handle:
             position = 0
             for raw in handle:
@@ -158,19 +163,29 @@ class CatalogView:
                         )
                         if audience:
                             audiences[audience] += 1
+                            audience_by_id[parent_asin] = audience
                     # Nodes below root and department are product types rather
                     # than audience labels.  Their words form the active
                     # catalog taxonomy used by journey routing, so a swapped
                     # catalog changes what the planner understands without a
                     # maintained list of product nouns.
+                    member_tokens: set[str] = set()
                     for raw_name in path[2:]:
                         name = raw_name.decode("utf-8", "replace")
                         for alias in _category_aliases(name):
                             aliases[alias] += 1
+                            member_tokens.update(
+                                _singular_category_token(token)
+                                for token in alias.split()
+                            )
+                    for token in member_tokens:
+                        members[token].append(parent_asin)
         self._offsets = offsets
         self._category_counts = counts
         self._category_aliases = aliases
         self._audience_counts = audiences
+        self._category_members = dict(members)
+        self._audience_by_id = audience_by_id
 
     @property
     def product_count(self) -> int:
@@ -196,6 +211,27 @@ class CatalogView:
         except json.JSONDecodeError:
             return None
         return product if isinstance(product, dict) else None
+
+    def raw_many(self, parent_asins: Iterable[str]) -> dict[str, dict[str, object]]:
+        """Read many catalog rows through one handle, preserving requested ids."""
+
+        requested = list(dict.fromkeys(str(value) for value in parent_asins if str(value)))
+        positions = [
+            (self.offsets[identifier], identifier)
+            for identifier in requested
+            if identifier in self.offsets
+        ]
+        found: dict[str, dict[str, object]] = {}
+        with self.catalog_path.open("rb") as handle:
+            for offset, identifier in sorted(positions):
+                handle.seek(offset)
+                try:
+                    product = json.loads(handle.readline())
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(product, dict):
+                    found[identifier] = product
+        return {identifier: found[identifier] for identifier in requested if identifier in found}
 
     def card(
         self,
@@ -395,6 +431,48 @@ class CatalogView:
             for _, _, audience in sorted(found)[: max(0, int(count))]
         ]
 
+    def category_candidates(
+        self,
+        category: str,
+        *,
+        audience: str | None = None,
+        limit: int = 50_000,
+    ) -> list[str]:
+        """Every catalog id whose taxonomy contains the complete category phrase.
+
+        This is used only when an explicit numeric preference needs a complete
+        comparison set.  Ordinary turns stay on Needle's measured candidate
+        generator.  The index is derived during the existing offset scan and
+        contains no private product taxonomy.
+        """
+
+        if self._category_members is None:
+            self._build_offsets()
+        assert self._category_members is not None
+        assert self._audience_by_id is not None
+        wanted = tuple(
+            dict.fromkeys(
+                _singular_category_token(token)
+                for token in query_terms(str(category), limit=12)
+            )
+        )
+        if not wanted or any(token not in self._category_members for token in wanted):
+            return []
+        pools = [self._category_members[token] for token in wanted]
+        smallest = min(pools, key=len)
+        allowed = [set(pool) for pool in pools if pool is not smallest]
+        normalized_audience = " ".join(query_terms(str(audience or ""), limit=6))
+        result = [
+            identifier
+            for identifier in smallest
+            if all(identifier in pool for pool in allowed)
+            and (
+                not normalized_audience
+                or self._audience_by_id.get(identifier) == normalized_audience
+            )
+        ]
+        return result[: max(0, int(limit))]
+
     @staticmethod
     def audience(product: Mapping[str, object]) -> str:
         """The catalog's audience node, normalized for filtering/questions."""
@@ -416,6 +494,18 @@ _QUOTED_RE = re.compile(rb'"([^"]+)"')
 _MIN_SUGGESTION_DEPTH = 3
 
 
+def _singular_category_token(word: str) -> str:
+    if word.endswith("ies") and len(word) > 4:
+        return f"{word[:-3]}y"
+    if word.endswith("sses"):
+        return word[:-2]
+    if word.endswith("es") and len(word) > 4:
+        return word[:-2]
+    if word.endswith("s") and not word.endswith("ss") and len(word) > 3:
+        return word[:-1]
+    return word
+
+
 def _category_aliases(name: str) -> tuple[str, ...]:
     """Catalog category plus conservative singular surface variants."""
 
@@ -423,19 +513,8 @@ def _category_aliases(name: str) -> tuple[str, ...]:
     if not words:
         return ()
 
-    def singular(word: str) -> str:
-        if word.endswith("ies") and len(word) > 4:
-            return f"{word[:-3]}y"
-        if word.endswith("sses"):
-            return word[:-2]
-        if word.endswith("es") and len(word) > 4:
-            return word[:-2]
-        if word.endswith("s") and not word.endswith("ss") and len(word) > 3:
-            return word[:-1]
-        return word
-
     aliases = [" ".join(words)]
-    singular_words = [singular(word) for word in words]
+    singular_words = [_singular_category_token(word) for word in words]
     aliases.append(" ".join(singular_words))
     # A category such as "Suits & Sport Coats" must still understand the
     # ordinary request "suit".  Restrict single-word aliases to substantial

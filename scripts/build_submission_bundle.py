@@ -39,8 +39,8 @@ SHIPPING_PATHS = (
     # The storefront. The specification puts interface work out of scope, so
     # this is not required and nothing in the scored path imports it, but a
     # reviewer who wants to type at the agent rather than read a transcript
-    # should be able to without cloning the repository. 118KB of source with no
-    # build step and no dependency beyond the standard library.
+    # should be able to without cloning the repository. It has no build step
+    # and no dependency beyond the standard library.
     "scripts/needle_storefront.py",
     "storefront",
     "demo/storefront.html",

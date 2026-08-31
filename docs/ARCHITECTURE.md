@@ -28,7 +28,9 @@ Beside that path, and reaching none of it: `needle/questions.py` ranks the
 catalog facet worth asking a person about, `needle/explain.py` writes the
 customer-facing sentence from the state that produced the turn,
 `needle/language.py` answers in the language the customer wrote in, and
-`storefront/` is the multi-item journey interface. The scored
+`storefront/` is the multi-item journey interface. It adds typed catalog-property
+filters and explicit numeric ordering over a catalog-derived category pool;
+those operations are confined to the labelled product surface. The scored
 `ask_attribute` and the scored ranking are untouched by all four.
 
 ## Stable interfaces
@@ -80,9 +82,9 @@ a different failure surface and disagrees with released-set tuning of
 `popularity_strength` (docs/evidence/EXP_006_SHAPES.md). These proxies are
 development diagnostics, not private-score estimates.
 
-## Next experiment-driven extensions
+## Closed decisions and post-submission extensions
 
-1. EXP-013 is closed: question specificity was measured across ten arms and every alternative to repeated `other` lost (docs/evidence/EXP_013.md). EXP-014 may still test later-rank cluster coverage, but only behind the selected deterministic path.
+1. EXP-013 is closed: question specificity was measured across ten arms and every alternative to repeated `other` lost (docs/evidence/EXP_013.md). Later-rank cluster coverage remains post-submission research, only behind the selected deterministic path.
 2. Robustness work targets general normalization and retrieval invariants; more released-template phrase patches are not acceptable evidence.
 3. Any optional model must beat the no-op and lexical controls on released score, disjoint targets, perturbation slices, license, offline startup, latency, memory, disk, and clean packaging.
 4. Closed. The release asset is rebuilt from the frozen scoring catalog and

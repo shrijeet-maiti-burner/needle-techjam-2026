@@ -54,8 +54,9 @@ python scripts/run_robustness.py --agent starter.agent:Agent --slices casing,neg
 Writes an ignored `results/robustness/<ts>-<sha>/report.json`. Exits non-zero if a
 preregistered gate fails.
 
-## Not yet
+## Known harness scope
 
 `conflict_add` and a mid-session `correction` slice (both need bucket-aware or
 multi-message perturbation); `@50` / `@200` recall (needs the retriever to expose
-a wider pool than the scored ten).
+a wider pool than the scored ten). These are declared development-harness
+limits, not unfinished runtime features or pre-submission gates.

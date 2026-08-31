@@ -13,7 +13,7 @@ This is a hypothesis, not a result. Architecture decisions are accepted only aft
 
 ## Current status
 
-The build is complete and the release is frozen. The selected primary and the pure-sparse rollback are encoded in `needle/presets.py`, and the submission archive is reproduced from a clean extraction rather than from this tree. The primary measures TechnicalScore 0.978500 on the 200 released sessions, with HR@10 1.000, MRR 0.996667, MTTC 2.025, and zero contract violations. Three 200-target, distribution-matched catalog-disjoint panels rerun from this exact tree score 0.979075, 0.965625, and 0.959900. A full registered robustness run is reported with its unresolved target-removal gates rather than being converted into a blanket robustness claim. Every response of the official run validates against the participant kit's own `agent_api_contract.json`: 405 responses, zero violations. Refusing the bundled index rebuilds an equivalent one in memory and scores identically. These are development measurements, not a private-score estimate or winning claim.
+The scored path is complete and frozen. The selected primary and the pure-sparse rollback are encoded in `needle/presets.py`, and the submission archive is reproduced from a clean extraction rather than from this tree. The primary measures TechnicalScore 0.978500 on the 200 released sessions, with HR@10 1.000, MRR 0.996667, MTTC 2.025, and zero contract violations. Three 200-target, distribution-matched catalog-disjoint panels rerun from this exact tree score 0.979075, 0.965625, and 0.959900. A full registered robustness run is reported with its unresolved target-removal gates rather than being converted into a blanket robustness claim. Every response of the official run validates against the participant kit's own `agent_api_contract.json`: 405 responses, zero violations. Refusing the bundled index rebuilds an equivalent one in memory and scores identically. These are development measurements, not a private-score estimate or winning claim.
 
 ## Quick start
 
@@ -60,7 +60,7 @@ docs/                   architecture, ownership, evidence, and disclosures
 python scripts/needle_storefront.py --warm
 ```
 
-Serves a local shopping interface on `http://127.0.0.1:8770`. The frozen primary agent generates candidates; an explicitly labelled product layer adds multi-item plans, alternative constraints, user-confirmed anchors, catalog-grounded compatibility evidence and value-of-information questions. Use `--benchmark-mode` to disable that layer and reproduce the one-target scored session shape. The journey layer is product evidence, not part of the reported `.978500` measurement. See [docs/STOREFRONT.md](docs/STOREFRONT.md).
+Serves a local shopping interface on `http://127.0.0.1:8770`. The frozen primary agent generates candidates; an explicitly labelled product layer adds multi-item plans, alternative constraints, user-confirmed anchors, catalog-grounded compatibility evidence, typed price/rating/review preferences and value-of-information questions. It also exposes the ranked question alternatives, correction history, evidence-bounded product comparison, seven reply languages, and accessible light/dark themes. Text fields remain searchable, while explicit numeric filters and orderings are evaluated over the complete catalog-derived category pool. Use `--benchmark-mode` to disable that layer and reproduce the one-target scored session shape. The journey layer is product evidence, not part of the reported `.978500` measurement. See [docs/STOREFRONT.md](docs/STOREFRONT.md).
 
 ## Non-negotiable rules
 
@@ -78,4 +78,4 @@ Serves a local shopping interface on `http://127.0.0.1:8770`. The frozen primary
 - participant-kit zip SHA-256: `b3d7e283b835343b42c4919ea2ca90f2fb5a2aa2b10537f14dcf42f03e5b38ae`
 - catalog source: [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/)
 
-The product codename is provisional. Repository naming is not part of the technical claim.
+Needle is the submitted project name. Repository naming is not part of the technical claim.

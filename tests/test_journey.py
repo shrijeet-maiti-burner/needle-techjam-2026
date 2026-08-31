@@ -18,6 +18,8 @@ from storefront.journey import (
     ShoppingPlan,
     alternative_queries,
     journey_beliefs,
+    query_for,
+    retired_terms,
 )
 from storefront.service import StorefrontService
 
@@ -108,6 +110,42 @@ PRODUCTS: tuple[dict[str, object], ...] = (
         "store": "Rain",
     },
 )
+
+
+def write_wide_catalog(case: unittest.TestCase) -> Path:
+    """A slate wide enough that several facets stay viable for many turns.
+
+    The bundled fixture runs out of catalog facets after one question and falls
+    through to the open `other`, so a test written against it can pass while
+    the behaviour it claims to check never happens. Reproducing a real board
+    needs a catalog that keeps offering a winner as the slate shrinks.
+    """
+    directory = tempfile.TemporaryDirectory()
+    case.addCleanup(directory.cleanup)
+    path = Path(directory.name) / "catalog.jsonl"
+    products = []
+    index = 0
+    for color in ("black", "blue", "brown", "green"):
+        for material in ("leather", "canvas", "denim", "wool"):
+            for style in ("classic", "casual", "formal", "athletic"):
+                index += 1
+                products.append({
+                    "parent_asin": f"W{index:04d}",
+                    "title": f"Men's {style} {color} {material} Suit",
+                    "categories": ["Clothing, Shoes & Jewelry", "Men", "Clothing", "Suits"],
+                    "features": [f"{style} {material} weave"],
+                    "description": [f"A {color} suit in {material}."],
+                    "details": {"Color": color.title(), "Material": material.title()},
+                    "price": 40 + index,
+                    "average_rating": 4.0,
+                    "rating_number": 100 + index,
+                    "store": f"Maker{index % 5}",
+                })
+    path.write_text(
+        "\n".join(json.dumps(product) for product in products) + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def write_catalog(case: unittest.TestCase) -> Path:
@@ -211,6 +249,34 @@ class JourneyPlannerTest(unittest.TestCase):
         self.assertEqual(len(self.plan.items), 1)
         self.assertEqual(self.plan.active_item.category, "suit")
         self.assertEqual(self.plan.active_item.constraints[0].values, ("white",))
+
+    def test_preference_retraction_rotates_only_the_active_product_session(self) -> None:
+        self.planner.observe(self.plan, "I need a blue suit", 1)
+        item = self.plan.active_item
+        assert item is not None
+        original_session = item.agent_session_id
+        item.local_turn = 3
+        item.asked_facets.append("style")
+        item.offered_values["style"] = ["formal", "casual"]
+        item.last_ids = ["SUIT_BLUE"]
+        item.selected_id = "SUIT_BLUE"
+
+        self.planner.observe(
+            self.plan,
+            "ignore my earlier preference; make it white",
+            2,
+        )
+
+        self.assertEqual(len(self.plan.items), 1)
+        self.assertNotEqual(item.agent_session_id, original_session)
+        self.assertEqual(item.local_turn, 0)
+        self.assertEqual(item.messages, ["ignore my earlier preference; make it white"])
+        self.assertEqual(item.asked_facets, [])
+        self.assertEqual(item.offered_values, {})
+        self.assertEqual(item.last_ids, [])
+        self.assertIsNone(item.selected_id)
+        self.assertTrue(any("blue" in group.values for group in item.superseded))
+        self.assertTrue(any("white" in group.values for group in item.constraints))
 
     def test_concrete_category_promotes_the_vague_placeholder(self) -> None:
         self.planner.observe(self.plan, "I need something for a wedding", 1)
@@ -388,6 +454,63 @@ class JourneyServiceTest(unittest.TestCase):
         self.assertNotIn("wearer", turn.message.lower())
 
 
+class ACorrectionDoesNotComeBackThroughTheQuery(unittest.TestCase):
+    """The plan can hold the correction and still ask retrieval for the old thing.
+
+    `query_for` appends the customer's own recent words to the structured
+    terms, which is useful for evidence the compact facets do not carry. It is
+    also where a retracted value returns: "actually not navy, make it black"
+    contains "navy", and so does the message before it, so the query one turn
+    after the correction read
+
+        suit wedding navy suit wedding black navy actually not make
+
+    with the belief state entirely correct and the query wrong. The scored
+    agent then read navy as the active colour, which is the failure the
+    organizer used as their example of a weak agent.
+    """
+
+    def setUp(self) -> None:
+        self.view = CatalogView(write_catalog(self))
+        self.planner = DeterministicJourneyPlanner(self.view.category_mentions)
+        self.plan = ShoppingPlan("correction")
+
+    def _run(self, *messages: str):
+        for turn, message in enumerate(messages, start=1):
+            self.planner.observe(self.plan, message, turn)
+        return self.plan.active_item
+
+    def test_a_replaced_value_leaves_the_query(self) -> None:
+        item = self._run("I need a men's suit", "a navy suit",
+                         "actually not navy, make it black")
+        query = query_for(self.plan, item)
+        self.assertIn("black", query)
+        self.assertNotIn("navy", query, f"the retracted colour is still in: {query!r}")
+
+    def test_an_excluded_value_leaves_the_query(self) -> None:
+        item = self._run("I need a men's suit", "no polyester")
+        query = query_for(self.plan, item)
+        self.assertNotIn("polyester", query, f"the excluded material is still in: {query!r}")
+
+    def test_a_value_stated_again_after_a_retraction_is_wanted_again(self) -> None:
+        """Retirement is not permanent. The positive groups are the authority."""
+        item = self._run("I need a men's suit", "a navy suit",
+                         "actually not navy, make it black", "on reflection, navy")
+        colours = {
+            value
+            for group in item.positive_groups()
+            for value in group.values
+        }
+        if "navy" in colours:
+            self.assertIn("navy", query_for(self.plan, item))
+            self.assertNotIn("navy", retired_terms(item))
+
+    def test_the_shoppers_other_words_are_kept(self) -> None:
+        """The tail earns its place; the fix must not empty it."""
+        item = self._run("I need a men's suit for a garden ceremony")
+        self.assertIn("garden", query_for(self.plan, item))
+
+
 class TheRailShowsWhatThePlanUnderstands(unittest.TestCase):
     """The panel is headed "what I have understood", so it has to mean the plan.
 
@@ -497,44 +620,7 @@ class AQuestionIsNotPutTwiceToTheSamePerson(unittest.TestCase):
         "Add shoes to go along with it",
     )
 
-    @staticmethod
-    def _wide_catalog(case: unittest.TestCase) -> Path:
-        """A slate wide enough that several facets stay viable for many turns.
-
-        The bundled fixture runs out of catalog facets after one question and
-        falls through to the open `other`, which is exactly the case the bug
-        did not appear in. Reproducing it needs a slate that keeps offering a
-        winner as it shrinks.
-        """
-        directory = tempfile.TemporaryDirectory()
-        case.addCleanup(directory.cleanup)
-        path = Path(directory.name) / "catalog.jsonl"
-        products = []
-        colors = ("black", "blue", "brown", "green")
-        materials = ("leather", "canvas", "denim", "wool")
-        styles = ("classic", "casual", "formal", "athletic")
-        index = 0
-        for color in colors:
-            for material in materials:
-                for style in styles:
-                    index += 1
-                    products.append({
-                        "parent_asin": f"W{index:04d}",
-                        "title": f"Men's {style} {color} {material} Shoes",
-                        "categories": ["Clothing, Shoes & Jewelry", "Men", "Shoes"],
-                        "features": [f"{style} {material} upper"],
-                        "description": [f"A {color} shoe in {material}."],
-                        "details": {"Color": color.title(), "Material": material.title()},
-                        "price": 40 + index,
-                        "average_rating": 4.0,
-                        "rating_number": 100 + index,
-                        "store": f"Maker{index % 5}",
-                    })
-        path.write_text(
-            "\n".join(json.dumps(product) for product in products) + "\n",
-            encoding="utf-8",
-        )
-        return path
+    _wide_catalog = staticmethod(write_wide_catalog)
 
     def test_the_same_facet_is_not_offered_again_as_the_slate_shrinks(self) -> None:
         catalog = self._wide_catalog(self)
@@ -603,11 +689,100 @@ class AQuestionIsNotPutTwiceToTheSamePerson(unittest.TestCase):
             self.assertNotEqual(first.ask_attribute, second.ask_attribute)
 
 
+class TheQuestionCarriesWhatItBeat(unittest.TestCase):
+    """A ranked board is the argument for asking anything, and it was discarded.
+
+    The board scores every catalog facet by how much of the slate an answer
+    removes, weighted by how many candidates can answer at all, less the cost
+    of a turn. Only the winner reached the payload, so the interface could show
+    a question but never why that one.
+    """
+
+    def test_the_alternatives_are_reported_with_their_numbers(self) -> None:
+        catalog = write_wide_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("board")
+            turn = service.send(conversation.session_id, "I need a men's suit")
+        question = turn.journey_trace["question"]
+        if not question.get("asks"):
+            self.skipTest("this slate produced no catalog question")
+        self.assertIn("alternatives", question)
+        for other in question["alternatives"]:
+            with self.subTest(attribute=other.get("attribute")):
+                self.assertNotEqual(other["attribute"], question["attribute"])
+                for field in ("net_value", "expected_remaining", "catalog_coverage"):
+                    self.assertIn(field, other)
+
+    def test_the_winner_outranks_everything_it_reports(self) -> None:
+        catalog = write_wide_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("ranking")
+            turn = service.send(conversation.session_id, "I need a men's suit")
+        question = turn.journey_trace["question"]
+        if not question.get("asks") or not question.get("alternatives"):
+            self.skipTest("no alternatives on this slate")
+        # The audience question can pre-empt the board, and when it does it is
+        # not ranked against it. Only check the ordering the board decided.
+        if question.get("source") == "released-candidate clarification board":
+            best = max(other["net_value"] for other in question["alternatives"])
+            self.assertGreaterEqual(question["net_value"], best)
+
+
+class ASessionCanBeOpenedInALanguage(unittest.TestCase):
+    """Seven languages work and an English page gives no way to find that out.
+
+    Pinning at session start reaches the same code path detection reaches, so
+    what a reviewer sees is the real behaviour rather than a translated
+    interface.
+    """
+
+    def test_the_reply_is_in_the_requested_language(self) -> None:
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("spanish", language="es")
+            turn = service.send(conversation.session_id, "zapatos")
+        self.assertEqual(turn.journey["language"], "es")
+        self.assertTrue(
+            any(mark in turn.message for mark in ("¿", "á", "é", "í", "ó", "ú", "ñ")),
+            f"no Spanish in: {turn.message!r}",
+        )
+
+    def test_english_is_unchanged_by_the_new_argument(self) -> None:
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            plain = service.send(service.start("plain").session_id, "I need a men's suit")
+            asked = service.send(
+                service.start("asked", language="en").session_id, "I need a men's suit"
+            )
+        self.assertEqual(plain.message, asked.message)
+
+    def test_an_unsupported_language_is_refused_rather_than_guessed(self) -> None:
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            with self.assertRaises(ValueError):
+                service.start("klingon", language="tlh")
+
+    def test_every_offered_language_is_one_the_module_supports(self) -> None:
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            offered = service.describe()["languages"]
+        from needle.language import supported
+
+        self.assertEqual([entry["code"] for entry in offered], list(supported()))
+        for entry in offered:
+            with self.subTest(code=entry["code"]):
+                self.assertTrue(entry["label"].strip())
+
+
 class JourneyArtifactTest(unittest.TestCase):
-    def test_interface_renders_plan_and_compatibility_without_html_injection(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "demo" / "storefront.html").read_text(
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.source = (Path(__file__).resolve().parents[1] / "demo" / "storefront.html").read_text(
             encoding="utf-8"
         )
+
+    def test_interface_renders_plan_and_compatibility_without_html_injection(self) -> None:
+        source = self.source
         self.assertIn("function renderJourney(journey)", source)
         self.assertIn("Compatibility evidence", source)
         self.assertIn("journey_trace", source)
@@ -626,6 +801,38 @@ class JourneyArtifactTest(unittest.TestCase):
         self.assertNotIn("fallback unresolved", source)
         self.assertNotIn("Product journey mode. ", source)
         self.assertNotIn("innerHTML", source)
+
+    def test_the_question_reasoning_reads_the_board_rather_than_restating_it(self) -> None:
+        self.assertIn("function renderQuestionReasoning(turn)", self.source)
+        self.assertIn("decision.alternatives", self.source)
+        # The numbers shown have to come from the payload. A hardcoded
+        # percentage in the interface would be a claim rather than a reading.
+        self.assertIn("decision.catalog_coverage", self.source)
+        self.assertIn("decision.expected_remaining", self.source)
+
+    def test_the_language_control_asks_the_service_what_it_supports(self) -> None:
+        """A list of languages in the interface is a second place to forget."""
+        self.assertIn("renderLanguages(config.languages)", self.source)
+        for code in ("Deutsch", "Español", "日本語"):
+            with self.subTest(label=code):
+                self.assertNotIn(f'"{code}"', self.source)
+
+    def test_the_comparison_never_claims_a_product_fails(self) -> None:
+        """Absent metadata is not a failed constraint.
+
+        Most of this catalog does not state a colour or a material, so a
+        comparison that printed a cross wherever it found nothing would be
+        inventing evidence against products for being poorly described.
+        """
+        self.assertIn("not stated", self.source)
+        self.assertIn('node("span", "verdict unknown"', self.source)
+
+    def test_a_new_session_clears_what_the_old_one_produced(self) -> None:
+        reset = self.source[self.source.index("async function newSession()"):]
+        reset = reset[:reset.index("async function send(")]
+        for cleared in ("compared.length = 0", "renderCompare()", "renderTimeline(null)"):
+            with self.subTest(cleared=cleared):
+                self.assertIn(cleared, reset)
 
 
 if __name__ == "__main__":

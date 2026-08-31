@@ -4,7 +4,7 @@ Status: selected development primary; source-only and asset-bundled official reh
 
 ## Environment
 
-- Python: 3.10 or later
+- Python: 3.10 or later; verified on CPython 3.10.5, the interpreter the release was built and reproduced under
 - mandatory runtime dependencies: Python standard library only (see `requirements.txt`)
 - network required for scoring: no
 - credentials required: no
@@ -18,6 +18,11 @@ signature index location. Without an override, the starter automatically uses
 `submission/assets/catalog-signatures.sqlite3` when present, otherwise the
 development path `.artifacts/indexes/catalog-signatures.sqlite3`. If neither is
 present, the agent rebuilds the equivalent index in process.
+
+`TECHJAM_KIT_ROOT` (helper scripts only). Set this to the extracted official
+participant-kit root when running `scripts/demo_session.py` or another shipped
+reproduction helper from outside the development repository. It is not read by
+the scored agent and is not required by the official evaluator.
 
 ## Running in the official harness
 
@@ -66,12 +71,12 @@ therefore makes the stored facets wrong while leaving the catalog binding and
 the schema intact, so `facet_parser_sha256` records which rules produced them
 and a mismatch retires the asset the same way a wrong catalog does.
 
-Current asset, schema 9, 68,702,208 bytes:
+Current asset, schema 9, 71,241,728 bytes:
 
 | | |
 |---|---|
 | `catalog_sha256` | `da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67` |
-| `facet_parser_sha256` | `5d1bae732fbd6ab366ddc19e9cc5a963080b68e8edbaedb590bee5a18f424938` |
+| `facet_parser_sha256` | `6a56e3549d6da62b017546a5393ce59acfa49ebaae1049b967e0917998437bca` |
 | product signature rows | 897,046 |
 | distinct category-bound card keys | 177,768 |
 | popularity-ordered card rows | 296,951 |
@@ -84,8 +89,8 @@ An earlier revision of this file pinned a file hash that no longer reproduced,
 which under the submission rules is the kind of thing that gets a bundle treated
 as unreproducible.
 
-Construction with the bundled index takes 2.728s and peaks at 220.0MB; the
-in-process rebuild takes 24.400s and peaks at 302.1MB on the same machine.
+Construction with the bundled index takes 2.895s and peaks at 208.8MB; the
+in-process rebuild takes 27.870s and peaks at 287.7MB on the measured release machine.
 Both reproduce TechnicalScore 0.978500, and construction happens once per
 evaluation run rather than per session. A stale index is never trusted.
 
