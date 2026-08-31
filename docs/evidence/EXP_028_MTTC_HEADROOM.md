@@ -58,7 +58,52 @@ turn-1 top ten in all 80 buying sessions; it is at rank 1 in 46. Taking the
 other 34 by widening the slate would cost roughly 0.034 of MRR to buy 0.004 of
 efficiency.
 
-**The turn-1 pool is exchangeable, so the rest is not rankable.** For buying,
+**Turn-1 emission is already saturated, in every scenario.** This is the
+decisive measurement, and it is built from `local_evaluator.intent_card`
+directly rather than from needle's re-implementation of it, because the whole
+conclusion rests on it. A catalog product is a plausible target at turn 1
+exactly when the card the evaluator would build for it opens with the value the
+customer disclosed, in the same coarse category. Validation: the target is
+inside that pool in **80 of 80** buying sessions, as it must be.
+
+| scenario | pool | target is most-rated in pool | **we hit at turn 1** | uniform-sampling expectation |
+|---|---|---:|---:|---:|
+| buying | same first card value, median 24 | **46 / 80** | **46** | 12.2 |
+| browsing | whole coarse category, median 173 | **29 / 80** | **29** | 1.7 |
+| boundary | whole coarse category, median 330 | **3 / 10** | **3** | 0.1 |
+
+We reach the ceiling exactly, in all three. Not approximately: the shipped agent
+picks the target at turn 1 in precisely the sessions where the target is the
+most-rated member of a set of products the customer has given us no way to tell
+apart, and in no others.
+
+The last column is what that ceiling is made of. If targets were drawn uniformly
+from eligible products, turn 1 would land about 14 times across the 170
+non-override sessions. It lands 78. The public set's targets are drawn from the
+popular tail by roughly five and a half times, and the entire turn-1 hit rate
+above 14 is that draw, not retrieval skill.
+
+**Nothing else separates them.** Nine catalog-side orderings, scored inside the
+buying pools:
+
+| ordering | turn-1 top-1 | MRR within pool |
+|---|---:|---:|
+| `rating_number` (shipped) | **46** | **0.6989** |
+| `rating_number` x `average_rating` | 46 | 0.6979 |
+| log `rating_number` x `average_rating` | 44 | 0.6867 |
+| price, low first | 25 | 0.4858 |
+| features count | 23 | 0.4167 |
+| price, high first | 22 | 0.4436 |
+| card values, most first | 17 | 0.3411 |
+| title length, short first | 13 | 0.2492 |
+| `average_rating` | 10 | 0.2598 |
+
+Nothing beats what is shipped, and the two that tie on top-1 are worse on MRR.
+The remaining 34 buying sessions are ones where the target is not the most-rated
+member of an otherwise identical set, and no ordering over catalog fields finds
+them.
+
+**The pool is exchangeable, so the rest is not rankable.** For buying,
 the opening message discloses exactly one constraint, `hard_constraints[0]`.
 Counting catalog products that share the target's `(coarse category, first
 signature value)` key, which is every piece of evidence the customer has given
