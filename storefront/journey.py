@@ -81,6 +81,7 @@ class LineItem:
     # shrinks every turn, so without this the same facet keeps winning on fresh
     # numbers and the interface asks it again while they answer.
     asked_facets: list[str] = field(default_factory=list)
+    offered_values: dict[str, list[str]] = field(default_factory=dict)
 
     def positive_groups(self) -> tuple[ConstraintGroup, ...]:
         return tuple(
@@ -257,6 +258,31 @@ class DeterministicJourneyPlanner:
         audiences = tuple(dict.fromkeys(self._audience_mentions(text)))
         stated_audience = audiences[0] if len(audiences) == 1 else None
         previous = plan.active_item
+        # Some taxonomy nodes are also ordinary facet values (for example a
+        # style label). If the state parser can type the entire mention as a
+        # constraint, keep it on the active item. In "formal shoes", only the
+        # adjective is removed and the product noun still creates Shoes.
+        parsed_value_tokens = {
+            tokens
+            for _attribute, value, _polarity in extract_constraints(text)
+            if (tokens := tuple(query_terms(value, limit=20)))
+        }
+        categories = tuple(
+            category
+            for category in categories
+            if tuple(query_terms(category, limit=20)) not in parsed_value_tokens
+        )
+        # Catalog facet values can also occur in the catalog taxonomy. A short
+        # answer such as "formal" must refine the suit after a style question,
+        # not create a new line item named Formal. Bind the interpretation to
+        # the actual values offered on the preceding question; product nouns
+        # that were not offered remain free to start another item.
+        answer_tokens = tuple(query_terms(text, limit=20))
+        if previous is not None and previous.asked_facets:
+            last_facet = previous.asked_facets[-1]
+            offered = previous.offered_values.get(last_facet, [])
+            if any(tuple(query_terms(value, limit=20)) == answer_tokens for value in offered):
+                categories = ()
         created: list[str] = []
 
         # A message can introduce more than one line item.  Most turns route to

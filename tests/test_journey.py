@@ -222,6 +222,31 @@ class JourneyPlannerTest(unittest.TestCase):
         self.assertEqual(self.plan.active_item.label, "Suit")
         self.assertIsNone(self.plan.active_item.relation)
 
+    def test_an_offered_facet_value_refines_instead_of_creating_an_item(self) -> None:
+        planner = DeterministicJourneyPlanner(
+            lambda text: [value for value in ("suit", "formal") if value in text.lower()]
+        )
+        plan = ShoppingPlan("offered-value")
+        planner.observe(plan, "I need a suit", 1)
+        item = plan.active_item
+        assert item is not None
+        item.asked_facets.append("style")
+        item.offered_values["style"] = ["formal", "casual"]
+        planner.observe(plan, "formal", 2)
+        self.assertEqual(len(plan.items), 1)
+        self.assertEqual(plan.active_item.category, "suit")
+
+    def test_a_typed_facet_value_is_not_mistaken_for_a_product_type(self) -> None:
+        planner = DeterministicJourneyPlanner(
+            lambda text: [value for value in ("suit", "formal", "shoes") if value in text.lower()]
+        )
+        plan = ShoppingPlan("typed-value")
+        planner.observe(plan, "I need a suit", 1)
+        planner.observe(plan, "formal", 2)
+        self.assertEqual([item.category for item in plan.items], ["suit"])
+        planner.observe(plan, "add formal shoes", 3)
+        self.assertEqual([item.category for item in plan.items], ["suit", "shoes"])
+
 
 class CompatibilityTest(unittest.TestCase):
     def setUp(self) -> None:

@@ -740,6 +740,15 @@ class StorefrontService:
             attribute = str(payload.get("attribute") or "")
             if payload.get("asks") and attribute and attribute not in asked:
                 asked.append(attribute)
+            raw_options = payload.get("options")
+            if payload.get("asks") and attribute and isinstance(raw_options, (list, tuple)):
+                values = [
+                    str(option[0]).strip().lower()
+                    for option in raw_options
+                    if isinstance(option, (list, tuple)) and option and str(option[0]).strip()
+                ]
+                if values:
+                    getattr(item, "offered_values", {})[attribute] = values
             return payload
 
         board = clarification_board(
