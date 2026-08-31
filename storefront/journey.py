@@ -555,6 +555,31 @@ def journey_beliefs(plan: ShoppingPlan) -> dict[str, object]:
     }
 
 
+def retired_terms(item: LineItem) -> frozenset[str]:
+    """Words the customer has ruled out or replaced, as retrieval tokens.
+
+    A superseded group holds the value that was replaced and a negative group
+    holds one that was rejected. Neither belongs in a query, and both are still
+    sitting in the raw message text that produced them.
+    """
+
+    active = {
+        token
+        for group in item.positive_groups()
+        for value in group.values
+        for token in str(value).lower().split()
+    }
+    retired = {
+        token
+        for group in (*item.negative_groups(), *item.superseded)
+        for value in group.values
+        for token in str(value).lower().split()
+    }
+    # Something re-stated after being retracted is wanted again, and the
+    # positive groups are the authority on that.
+    return frozenset(retired - active)
+
+
 def query_for(plan: ShoppingPlan, item: LineItem) -> str:
     """Stable retrieval text containing only interpreted shopping evidence."""
 
@@ -564,7 +589,20 @@ def query_for(plan: ShoppingPlan, item: LineItem) -> str:
     # Retain bounded free-text evidence such as "garden" or "daytime" that is
     # useful to sparse retrieval but is not one of the scorer's compact facets.
     # This is the shopper's language, not a generated expansion.
-    terms.extend(query_terms(" ".join(item.messages[-2:]), limit=30))
+    #
+    # It is also where a correction leaks back in. "actually not navy, make it
+    # black" contains "navy", and so does the message before it, so appending
+    # the tail verbatim sent `suit wedding navy suit wedding black navy` to
+    # retrieval one turn after the customer rejected navy. That is the "weak
+    # agent appends contradictory words" failure exactly, with the belief state
+    # correct and the query wrong. The tail keeps the shopper's own words and
+    # drops the ones they took back.
+    retired = retired_terms(item)
+    terms.extend(
+        term
+        for term in query_terms(" ".join(item.messages[-2:]), limit=30)
+        if term.lower() not in retired
+    )
     return " ".join(dict.fromkeys(term for term in terms if term)).strip()
 
 
@@ -598,6 +636,7 @@ __all__ = [
     "LineItem",
     "PlanDecision",
     "ShoppingPlan",
+    "retired_terms",
     "alternative_queries",
     "journey_beliefs",
     "query_for",
