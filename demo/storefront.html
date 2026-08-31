@@ -278,6 +278,21 @@
       .chip, button.send, button.ghost { min-height: 44px; }
     }
 
+    /* ---------- your picks ---------- */
+    .pick { padding: 11px 0; border-bottom: 1px solid var(--line-soft); }
+    .pick:first-child { padding-top: 0; }
+    .pick:last-child { padding-bottom: 0; border-bottom: 0; }
+    .pick:not(.newest) { opacity: .68; }
+    .pick-head { display: flex; align-items: flex-start; gap: 8px; }
+    .pick-title { margin: 0; font-size: 12.5px; line-height: 1.35; overflow-wrap: anywhere; }
+    .pick-drop {
+      margin-left: auto; padding: 0 4px; font-size: 15px; line-height: 1.1;
+      color: var(--dim); background: transparent; border: 0; cursor: pointer; flex: none;
+    }
+    .pick-drop:hover { color: var(--ink); }
+    .pick-facts { display: flex; flex-wrap: wrap; gap: 3px 10px; margin-top: 5px; color: var(--muted); font-size: 11px; }
+    .pick-when { color: var(--dim); font-size: 10.5px; }
+
     /* ---------- product cards ---------- */
 
     .slate { display: grid; gap: 10px; }
@@ -651,6 +666,11 @@
         <div class="panel-body" id="journey"></div>
       </div>
 
+      <div class="panel" id="picks-panel" hidden>
+        <div class="panel-head"><span>Your picks</span><span id="picks-count">none yet</span></div>
+        <div class="panel-body" id="picks"></div>
+      </div>
+
       <div class="panel">
         <div class="panel-head"><span>What I have understood</span><span id="intent-version">v1</span></div>
         <div class="panel-body" id="beliefs"><div class="none">Nothing disclosed yet.</div></div>
@@ -695,6 +715,9 @@
       mobileJourneySummary: document.getElementById("mobile-journey-summary"),
       mobileJourney: document.getElementById("mobile-journey"),
       beliefs: document.getElementById("beliefs"),
+      picksPanel: document.getElementById("picks-panel"),
+      picks: document.getElementById("picks"),
+      picksCount: document.getElementById("picks-count"),
       intentVersion: document.getElementById("intent-version"),
       deviation: document.getElementById("deviation"),
       configBody: document.getElementById("config-body"),
@@ -813,7 +836,75 @@
       });
     }
 
-    function renderCard(card, index, spotlight) {
+    /* ---------- your picks ----------
+       What the shopper chose with "Use in plan", kept visible in the rail while
+       the conversation moves on. Newest first, capped so the rail never grows
+       past the space it has. These are the same card payloads the slate
+       rendered; nothing is recomputed and nothing is re-ranked. */
+    const MAX_PICKS = 3;
+    const picks = [];
+
+    function renderPicks() {
+      if (!el.picksPanel || !el.picks) return;
+      clear(el.picks);
+      if (!picks.length) {
+        el.picksPanel.hidden = true;
+        el.picksCount.textContent = "none yet";
+        return;
+      }
+      el.picksPanel.hidden = false;
+      el.picksCount.textContent = picks.length === 1 ? "1 chosen" : picks.length + " chosen";
+
+      picks.forEach((pick, index) => {
+        const card = pick.card;
+        const box = node("div", "pick" + (index === 0 ? " newest" : ""));
+
+        const head = node("div", "pick-head");
+        head.appendChild(node("h4", "pick-title", card.title || card.parent_asin));
+        const drop = node("button", "pick-drop", "×");
+        drop.type = "button";
+        drop.setAttribute("aria-label", "Remove " + (card.title || card.parent_asin) + " from your picks");
+        drop.addEventListener("click", () => {
+          const at = picks.indexOf(pick);
+          if (at >= 0) picks.splice(at, 1);
+          renderPicks();
+        });
+        head.appendChild(drop);
+        box.appendChild(head);
+
+        const facts = node("div", "pick-facts");
+        const price = formatPrice(card.price);
+        facts.appendChild(node("span", "", price || "price not listed"));
+        if (card.average_rating) {
+          facts.appendChild(node(
+            "span",
+            "",
+            card.average_rating.toFixed(1) + " (" + numberFormat.format(card.rating_number || 0) + ")"
+          ));
+        }
+        if (card.store) facts.appendChild(node("span", "", card.store));
+        box.appendChild(facts);
+
+        const categories = Array.isArray(card.categories) ? card.categories : [];
+        if (categories.length) {
+          box.appendChild(node("div", "pick-when", categories.slice(-2).join(" › ")));
+        }
+        box.appendChild(node("div", "pick-when", "chosen on turn " + pick.turn));
+
+        el.picks.appendChild(box);
+      });
+    }
+
+    // Re-picking a product moves it back to the top rather than duplicating it.
+    function addPick(card, turn) {
+      const at = picks.findIndex((entry) => entry.card.parent_asin === card.parent_asin);
+      if (at >= 0) picks.splice(at, 1);
+      picks.unshift({ card: card, turn: turn });
+      while (picks.length > MAX_PICKS) picks.pop();
+      renderPicks();
+    }
+
+    function renderCard(card, index, spotlight, turnNumber) {
       const wrap = node("div", "card" + (spotlight ? " spotlight" : ""));
 
       const top = node("div", "card-top");
@@ -905,6 +996,7 @@
               parent_asin: card.parent_asin,
             });
             renderJourney(selected.journey);
+            addPick(card, turnNumber);
             document.querySelectorAll("button.plan-select[data-current='true']").forEach((button) => {
               button.disabled = false;
               button.textContent = "Use in plan";
@@ -1083,7 +1175,7 @@
       } else {
         const spotlight = cards.length === 1;
         const slate = node("div", "slate" + (spotlight ? "" : " multi"));
-        cards.forEach((card, index) => slate.appendChild(renderCard(card, index, spotlight)));
+        cards.forEach((card, index) => slate.appendChild(renderCard(card, index, spotlight, turn.turn)));
         wrap.appendChild(slate);
         if (spotlight) {
           wrap.appendChild(node(
@@ -1395,6 +1487,8 @@
       if (pending) return;
       clear(el.inner);
       el.inner.appendChild(el.opening);
+      picks.length = 0;
+      renderPicks();
       try {
         await newSession();
       } catch (error) {
