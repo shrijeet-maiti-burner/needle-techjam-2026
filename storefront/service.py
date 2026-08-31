@@ -636,9 +636,19 @@ class StorefrontService:
         language: str,
     ) -> str:
         label = str(getattr(item, "label", "this item")).lower()
+        # An item the customer has not named yet carries the placeholder label
+        # "Current item", which is a fine heading in the plan rail and a bad
+        # noun in a sentence: "I updated the current item line item" is the
+        # first thing the wedding journey says. Every sentence below therefore
+        # has a phrasing that does not need a product word.
+        unnamed = str(getattr(item, "category", "")) == "item" or label in {
+            "current item",
+            "this item",
+        }
         if not reranked.products:
+            missing = "nothing" if unnamed else f"no {label}"
             return (
-                f"I kept every stated requirement, but the catalog has no {label} "
+                f"I kept every stated requirement, but the catalog has {missing} "
                 "that satisfies all of them. Which requirement may I relax?"
             )
         if language != DEFAULT_LANGUAGE:
@@ -666,14 +676,18 @@ class StorefrontService:
             )
         elif action is JourneyAction.EXPLORE:
             prefix = (
-                f"I found {len(reranked.products)} varied matches for your {label} search."
+                f"I found {len(reranked.products)} varied "
+                f"{'catalog matches' if unnamed else f'matches for your {label} search'}."
             )
         elif action is JourneyAction.CREATE and len(plan.items) > 1:
-            prefix = f"I added {label} as a separate item without losing the rest of your plan."
+            prefix = (
+                f"I added {'another item' if unnamed else label} "
+                "without losing the rest of your plan."
+            )
         else:
             prefix = (
                 f"I found {len(reranked.products)} strong catalog matches "
-                f"for your {label} search."
+                f"{'for your search' if unnamed else f'for your {label} search'}."
             )
         suffix = question_message.strip()
         return f"{prefix} {suffix}".strip()

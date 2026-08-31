@@ -452,6 +452,15 @@
       font-size: 11px;
     }
 
+    .bchip .owner {
+      color: var(--dim);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      padding-right: 2px;
+    }
+
     /* ---------- rail ---------- */
 
     .rail { display: none; min-height: 0; overflow-y: auto; padding-bottom: 18px; }
@@ -1163,6 +1172,11 @@
         ["Dropped after a change of mind", beliefs.superseded, "gone"],
       ];
       let any = false;
+      const owners = new Set();
+      groups.forEach(([, entries]) => {
+        if (Array.isArray(entries)) entries.forEach((e) => e.item && owners.add(e.item));
+      });
+      const showOwners = owners.size > 1;
       groups.forEach(([label, entries, kind]) => {
         if (!Array.isArray(entries) || !entries.length) return;
         any = true;
@@ -1170,9 +1184,18 @@
         group.appendChild(node("div", "belief-label", label));
         entries.forEach((entry) => {
           const chip = node("span", "bchip " + kind);
+          // In a multi-item plan the same attribute belongs to different items,
+          // so an unlabelled "color navy" beside an active shoes item reads as
+          // the shoes being navy. Name the owner whenever the plan has more
+          // than one, and mark shared journey context as shared.
+          if (entry.item && showOwners) {
+            chip.appendChild(node("span", "owner", entry.item));
+          }
           chip.appendChild(node("span", "attr", entry.attribute));
           chip.appendChild(node("span", "", entry.value));
-          chip.title = "disclosed on turn " + entry.turn;
+          chip.title =
+            (entry.item ? entry.item + " \u00b7 " : "") +
+            "disclosed on turn " + entry.turn;
           group.appendChild(chip);
         });
         el.beliefs.appendChild(group);

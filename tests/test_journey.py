@@ -17,6 +17,7 @@ from storefront.journey import (
     LineItem,
     ShoppingPlan,
     alternative_queries,
+    journey_beliefs,
 )
 from storefront.service import StorefrontService
 
@@ -360,6 +361,97 @@ class JourneyServiceTest(unittest.TestCase):
         self.assertTrue(turn.cards)
         self.assertIn("¿", turn.message)
         self.assertNotIn("wearer", turn.message.lower())
+
+
+class TheRailShowsWhatThePlanUnderstands(unittest.TestCase):
+    """The panel is headed "what I have understood", so it has to mean the plan.
+
+    Scoped to the active line item it contradicted the plan beside it: after a
+    wedding, a navy suit and then shoes, the plan showed the occasion and the
+    colour while the rail said nothing had been disclosed, because navy belongs
+    to the suit and the shoes had become active.
+    """
+
+    def _plan(self) -> ShoppingPlan:
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("rail")
+            service.send(conversation.session_id, "I am getting married and need a men's suit")
+            service.send(conversation.session_id, "make it navy")
+            turn = service.send(conversation.session_id, "Add shoes to go along with it")
+        self.assertEqual(turn.journey["items"][-1]["category"], "shoes")
+        return turn
+
+    def test_a_constraint_on_an_earlier_item_still_appears(self) -> None:
+        turn = self._plan()
+        wanted = turn.beliefs["wanted"]
+        self.assertTrue(wanted, "the rail is empty while the plan holds constraints")
+        colours = [entry for entry in wanted if entry["value"] == "navy"]
+        self.assertEqual(len(colours), 1)
+        self.assertEqual(colours[0]["attribute"], "color")
+
+    def test_every_entry_names_the_item_it_constrains(self) -> None:
+        turn = self._plan()
+        # Without an owner, "color navy" beside an active shoes item reads as
+        # the shoes being navy.
+        for entry in turn.beliefs["wanted"] + turn.beliefs["excluded"]:
+            self.assertIn("item", entry)
+            self.assertTrue(str(entry["item"]).strip())
+        navy = next(entry for entry in turn.beliefs["wanted"] if entry["value"] == "navy")
+        self.assertNotEqual(navy["item"].lower(), "shoes")
+
+    def test_shared_context_is_attributed_to_the_journey_and_to_a_real_turn(self) -> None:
+        turn = self._plan()
+        shared = [entry for entry in turn.beliefs["wanted"] if entry["item"] == "shared"]
+        self.assertTrue(shared, "the journey occasion never reaches the rail")
+        for entry in shared:
+            self.assertIn(entry["value"], turn.journey["global_context"])
+            # The chip tooltip claims a turn. It has to be one that happened.
+            self.assertGreaterEqual(entry["turn"], 1)
+            self.assertLessEqual(entry["turn"], turn.turn)
+
+    def test_an_empty_plan_still_reports_the_three_groups(self) -> None:
+        beliefs = journey_beliefs(ShoppingPlan(session_id="empty"))
+        self.assertEqual(beliefs["wanted"], [])
+        self.assertEqual(beliefs["excluded"], [])
+        self.assertEqual(beliefs["superseded"], [])
+        self.assertEqual(beliefs["intent_version"], 1)
+
+
+class AnUnnamedItemIsNotReadAsANoun(unittest.TestCase):
+    """A line item the customer has not named carries the label "Current item".
+
+    That is a heading in the plan rail and a noun in a sentence, and the
+    opening turn of the wedding journey read "I updated the current item line
+    item from the constraints I could verify in the catalog."
+    """
+
+    def test_no_message_doubles_the_placeholder_label(self) -> None:
+        catalog = write_catalog(self)
+        openings = (
+            "I need an outfit for a wedding",
+            "something for a formal event",
+            "show me what you have",
+        )
+        for opening in openings:
+            with self.subTest(opening=opening):
+                with StorefrontService(catalog, journey_mode=True) as service:
+                    conversation = service.start("unnamed")
+                    turn = service.send(conversation.session_id, opening)
+                message = turn.message.lower()
+                self.assertNotIn("current item line item", message)
+                self.assertNotIn("these current item", message)
+                self.assertNotIn("your current item intent", message)
+                self.assertNotIn("no current item that", message)
+                self.assertNotIn("added current item", message)
+
+    def test_a_named_item_still_names_itself(self) -> None:
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("named")
+            service.send(conversation.session_id, "I am getting married and need a men's suit")
+            turn = service.send(conversation.session_id, "Add shoes to go along with it")
+        self.assertIn("shoes", turn.message.lower())
 
 
 class JourneyArtifactTest(unittest.TestCase):

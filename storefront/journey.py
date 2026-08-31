@@ -113,6 +113,9 @@ class ShoppingPlan:
     items: list[LineItem] = field(default_factory=list)
     active_item_id: str | None = None
     global_context: list[str] = field(default_factory=list)
+    # value -> the turn it was first stated, so the belief rail can attribute
+    # shared context to a turn instead of inventing one.
+    context_turns: dict[str, int] = field(default_factory=dict)
     last_action: JourneyAction = JourneyAction.UPDATE
     exploration: bool = False
     comparison: bool = False
@@ -244,6 +247,7 @@ class DeterministicJourneyPlanner:
                 plan.items.clear()
                 plan.active_item_id = None
                 plan.global_context.clear()
+                plan.context_turns.clear()
         categories = tuple(dict.fromkeys(self._category_mentions(text)))
         audiences = tuple(dict.fromkeys(self._audience_mentions(text)))
         stated_audience = audiences[0] if len(audiences) == 1 else None
@@ -360,11 +364,13 @@ class DeterministicJourneyPlanner:
             if attribute == "use_case" and polarity is Polarity.POSITIVE:
                 if value not in plan.global_context:
                     plan.global_context.append(value)
+                    plan.context_turns.setdefault(value, int(turn))
                 continue
             by_attribute.setdefault((attribute, polarity), []).append(value)
         for value, pattern in _CONTEXT_EQUIVALENTS.items():
             if pattern.search(message) and value not in plan.global_context:
                 plan.global_context.append(value)
+                plan.context_turns.setdefault(value, int(turn))
 
         correcting = bool(_CORRECTION_RE.search(message))
         soft = bool(_SOFT_RE.search(message))
@@ -445,42 +451,66 @@ class DeterministicJourneyPlanner:
 
 
 def journey_beliefs(plan: ShoppingPlan) -> dict[str, object]:
-    """Compatibility view for the existing belief rail."""
+    """Everything the plan has understood, not just the item in focus.
 
-    item = plan.active_item
-    if item is None:
-        return {"wanted": [], "excluded": [], "superseded": [], "intent_version": 1}
+    The rail is headed "what I have understood", so scoping it to the active
+    line item made it contradict the panel beside it: after "wedding", "a navy
+    suit", "now matching shoes" the plan showed the occasion and the colour
+    while the rail said "nothing disclosed yet", because navy belongs to the
+    suit and the active item had become the shoes.
+
+    Every entry therefore carries the label of the item it constrains, so a
+    plan-wide view stays unambiguous: the colour reads as the suit's colour and
+    not the shoes'. Shared journey context, which belongs to no single item,
+    is attributed to the journey.
+    """
 
     wanted: list[dict[str, object]] = []
     excluded: list[dict[str, object]] = []
-    for group in item.constraints:
-        destination = excluded if group.operator is ConstraintOperator.NOT else wanted
-        for value in group.values:
-            destination.append(
-                {
-                    "attribute": group.attribute,
-                    "value": value,
-                    "turn": group.turn,
-                    "operator": group.operator.value,
-                    "strength": group.strength.value,
-                }
-            )
-    superseded = [
-        {
+    superseded: list[dict[str, object]] = []
+
+    def entry(group: ConstraintGroup, value: str, owner: str) -> dict[str, object]:
+        return {
             "attribute": group.attribute,
             "value": value,
             "turn": group.turn,
             "operator": group.operator.value,
             "strength": group.strength.value,
+            "item": owner,
         }
-        for group in item.superseded
-        for value in group.values
-    ]
+
+    for value in plan.global_context:
+        wanted.append(
+            {
+                "attribute": "occasion",
+                "value": value,
+                "turn": plan.context_turns.get(value, 1),
+                "operator": "all",
+                "strength": "hard",
+                "item": "shared",
+            }
+        )
+
+    # Active item first: it is the one the next answer will change.
+    active = plan.active_item
+    ordered = [item for item in plan.items if item is active]
+    ordered += [item for item in plan.items if item is not active]
+    for item in ordered:
+        for group in item.constraints:
+            destination = (
+                excluded if group.operator is ConstraintOperator.NOT else wanted
+            )
+            for value in group.values:
+                destination.append(entry(group, value, item.label))
+        for group in item.superseded:
+            for value in group.values:
+                superseded.append(entry(group, value, item.label))
+
     return {
         "wanted": wanted,
         "excluded": excluded,
         "superseded": superseded,
-        "intent_version": 1 + len(item.superseded),
+        "intent_version": 1 + sum(len(item.superseded) for item in plan.items),
     }
 
 
