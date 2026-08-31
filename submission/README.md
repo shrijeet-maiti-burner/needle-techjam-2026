@@ -4,7 +4,7 @@ Status: selected development primary; source-only and asset-bundled official reh
 
 ## Environment
 
-- Python: 3.10 or later
+- Python: 3.10 or later; verified on CPython 3.10.5, the interpreter the release was built and reproduced under
 - mandatory runtime dependencies: Python standard library only (see `requirements.txt`)
 - network required for scoring: no
 - credentials required: no
