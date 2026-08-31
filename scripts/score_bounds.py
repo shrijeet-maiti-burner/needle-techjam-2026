@@ -118,5 +118,5 @@ print(f"{'scenario':<18}{'n':>4}{'oracle MTTC':>14}")
 for k in sorted(by_scen):
     print(f"{k:<18}{len(by_scen[k]):>4}{statistics.fmean(by_scen[k]):>14.4f}")
 print(f"\nprotocol oracle: HR={hr:.4f} MRR=1.0000 MTTC={mttc:.4f} -> SCORE {0.5*hr + 0.3*1.0 + 0.2*e:.6f}")
-print(f"our measured arm                                    0.978550")
+print(f"EXP-023 reference arm                              0.978550")
 print(f"\nabsolute bound (omniscient, evaluator floor only)     0.992200")

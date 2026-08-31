@@ -128,6 +128,31 @@ def run(catalog: Path, index: Path | None) -> list[str]:
         if not rated.cards or rated.ask_attribute is not None:
             failures.append("best-rated request did not return a complete direct answer")
 
+        conversation = service.start("redteam-natural-rating")
+        natural_rated = service.send(
+            conversation.session_id,
+            "highly rated running shoes for men",
+        )
+        natural_ranking = natural_rated.journey_trace.get("ranking") or {}
+        if natural_ranking.get("method") != "bayesian average weighted by catalog review count":
+            failures.append("natural rating language bypassed confidence-adjusted ordering")
+        if not natural_rated.cards or natural_rated.ask_attribute is not None:
+            failures.append("natural rating request did not return a complete direct answer")
+
+        conversation = service.start("redteam-rating-floor")
+        rating_floor = service.send(
+            conversation.session_id,
+            "running shoes for men rated 4.5 or higher",
+        )
+        if not rating_floor.cards or any(
+            not isinstance(card.get("average_rating"), (int, float))
+            or float(card["average_rating"]) < 4.5
+            for card in rating_floor.cards
+        ):
+            failures.append("explicit rating floor admitted missing or out-of-range ratings")
+        if rating_floor.ask_attribute is not None:
+            failures.append("explicit rating floor was followed by an unrelated question")
+
         conversation = service.start("redteam-price-range")
         bounded = service.send(
             conversation.session_id,
@@ -142,7 +167,7 @@ def run(catalog: Path, index: Path | None) -> list[str]:
 
         for turn in (
             first, second, shoes, black, corrected, compared, vague,
-            cheapest, rated, bounded,
+            cheapest, rated, natural_rated, rating_floor, bounded,
         ):
             if turn.degraded:
                 failures.append(f"turn {turn.turn} silently degraded")

@@ -1,7 +1,9 @@
-# Research decisions for the H0-H24 build
+# Research decisions and transfer warnings
 
-Last audited: 29 August 2026. These are design constraints, not claims that a
-published result transfers to the TechJam evaluator.
+This is the pre-build primary-research record, last audited 29 August 2026.
+These are design constraints, not claims that a published result transfers to
+the TechJam evaluator. The measured selections and rejections are indexed in
+[`EXPERIMENTS.md`](EXPERIMENTS.md).
 
 | Primary source | Result relevant here | Decision for Needle | Non-transfer warning |
 |---|---|---|---|
@@ -15,7 +17,7 @@ published result transfers to the TechJam evaluator.
 | [Reciprocal rank fusion (Cormack et al., SIGIR 2009)](https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/) | Combines rank lists without requiring calibrated raw scores. | Prefer fixed rank fusion when exact, sparse, and optional semantic scores are not comparable. | Fusion still needs a candidate-recall and slice gate here. |
 | [LambdaMART overview (Burges, Microsoft Research 2010)](https://www.microsoft.com/en-us/research/publication/from-ranknet-to-lambdarank-to-lambdamart-an-overview/) | Learning-to-rank methods are effective when trained and validated on suitable ranking data. | Defer LTR. Two hundred evaluator-coupled sessions with disjoint private targets do not justify adding a trainable ranker before fixed features and robustness splits are exhausted. | The cited large-scale ranking evidence does not establish sample efficiency on this task. |
 
-## Consequences for the next experiments
+## Consequences retained in the release
 
 1. Exact signatures, sparse weights, popularity, slate size, and seen-item
    suppression are independent constructor controls. Each arm changes one

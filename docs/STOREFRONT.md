@@ -41,7 +41,10 @@ python scripts/needle_storefront.py --warm --benchmark-mode
 - in product mode, a typed plan with separate line items, shared occasion context, `all`/`either`/`avoid` groups, wearer state and a user-confirmed product anchor;
 - typed catalog-property intent: lower, upper and bounded filters for price, star rating and review count; and explicit lowest-price, highest-price, least/most-reviewed or confidence-adjusted lowest/best-rated ordering;
 - per related product, the compatibility signals that catalog text supports, their confidence and the missing evidence limiting the claim;
-- a separate journey receipt with candidate-source, merge, filter, relation-anchor, numeric-ranking method and clarification-board evidence.
+- a separate journey receipt with candidate-source, merge, filter, relation-anchor, numeric-ranking method and clarification-board evidence;
+- the catalog-derived alternatives the selected question outranked, plus a correction timeline when a preference was superseded;
+- an evidence-bounded comparison tray for up to three products, using `not stated` rather than inventing a mismatch when metadata is absent;
+- direct selection of any of the seven supported reply languages, and system/light/dark themes whose measured text contrast clears 4.5:1.
 
 ## Boundaries
 
@@ -88,16 +91,16 @@ Run the product-level adversarial gate against the real catalog separately:
 python scripts/journey_redteam.py
 ```
 
-It covers multi-item preservation, catalog-derived audience clarification, alternative constraints, explicit selection, relation evidence, correction scope, comparison-state immutability, vague exploration, complete-category numeric filtering and ranking, category integrity, degradation and the ten-card contract. It does not emit or imply an official score.
+It covers multi-item preservation, catalog-derived audience clarification, alternative constraints, explicit selection, relation evidence, correction scope, comparison-state immutability, vague exploration, complete-category numeric filtering and ranking, natural rating language, explicit rating floors, category integrity, degradation and the ten-card contract. It does not emit or imply an official score.
 
 The gate fails on a degraded turn, empty slate, malformed response, missing
 target-blind trace, bad error status, accepted eleventh turn, or p95 latency
 above the supplied ceiling. The final benchmark-mode run completed 36 traced
-turns in 3.08s at p50 63.4ms, p95 191.9ms, and max 386.4ms; error paths and
+turns in 2.99s at p50 65.9ms, p95 185.6ms, and max 372.9ms; error paths and
 turn budget passed.
 
 ## Interface notes
 
 Single HTML file, no frontend build step, package, network, font or asset fetch. Everything user- or catalog-supplied is written through `textContent`; no path builds markup from either. The server binds the loopback interface only and is not written to be exposed to a network.
 
-The base interface at commit `cac5a30` was rendered in headless Chrome at 1440x1000 and a 390x844 mobile viewport. Both dimensions reported `scrollWidth == clientWidth`; the live two-turn correction flow displayed two decision receipts, active `blue`, excluded `black`, and no degraded turn. The later numeric receipt and plan chips passed the same static no-injection artifact gate, but still require a final rendered desktop/mobile pass. This is browser evidence for the tested Chromium build, not a blanket cross-browser claim.
+The interface was rendered and exercised in Chrome on desktop and a narrow mobile viewport. The final interface branch passed 21 browser checks, including session reset, language switching and compare-state isolation. Both theme palettes were measured at 4.5:1 or better for interface text down to 10.5px, and the user completed the final visual confirmation after the numeric receipt and plan controls landed. Static tests additionally prohibit unsafe HTML sinks and literal surface colors. This is evidence for the tested Chromium build, not a blanket cross-browser claim; a fresh browser connection was unavailable during the final repository audit, so that audit did not claim a second independent render.

@@ -82,9 +82,9 @@ a different failure surface and disagrees with released-set tuning of
 `popularity_strength` (docs/evidence/EXP_006_SHAPES.md). These proxies are
 development diagnostics, not private-score estimates.
 
-## Next experiment-driven extensions
+## Closed decisions and post-submission extensions
 
-1. EXP-013 is closed: question specificity was measured across ten arms and every alternative to repeated `other` lost (docs/evidence/EXP_013.md). EXP-014 may still test later-rank cluster coverage, but only behind the selected deterministic path.
+1. EXP-013 is closed: question specificity was measured across ten arms and every alternative to repeated `other` lost (docs/evidence/EXP_013.md). Later-rank cluster coverage remains post-submission research, only behind the selected deterministic path.
 2. Robustness work targets general normalization and retrieval invariants; more released-template phrase patches are not acceptable evidence.
 3. Any optional model must beat the no-op and lexical controls on released score, disjoint targets, perturbation slices, license, offline startup, latency, memory, disk, and clean packaging.
 4. Closed. The release asset is rebuilt from the frozen scoring catalog and

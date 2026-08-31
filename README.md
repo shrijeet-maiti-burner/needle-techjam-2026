@@ -60,7 +60,7 @@ docs/                   architecture, ownership, evidence, and disclosures
 python scripts/needle_storefront.py --warm
 ```
 
-Serves a local shopping interface on `http://127.0.0.1:8770`. The frozen primary agent generates candidates; an explicitly labelled product layer adds multi-item plans, alternative constraints, user-confirmed anchors, catalog-grounded compatibility evidence, typed price/rating/review preferences and value-of-information questions. Text fields remain searchable, while explicit numeric filters and orderings are evaluated over the complete catalog-derived category pool. Use `--benchmark-mode` to disable that layer and reproduce the one-target scored session shape. The journey layer is product evidence, not part of the reported `.978500` measurement. See [docs/STOREFRONT.md](docs/STOREFRONT.md).
+Serves a local shopping interface on `http://127.0.0.1:8770`. The frozen primary agent generates candidates; an explicitly labelled product layer adds multi-item plans, alternative constraints, user-confirmed anchors, catalog-grounded compatibility evidence, typed price/rating/review preferences and value-of-information questions. It also exposes the ranked question alternatives, correction history, evidence-bounded product comparison, seven reply languages, and accessible light/dark themes. Text fields remain searchable, while explicit numeric filters and orderings are evaluated over the complete catalog-derived category pool. Use `--benchmark-mode` to disable that layer and reproduce the one-target scored session shape. The journey layer is product evidence, not part of the reported `.978500` measurement. See [docs/STOREFRONT.md](docs/STOREFRONT.md).
 
 ## Non-negotiable rules
 
@@ -78,4 +78,4 @@ Serves a local shopping interface on `http://127.0.0.1:8770`. The frozen primary
 - participant-kit zip SHA-256: `b3d7e283b835343b42c4919ea2ca90f2fb5a2aa2b10537f14dcf42f03e5b38ae`
 - catalog source: [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/)
 
-The product codename is provisional. Repository naming is not part of the technical claim.
+Needle is the submitted project name. Repository naming is not part of the technical claim.

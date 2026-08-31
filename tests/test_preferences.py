@@ -326,6 +326,24 @@ class NumericJourneyIntegrationTest(unittest.TestCase):
         self.assertIsNone(turn.ask_attribute)
         self.assertEqual(turn.journey_trace["ranking"]["method"], "bayesian average weighted by catalog review count")
 
+    def test_explicit_numeric_filters_do_not_trigger_an_unrelated_question(self) -> None:
+        for message in (
+            "men's suit rated 4.5 or higher",
+            "men's suit between $100 and $160",
+            "men's suit with at least 100 reviews",
+        ):
+            with self.subTest(message=message):
+                with StorefrontService(write_catalog(self), journey_mode=True) as service:
+                    conversation = service.start()
+                    turn = service.send(conversation.session_id, message)
+                self.assertTrue(turn.cards)
+                self.assertIsNone(turn.ask_attribute)
+                self.assertEqual(
+                    turn.journey_trace["question"]["source"],
+                    "explicit shopper numeric filter",
+                )
+                self.assertIn("I applied", turn.message)
+
     def test_a_later_ranking_request_updates_the_existing_line_item(self) -> None:
         with StorefrontService(write_catalog(self), journey_mode=True) as service:
             conversation = service.start("later")

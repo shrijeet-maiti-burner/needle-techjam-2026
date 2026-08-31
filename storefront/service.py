@@ -610,7 +610,10 @@ class StorefrontService:
                 str(question_decision.get("attribute"))
                 if question_decision.get("asks")
                 else None
-                if question_decision.get("source") == "explicit shopper ranking"
+                if question_decision.get("source") in {
+                    "explicit shopper ranking",
+                    "explicit shopper numeric filter",
+                }
                 else response.get("ask_attribute")
             ),
             cards=cards,
@@ -725,6 +728,15 @@ class StorefrontService:
                 f"I ranked these {label if not unnamed else 'catalog matches'} by "
                 f"{getattr(item, 'ranking').label()} using the values the catalog states."
             )
+        elif getattr(item, "numeric_filters", None):
+            applied = ", ".join(
+                constraint.label()
+                for constraint in getattr(item, "numeric_filters")
+            )
+            prefix = (
+                f"I applied {applied} and found {len(reranked.products)} "
+                f"{'catalog matches' if unnamed else f'matches for your {label} search'}."
+            )
         elif action is JourneyAction.EXPLORE:
             prefix = (
                 f"I found {len(reranked.products)} varied "
@@ -764,7 +776,12 @@ class StorefrontService:
         """
 
         ranking = getattr(item, "ranking", None)
-        if ranking is not None and getattr(item, "category", "item") != "item" and candidate_ids:
+        numeric_filters = tuple(getattr(item, "numeric_filters", ()))
+        if (
+            (ranking is not None or numeric_filters)
+            and getattr(item, "category", "item") != "item"
+            and candidate_ids
+        ):
             return "", {
                 "asks": False,
                 "attribute": None,
@@ -772,7 +789,11 @@ class StorefrontService:
                 "expected_remaining": len(candidate_ids),
                 "expected_candidate_reduction": 0.0,
                 "options": (),
-                "source": "explicit shopper ranking",
+                "source": (
+                    "explicit shopper ranking"
+                    if ranking is not None
+                    else "explicit shopper numeric filter"
+                ),
                 "relationship_aware": False,
                 "catalog_coverage": 1.0,
             }
