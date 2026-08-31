@@ -57,14 +57,37 @@ The versioned signature index is a startup optimisation, not a requirement. It
 is bound to a specific catalog by SHA-256. If it is absent, unreadable, or was
 built against any other catalog, the agent records the reason in
 `CatalogIndex.signature_index_fallback` and rebuilds the equivalent index in
-process. The schema-8, 68,702,208-byte asset contains 897,046
-product-signature rows, 177,768 distinct category-bound card keys, 296,951
-popularity-ordered card rows, and catalog-derived clarification facets for all
-50,000 products. It has SHA-256
-`797dd7ef14911a43966599f7157e41db8e80e3feda56e9e09f197cad0e1917e3`.
-The recorded bundled construction takes 8.364s; the source-only fallback takes
-84.788s on the same machine. Both reproduce TechnicalScore 0.978500. A stale
-index is never trusted.
+process. The asset is bound to two things, and both are checked at load. It is bound to
+the catalog by SHA-256, and it is bound to the parser that produced it, because
+it stores this repository's own parse of every product: `build_signature_index`
+writes `product_clarification_facets` for all 50,000, and that calls
+`needle.state.extract_constraints`. A change to the negation or vocabulary rules
+therefore makes the stored facets wrong while leaving the catalog binding and
+the schema intact, so `facet_parser_sha256` records which rules produced them
+and a mismatch retires the asset the same way a wrong catalog does.
+
+Current asset, schema 9, 68,702,208 bytes:
+
+| | |
+|---|---|
+| `catalog_sha256` | `da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67` |
+| `facet_parser_sha256` | `5d1bae732fbd6ab366ddc19e9cc5a963080b68e8edbaedb590bee5a18f424938` |
+| product signature rows | 897,046 |
+| distinct category-bound card keys | 177,768 |
+| popularity-ordered card rows | 296,951 |
+| clarification facet rows | 50,000 |
+
+The file's own SHA-256 is deliberately not the reproducibility contract. Two
+builds of identical content can differ byte for byte, so the table above is what
+a rebuild is checked against, and the metadata above is what the loader checks.
+An earlier revision of this file pinned a file hash that no longer reproduced,
+which under the submission rules is the kind of thing that gets a bundle treated
+as unreproducible.
+
+Construction with the bundled index takes 2.728s and peaks at 220.0MB; the
+in-process rebuild takes 24.400s and peaks at 302.1MB on the same machine.
+Both reproduce TechnicalScore 0.978500, and construction happens once per
+evaluation run rather than per session. A stale index is never trusted.
 
 Rebuild it for a given catalog with:
 

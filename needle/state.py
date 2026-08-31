@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass, field, replace
@@ -21,9 +22,23 @@ from needle.semantic import fold_diacritics, repair_trigger_text, trigger_keywor
 # shown-candidate set, and discards belief, so this errs toward missing an
 # override rather than inventing one.
 _RETRACT = r"(?:ignore|disregard|forget|scratch|scrap|cancel|undo|drop)"
+# A bare pronoun is only a reference to the conversation when it ends the
+# clause. "Cancel that shipping upgrade" and "Drop it in my basket" use the
+# same words as a retraction and mean nothing of the kind: in the first "that"
+# is a determiner introducing a noun phrase, in the second "it" is the object
+# of a preposition. Both fired a full session reset. Requiring the pronoun to
+# be clause final separates them from "ignore that." without needing to know
+# what a noun is.
+#
+# The trailing group is a closed class of degree adverbs, and is the one place
+# in this module that is a word list rather than a rule. It is here because
+# "ignore that too" is ordinary and losing it costs a retraction. Every other
+# `_PRIOR` branch is already unambiguous and is left alone, including "my
+# earlier preference", which is what the released simulator sends.
+_PRONOUN_TAIL = r"(?:\s+(?:too|also|entirely|completely|all|as\s+well))?\s*(?=[.,;!?]|$)"
 _PRIOR = (
     r"(?:"
-    r"that|it|this"
+    rf"(?:that|it|this){_PRONOUN_TAIL}"
     r"|(?:the\s+)?last\s+(?:thing|one|bit|request|message)?"
     r"|what\s+i\s+(?:said|told\s+you|asked\s+for)"
     r"|my\s+(?:earlier\s+|previous\s+|prior\s+|old\s+|last\s+|initial\s+|first\s+)?"
@@ -94,9 +109,17 @@ OVERRIDE_POLICIES = frozenset(
 # Scoped to its own clause rather than the whole message, so a mixed turn
 # such as "no preference for color, but cotton is required" still yields the
 # material constraint. Only the declined clause is suppressed.
+# "I don't mind black" is not a request for black and not a ban on it. It is
+# the customer declining to constrain, which is exactly what this pattern
+# already means, so the indifference verbs belong here rather than as
+# exceptions carved out of the negation rule below. Keeping them on this side
+# is what lets that rule generalise safely, and it is a better answer than an
+# exemption list: these phrasings now yield no constraint at all rather than a
+# wrong one.
 NO_PREFERENCE_RE = re.compile(
     r"\b(?:no preference|don'?t have (?:a|an|any|an additional) preference|"
-    r"use your judgment|whatever you recommend|not fussed|no strong feelings)\b",
+    r"use your judgment|whatever you recommend|not fussed|no strong feelings|"
+    r"do(?:es)?n'?t (?:mind|care)|either (?:is fine|way)|not bothered)\b",
     re.IGNORECASE,
 )
 # A clause ends at the next separator or the end of the message.
@@ -141,9 +164,25 @@ def _declined_attributes(message: str, regions: list[tuple[int, int]]) -> set[st
 # Negation is only trusted immediately before the matched value. Anything
 # looser stays positive rather than silently creating an exclusion, because a
 # wrong hard exclusion can remove the target for the rest of the session.
+# `don'?t want` hardcoded one verb where the negation is carried by the
+# auxiliary, so "I don't like black" and "I don't need leather" read as
+# requests for those values. Matching the negated auxiliary itself covers every
+# verb at once.
+#
+# That generalisation is only safe because indifference is handled above: "I
+# don't mind black" reaches `_declined_regions` first and the clause is
+# suppressed, so it never becomes an exclusion.
+#
+# "never" joins on the same grammatical footing as "except", which is already
+# here: one is a negative adverb, the other a preposition of exclusion.
+# Semantic exclusions such as "I hate black" or "black is out" are deliberately
+# still missed, because catching those means a list of opinion verbs rather
+# than a rule about English.
 NEGATION_RE = re.compile(
-    r"\b(?:no|not|without|non|avoid|skip|dislike|don'?t want|nothing|"
-    r"except|excluding|instead\s+of|rather\s+than)\b",
+    r"\b(?:no|not|without|non|avoid|skip|dislike|nothing|never|"
+    r"except|excluding|instead\s+of|rather\s+than|"
+    r"(?:do|does|did|ca|wo|sha|is|are|was|were|has|have|had"
+    r"|could|would|should|must)\s?n[’']?t)\b",
     re.IGNORECASE,
 )
 NEGATION_WINDOW = 24
@@ -152,8 +191,35 @@ NEGATION_WINDOW = 24
 # every catalog value and fixes constructions such as "not black but blue",
 # "not black, blue", and "not black - blue". Coordination is deliberately not
 # a boundary, so "no black and navy" still excludes both values.
+# Subordinators reset the scope for the same reason contrastives do: they open
+# a new clause, and a negator in the main clause does not reach inside it.
+# Measured need, from a live public disclosure: "these slippers hug your feet
+# so they won't fly off when walking" excluded `use_case:walking`, because
+# "won't" sits inside the lookbehind width and nothing punctuated the gap. The
+# negation is on "fly off"; "when" is where it stops.
 NEGATION_RESET_RE = re.compile(
-    r"[,;.!?\u2014\u2013]|\s-\s|\b(?:but|however|though|yet)\b",
+    r"[,;.!?\u2014\u2013]|\s-\s|"
+    r"\b(?:but|however|though|yet"
+    r"|when(?:ever)?|while|if|unless|until|after|before|because|since)\b",
+    re.IGNORECASE,
+)
+# These constructions contain a syntactic negator without rejecting the value.
+# They are grammatical operators, not product vocabulary: the same suppression
+# applies to every attribute extracted below. Removing only the operator leaves
+# any real exclusion later in the window (for example, "do not mind avoiding
+# wool") available to the ordinary negation rule.
+NON_EXCLUDING_NEGATION_RE = re.compile(
+    r"\bnot\s+(?:only|sure|certain|opposed\s+to|against)\b"
+    r"|\b(?:do|does|did|would|could|should)(?:\s+not|n[’']?t)\s+"
+    r"(?:mind|dislike|hate|object\s+to)\b",
+    re.IGNORECASE,
+)
+# Contrastive ``but`` normally resets negation scope. In an exception
+# construction it is itself the exclusion operator, so detect that bounded
+# grammatical form before applying the general reset rule. ``nothing but`` is
+# intentionally absent: it is inclusive ("only X"), not a rejection of X.
+EXCEPTION_NEGATION_RE = re.compile(
+    r"\b(?:anything|everything|all)\s+but(?:\s+(?:a|an|the))?\s*$",
     re.IGNORECASE,
 )
 
@@ -227,6 +293,46 @@ BUDGET_RE = re.compile(
 )
 
 
+def facet_rules_fingerprint() -> str:
+    """Identity of the rules that turn catalog text into clarification facets.
+
+    `needle.catalog.product_clarification_facets` calls `extract_constraints`
+    on every product, and `build_signature_index` stores the result for all
+    50,000 of them. The bundled asset therefore contains this module's parsing
+    output, and until now nothing recorded which version of it.
+
+    That gap is not theoretical. Changing the negation rule so that "I don't
+    like black" excludes black instead of requesting it changes the stored
+    facets, while `schema_version`, `catalog_sha256` and `product_count` all
+    still match, so the loader accepts the old asset and the agent offers
+    clarification options a parser it no longer contains produced.
+
+    Derived from the patterns rather than hand-maintained, because a constant
+    someone has to remember to bump is a constant that does not get bumped:
+    that is exactly how the asset went stale across the schema 6 to 8 move.
+    Anything that can change what `extract_constraints` returns belongs here.
+    """
+    material = "\x1f".join(
+        [
+            NEGATION_RE.pattern,
+            NON_EXCLUDING_NEGATION_RE.pattern,
+            EXCEPTION_NEGATION_RE.pattern,
+            NO_PREFERENCE_RE.pattern,
+            NEGATION_RESET_RE.pattern,
+            CLAUSE_END_RE.pattern,
+            ATTRIBUTE_NAME_RE.pattern,
+            BUDGET_RE.pattern,
+            str(NEGATION_WINDOW),
+            repr(sorted(ATTRIBUTE_NAME_ALIASES.items())),
+            *(
+                f"{attribute}\x1e" + "\x1e".join(vocabulary)
+                for attribute, vocabulary in ATTRIBUTE_VOCABULARY
+            ),
+        ]
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
 class Polarity(str, Enum):
     POSITIVE = "positive"
     NEGATIVE = "negative"
@@ -279,12 +385,11 @@ def _find_values(message: str, vocabulary: tuple[str, ...]) -> list[tuple[str, i
 def _is_negated(message: str, offset: int) -> bool:
     """Whether a nearby negator still governs the value at ``offset``."""
     prefix = message[max(0, offset - NEGATION_WINDOW):offset]
+    if EXCEPTION_NEGATION_RE.search(prefix):
+        return True
     resets = list(NEGATION_RESET_RE.finditer(prefix))
     window = prefix[resets[-1].end():] if resets else prefix
-    # "not only black" is additive emphasis, not rejection.  Removing the
-    # paired discourse marker before the ordinary negation test is safer than
-    # teaching the state machine a product-specific exception.
-    window = re.sub(r"\bnot\s+only\b", "", window, flags=re.IGNORECASE)
+    window = NON_EXCLUDING_NEGATION_RE.sub("", window)
     return bool(NEGATION_RE.search(window))
 
 

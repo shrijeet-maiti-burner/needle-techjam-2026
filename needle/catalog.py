@@ -62,7 +62,7 @@ DEFAULT_FIELD_WEIGHTS = (6.0, 4.0, 2.5, 2.5, 1.5, 1.0)
 RETRIEVAL_MODES = frozenset({"sparse", "signature_first"})
 QUERY_MODES = frozenset({"any", "all"})
 CORRECTION_SCOPES = frozenset({"all", "structured"})
-SIGNATURE_INDEX_SCHEMA_VERSION = "8"
+SIGNATURE_INDEX_SCHEMA_VERSION = "9"
 
 
 @lru_cache(maxsize=65_536)
@@ -316,6 +316,14 @@ def product_signatures(product: dict[str, object]) -> tuple[str, ...]:
             for signature in constraint_signature_fragments(value)
         )
     )
+
+
+def _facet_rules_fingerprint() -> str:
+    """Lazy for the same reason `product_clarification_facets` is: sparse
+    search must not require the state module to import."""
+    from needle.state import facet_rules_fingerprint
+
+    return facet_rules_fingerprint()
 
 
 def product_clarification_facets(product: dict[str, object]) -> dict[str, str]:
@@ -612,6 +620,10 @@ def build_signature_index(catalog_path: str | Path, output_path: str | Path) -> 
         metadata = {
             "schema_version": SIGNATURE_INDEX_SCHEMA_VERSION,
             "catalog_sha256": sha256_file(catalog),
+            # The asset stores this module's own parse of every product, so it
+            # is bound to the parser as well as to the catalog. See
+            # `needle.state.facet_rules_fingerprint`.
+            "facet_parser_sha256": _facet_rules_fingerprint(),
             "product_count": str(product_count),
             "signature_count": str(signature_count),
             "card_key_count": str(card_key_count),
@@ -933,6 +945,7 @@ class CatalogIndex:
         expected = {
             "schema_version": SIGNATURE_INDEX_SCHEMA_VERSION,
             "catalog_sha256": sha256_file(self.catalog_path),
+            "facet_parser_sha256": _facet_rules_fingerprint(),
             "product_count": str(self.product_count),
         }
         mismatches = [
