@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass, field, replace
@@ -290,6 +291,44 @@ BUDGET_RE = re.compile(
     r"|\$\s*(\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
+
+
+def facet_rules_fingerprint() -> str:
+    """Identity of the rules that turn catalog text into clarification facets.
+
+    `needle.catalog.product_clarification_facets` calls `extract_constraints`
+    on every product, and `build_signature_index` stores the result for all
+    50,000 of them. The bundled asset therefore contains this module's parsing
+    output, and until now nothing recorded which version of it.
+
+    That gap is not theoretical. Changing the negation rule so that "I don't
+    like black" excludes black instead of requesting it changes the stored
+    facets, while `schema_version`, `catalog_sha256` and `product_count` all
+    still match, so the loader accepts the old asset and the agent offers
+    clarification options a parser it no longer contains produced.
+
+    Derived from the patterns rather than hand-maintained, because a constant
+    someone has to remember to bump is a constant that does not get bumped:
+    that is exactly how the asset went stale across the schema 6 to 8 move.
+    Anything that can change what `extract_constraints` returns belongs here.
+    """
+    material = "\x1f".join(
+        [
+            NEGATION_RE.pattern,
+            NO_PREFERENCE_RE.pattern,
+            NEGATION_RESET_RE.pattern,
+            CLAUSE_END_RE.pattern,
+            ATTRIBUTE_NAME_RE.pattern,
+            BUDGET_RE.pattern,
+            str(NEGATION_WINDOW),
+            repr(sorted(ATTRIBUTE_NAME_ALIASES.items())),
+            *(
+                f"{attribute}\x1e" + "\x1e".join(vocabulary)
+                for attribute, vocabulary in ATTRIBUTE_VOCABULARY
+            ),
+        ]
+    )
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
 
 
 class Polarity(str, Enum):

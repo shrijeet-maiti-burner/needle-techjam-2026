@@ -1,6 +1,6 @@
 # Method, model choice, and limitations
 
-Required by `docs/submission_rules.md` ("a short report describing method, model
+Required by the participant kit's `docs/submission_rules.md` ("a short report describing method, model
 choice, and limitations" and "a disclosure of latency, token usage, and
 estimated model cost").
 
