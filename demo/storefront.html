@@ -366,6 +366,18 @@
     }
     .ev .where { color: var(--dim); }
 
+    .compatibility {
+      padding: 8px 9px;
+      border: 1px solid rgba(201, 255, 100, .25);
+      border-radius: 8px;
+      background: rgba(201, 255, 100, .045);
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .compatibility-head { display: flex; justify-content: space-between; gap: 10px; color: var(--lime); }
+    .compatibility ul { margin: 5px 0 0; padding-left: 16px; }
+    .compatibility .limit { color: var(--dim); }
+
     details.more { margin-top: 2px; }
     details.more summary {
       cursor: pointer;
@@ -490,6 +502,30 @@
     .bchip.excl { color: var(--red); border-color: rgba(255, 126, 118, .3); }
     .bchip.gone { color: var(--dim); text-decoration: line-through; }
 
+    .journey-context { margin-bottom: 9px; color: var(--muted); font-size: 11.5px; }
+    .journey-items { display: grid; gap: 7px; }
+    .journey-item {
+      padding: 9px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: rgba(8, 12, 11, .35);
+    }
+    .journey-item.active { border-color: rgba(201, 255, 100, .48); }
+    .journey-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .journey-title b { color: var(--ink); font-size: 12.5px; }
+    .journey-active { color: var(--lime); font: 9px/1.3 "SFMono-Regular", Consolas, monospace; text-transform: uppercase; }
+    .journey-relation { margin-top: 3px; color: var(--aqua); font-size: 10.5px; }
+    .journey-groups { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 4px; }
+    .journey-group {
+      padding: 2px 6px;
+      border: 1px solid var(--line);
+      border-radius: 5px;
+      color: var(--muted);
+      font: 10px/1.35 "SFMono-Regular", Consolas, monospace;
+    }
+    .journey-group.any { border-color: rgba(85, 232, 207, .32); color: var(--aqua); }
+    .journey-group.not { border-color: rgba(255, 126, 118, .32); color: var(--red); }
+
     .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
     .stat .label { font-size: 10px; letter-spacing: .11em; text-transform: uppercase; color: var(--dim); }
     .stat .value { margin-top: 2px; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
@@ -539,7 +575,7 @@
         <div class="thread-inner" id="thread-inner">
           <div class="opening" id="opening">
             <h2>What are you shopping for?</h2>
-            <p>
+            <p id="opening-copy">
               Every reply comes from the selected primary agent reading the released
               catalog — the same configuration the score is measured on. No model, no
               network, no invented products.
@@ -563,6 +599,11 @@
     </div>
 
     <aside class="rail">
+      <div class="panel" id="journey-panel" hidden>
+        <div class="panel-head"><span>Shopping plan</span><span>journey</span></div>
+        <div class="panel-body" id="journey"></div>
+      </div>
+
       <div class="panel">
         <div class="panel-head"><span>What I have understood</span><span id="intent-version">v1</span></div>
         <div class="panel-body" id="beliefs"><div class="none">Nothing disclosed yet.</div></div>
@@ -601,6 +642,8 @@
       input: document.getElementById("input"),
       send: document.getElementById("send"),
       reset: document.getElementById("reset"),
+      journeyPanel: document.getElementById("journey-panel"),
+      journey: document.getElementById("journey"),
       beliefs: document.getElementById("beliefs"),
       intentVersion: document.getElementById("intent-version"),
       deviation: document.getElementById("deviation"),
@@ -611,6 +654,7 @@
       factIndex: document.getElementById("fact-index"),
       factTurn: document.getElementById("fact-turn"),
       latencyHint: document.getElementById("latency-hint"),
+      openingCopy: document.getElementById("opening-copy"),
     };
 
     let sessionId = null;
@@ -754,6 +798,29 @@
         wrap.appendChild(evidence);
       }
 
+      const compatibility = card.compatibility;
+      if (compatibility && typeof compatibility === "object") {
+        const box = node("div", "compatibility");
+        const head = node("div", "compatibility-head");
+        head.appendChild(node("b", "", "Compatibility evidence"));
+        head.appendChild(node(
+          "span",
+          "mono",
+          Math.round(Number(compatibility.score || 0) * 100) + "% · " +
+            human(compatibility.confidence) + " confidence"
+        ));
+        box.appendChild(head);
+        const signals = Array.isArray(compatibility.signals) ? compatibility.signals : [];
+        const limitations = Array.isArray(compatibility.limitations) ? compatibility.limitations : [];
+        if (signals.length || limitations.length) {
+          const list = node("ul");
+          signals.slice(0, 3).forEach((signal) => list.appendChild(node("li", "", signal)));
+          limitations.slice(0, 2).forEach((limit) => list.appendChild(node("li", "limit", limit)));
+          box.appendChild(list);
+        }
+        wrap.appendChild(box);
+      }
+
       const features = Array.isArray(card.features) ? card.features : [];
       if (features.length || card.description) {
         const more = node("details", "more");
@@ -767,10 +834,29 @@
         more.appendChild(node("div", "asin mono", card.parent_asin));
         wrap.appendChild(more);
       }
+      if (config && config.mode === "journey") {
+        const select = node("button", "chip", "Use in plan");
+        select.type = "button";
+        select.addEventListener("click", async () => {
+          select.disabled = true;
+          try {
+            const selected = await api("/api/select", {
+              session_id: sessionId,
+              parent_asin: card.parent_asin,
+            });
+            renderJourney(selected.journey);
+            select.textContent = "Selected";
+          } catch (error) {
+            select.disabled = false;
+            showError(error && error.message ? error.message : String(error));
+          }
+        });
+        wrap.appendChild(select);
+      }
       return wrap;
     }
 
-    function renderDecisionReceipt(trace, turnNumber) {
+    function renderDecisionReceipt(trace, turnNumber, journeyTrace) {
       if (!trace || typeof trace !== "object") return null;
 
       const receipt = node("details", "receipt");
@@ -786,8 +872,12 @@
       const certificate = trace.ambiguity_certificate || {};
       const decision = trace.decision || {};
       const policy = trace.question_policy || {};
-      const question = policy.human_message_decision || {};
-      const candidateCount = Number(certificate.candidate_count || 0);
+      const question = journeyTrace && journeyTrace.question
+        ? journeyTrace.question
+        : (policy.human_message_decision || {});
+      const candidateCount = Number(
+        question.candidate_count || certificate.candidate_count || 0
+      );
       const questionLabel = question.asks && question.attribute
         ? "asked " + human(question.attribute)
         : "no extra question";
@@ -815,6 +905,34 @@
         grid.appendChild(stat);
       });
       body.appendChild(grid);
+
+      if (journeyTrace && typeof journeyTrace === "object") {
+        const journeyNote = node("div", "receipt-note");
+        journeyNote.appendChild(node("b", "", "Journey overlay: "));
+        journeyNote.appendChild(node(
+          "span",
+          "",
+          numberFormat.format(Number(journeyTrace.merged_candidates || 0)) +
+            " merged candidates · " +
+            numberFormat.format(Number(journeyTrace.filtered_candidates || 0)) +
+            " rejected by category, constraints or relationship evidence · " +
+            human(journeyTrace.rerank_reason)
+        ));
+        body.appendChild(journeyNote);
+        const journeyDecision = node("div", "receipt-note");
+        journeyDecision.appendChild(node("b", "", "Journey decision: "));
+        journeyDecision.appendChild(node(
+          "span",
+          "",
+          human(journeyTrace.anchor_status || "no relation anchor") +
+            " · " + human(
+              journeyTrace.question && journeyTrace.question.source
+                ? journeyTrace.question.source
+                : "catalog stop decision"
+            )
+        ));
+        body.appendChild(journeyDecision);
+      }
 
       const funnelRows = Array.isArray(trace.candidate_funnel)
         ? trace.candidate_funnel.filter((row) => row && typeof row === "object")
@@ -853,7 +971,9 @@
       body.appendChild(node(
         "div",
         "receipt-proof",
-        "target-blind · catalog-derived · same agent and response as evaluation"
+        journeyTrace
+          ? "target-blind · frozen candidate generator · catalog-derived journey overlay"
+          : "target-blind · catalog-derived · same agent and response as evaluation"
       ));
       receipt.appendChild(body);
       return receipt;
@@ -885,7 +1005,7 @@
 
       if (turn.message) wrap.appendChild(node("div", "agent-message", turn.message));
 
-      const receipt = renderDecisionReceipt(turn.trace, turn.turn);
+      const receipt = renderDecisionReceipt(turn.trace, turn.turn, turn.journey_trace);
       if (receipt) wrap.appendChild(receipt);
 
       const cards = Array.isArray(turn.cards) ? turn.cards : [];
@@ -905,6 +1025,59 @@
         }
       }
       return wrap;
+    }
+
+    function renderJourney(journey) {
+      if (!journey || journey.mode !== "journey" || !Array.isArray(journey.items)) {
+        el.journeyPanel.hidden = true;
+        clear(el.journey);
+        return;
+      }
+      el.journeyPanel.hidden = false;
+      clear(el.journey);
+      const context = Array.isArray(journey.global_context) ? journey.global_context : [];
+      el.journey.appendChild(node(
+        "div",
+        "journey-context",
+        (journey.language && journey.language !== "en" ? "language · " + journey.language + " · " : "") +
+          (context.length ? "shared context · " + context.join(" · ") : "no shared context inferred")
+      ));
+      const items = node("div", "journey-items");
+      const labels = {};
+      journey.items.forEach((item) => { labels[item.item_id] = item.label || item.category; });
+      journey.items.forEach((item) => {
+        const box = node("div", "journey-item" + (item.active ? " active" : ""));
+        const title = node("div", "journey-title");
+        title.appendChild(node("b", "", item.label || item.category || "Item"));
+        if (item.active) title.appendChild(node("span", "journey-active", "active"));
+        if (item.selected_id) title.appendChild(node("span", "journey-active", "selected"));
+        box.appendChild(title);
+        if (item.audience) {
+          box.appendChild(node("div", "journey-relation", "wearer · " + human(item.audience)));
+        }
+        if (item.relation) {
+          box.appendChild(node(
+            "div",
+            "journey-relation",
+            human(item.relation) + " · " + (labels[item.related_item_id] || "earlier item")
+          ));
+        }
+        const groups = node("div", "journey-groups");
+        (Array.isArray(item.constraints) ? item.constraints : []).forEach((group) => {
+          const values = Array.isArray(group.values) ? group.values.join(" · ") : "";
+          const operator = group.operator === "any"
+            ? "either"
+            : (group.operator === "not" ? "avoid" : "all");
+          groups.appendChild(node(
+            "span",
+            "journey-group " + human(group.operator),
+            operator + " " + human(group.attribute) + ": " + values
+          ));
+        });
+        if (groups.childNodes.length) box.appendChild(groups);
+        items.appendChild(box);
+      });
+      el.journey.appendChild(items);
     }
 
     function renderBeliefs(beliefs) {
@@ -945,6 +1118,7 @@
 
       clear(el.configBody);
       const rows = [
+        ["Interface mode", human(data.mode || "benchmark")],
         ["Signature index", data.index_fallback
           ? "rejected — rebuilt in process"
           : (data.signature_index ? "prebuilt asset in use" : "rebuilt in process")],
@@ -964,6 +1138,15 @@
       const deviations = data.deviations || {};
       const names = Object.keys(deviations);
       const parts = [];
+      if (data.mode === "journey") {
+        parts.push([
+          "Product journey mode. ",
+          "The frozen primary agent generates candidates; the visible multi-item planner and compatibility reranker are an explicitly separate catalog-grounded layer.",
+        ]);
+        el.openingCopy.textContent = "Build a multi-item shopping plan in ordinary language. Candidate generation comes from the frozen primary agent; journey routing, alternatives and compatibility evidence are displayed separately.";
+      } else {
+        el.openingCopy.textContent = "Every reply comes from the selected primary agent reading the released catalog — the exact session shape used for the measured score.";
+      }
       if (names.length) {
         parts.push(["Not the scored configuration. ", names
           .map((name) => name + ": " + JSON.stringify(deviations[name].effective) +
@@ -1045,6 +1228,7 @@
       el.send.disabled = false;
       renderConfig(config);
       renderSuggestions(config.suggestions);
+      renderJourney(null);
       renderBeliefs({ wanted: [], excluded: [], superseded: [], intent_version: 1 });
       el.intentVersion.style.color = "";
       el.statTurn.textContent = "0";
@@ -1066,6 +1250,7 @@
         if (!sessionId) await newSession();
         const turn = await api("/api/message", { session_id: sessionId, message: text });
         thinking.replaceWith(renderTurn(turn));
+        renderJourney(turn.journey || null);
         renderBeliefs(turn.beliefs || {});
         el.statTurn.textContent = String(turn.turn);
         el.factTurn.textContent = "turn " + turn.turn;

@@ -11,8 +11,10 @@ seen before a judge finds it.
 
 Then open http://127.0.0.1:8770.
 
-The agent is built from `PRIMARY_AGENT_KWARGS`. `--set key=value` overrides one
-keyword for exploration and the interface then displays the deviation, because a
+The candidate generator is built from `PRIMARY_AGENT_KWARGS`. The default
+interface adds the explicitly-labelled product journey layer; pass
+`--benchmark-mode` for the exact one-target session shape. `--set key=value`
+overrides one agent keyword and the interface displays the deviation, because a
 demo quietly running a different policy from the scored one is worse than no
 demo. The server binds the loopback interface only; nothing here is written to
 be exposed to a network.
@@ -175,6 +177,20 @@ class StorefrontHandler(BaseHTTPRequestHandler):
             self._json(HTTPStatus.OK, turn.as_dict())
             return
 
+        if route == "/api/select":
+            session_id = str(payload.get("session_id") or "").strip()
+            parent_asin = str(payload.get("parent_asin") or "").strip()
+            if not session_id or not parent_asin:
+                self._error(HTTPStatus.BAD_REQUEST, "session_id and parent_asin are required")
+                return
+            try:
+                selected = self.service.select(session_id, parent_asin)
+            except ValueError as error:
+                self._error(HTTPStatus.BAD_REQUEST, str(error))
+                return
+            self._json(HTTPStatus.OK, selected)
+            return
+
         self._error(HTTPStatus.NOT_FOUND, f"no such route: {route}")
 
 
@@ -190,6 +206,7 @@ def build_service(arguments: argparse.Namespace) -> StorefrontService:
         catalog,
         signature_index_path=asset if asset.is_file() else None,
         overrides=dict(arguments.set or []),
+        journey_mode=not arguments.benchmark_mode,
     )
 
 
@@ -207,6 +224,11 @@ def main(argv: list[str] | None = None) -> int:
         help="override one agent keyword; the interface reports the deviation",
     )
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument(
+        "--benchmark-mode",
+        action="store_true",
+        help="disable the product journey overlay and drive the exact scored session shape",
+    )
     parser.add_argument(
         "--warm",
         action="store_true",
@@ -230,9 +252,11 @@ def main(argv: list[str] | None = None) -> int:
 
     deviations = service.deviations
     print(f"needle storefront on http://{arguments.host}:{arguments.port}", flush=True)
+    if service.journey_mode:
+        print("  product journey mode over the frozen primary retrieval engine", flush=True)
     if deviations:
         print(f"  deviating from the primary preset: {deviations}", flush=True)
-    else:
+    elif not service.journey_mode:
         print("  running the selected primary configuration", flush=True)
     try:
         server.serve_forever()

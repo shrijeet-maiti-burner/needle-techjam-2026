@@ -103,6 +103,8 @@ class CatalogView:
         self.max_features = max(0, int(max_features))
         self._offsets: dict[str, int] | None = None
         self._category_counts: Counter[str] | None = None
+        self._category_aliases: Counter[str] | None = None
+        self._audience_counts: Counter[str] | None = None
 
     # -- index ---------------------------------------------------------------
 
@@ -122,6 +124,8 @@ class CatalogView:
         """
         offsets: dict[str, int] = {}
         counts: Counter[str] = Counter()
+        aliases: Counter[str] = Counter()
+        audiences: Counter[str] = Counter()
         with self.catalog_path.open("rb") as handle:
             position = 0
             for raw in handle:
@@ -148,8 +152,25 @@ class CatalogView:
                     # would hold for this catalog only.
                     if len(path) >= _MIN_SUGGESTION_DEPTH:
                         counts[path[-1].decode("utf-8", "replace")] += 1
+                    if len(path) > 1:
+                        audience = " ".join(
+                            query_terms(path[1].decode("utf-8", "replace"), limit=6)
+                        )
+                        if audience:
+                            audiences[audience] += 1
+                    # Nodes below root and department are product types rather
+                    # than audience labels.  Their words form the active
+                    # catalog taxonomy used by journey routing, so a swapped
+                    # catalog changes what the planner understands without a
+                    # maintained list of product nouns.
+                    for raw_name in path[2:]:
+                        name = raw_name.decode("utf-8", "replace")
+                        for alias in _category_aliases(name):
+                            aliases[alias] += 1
         self._offsets = offsets
         self._category_counts = counts
+        self._category_aliases = aliases
+        self._audience_counts = audiences
 
     @property
     def product_count(self) -> int:
@@ -287,6 +308,102 @@ class CatalogView:
         assert self._category_counts is not None
         return [name for name, _ in self._category_counts.most_common(max(0, int(count)))]
 
+    def category_mentions(self, text: str, count: int = 4) -> list[str]:
+        """Product-category phrases present in ``text``, longest first.
+
+        The vocabulary is derived from the catalog category paths.  Singular
+        variants are grammatical normalizations, not a hand-authored taxonomy.
+        Overlapping hits collapse to the most specific phrase, so ``running
+        shoes`` does not also open a second ``shoes`` line item.
+        """
+
+        if self._category_aliases is None:
+            self._build_offsets()
+        assert self._category_aliases is not None
+        assert self._audience_counts is not None
+        raw_tokens = re.findall(r"[a-z0-9]+", fold_marks(str(text)))
+        message_units = [
+            (token, position)
+            for position, token in enumerate(raw_tokens)
+            if query_terms(token, limit=1)
+        ]
+        message_tokens = [token for token, _ in message_units]
+        if not message_tokens:
+            return []
+        matches: list[tuple[int, int, int, int, str]] = []
+        for alias in self._category_aliases:
+            # Audience nodes can recur deeper in inconsistent catalog paths;
+            # they modify a line item and must never create one.
+            if alias in self._audience_counts:
+                continue
+            alias_tokens = alias.split()
+            width = len(alias_tokens)
+            for start in range(len(message_tokens) - width + 1):
+                if message_tokens[start : start + width] == alias_tokens:
+                    end = start + width
+                    matches.append(
+                        (
+                            start,
+                            end,
+                            message_units[start][1],
+                            message_units[end - 1][1] + 1,
+                            alias,
+                        )
+                    )
+        matches.sort(key=lambda hit: (hit[0], -(hit[1] - hit[0]), hit[4]))
+
+        # At one start position the longest catalog phrase wins.  Adjacent
+        # category nodes form the phrase the customer actually used: the
+        # catalog may store "Shoes > Running" while the utterance says
+        # "running shoes".  Joining those two is safer than opening a line item
+        # for each node.
+        non_overlapping: list[tuple[int, int, int, int, str]] = []
+        cursor = -1
+        for start, end, raw_start, raw_end, alias in matches:
+            if start < cursor:
+                continue
+            non_overlapping.append((start, end, raw_start, raw_end, alias))
+            cursor = end
+        merged: list[tuple[int, int, int, int]] = []
+        for start, end, raw_start, raw_end, _ in non_overlapping:
+            if merged and merged[-1][3] == raw_start:
+                merged[-1] = (merged[-1][0], end, merged[-1][2], raw_end)
+            else:
+                merged.append((start, end, raw_start, raw_end))
+        return [
+            " ".join(message_tokens[start:end])
+            for start, end, _, _ in merged[: max(0, int(count))]
+        ]
+
+    def audience_mentions(self, text: str, count: int = 2) -> list[str]:
+        """Audience values named by the shopper, derived from catalog paths."""
+
+        if self._audience_counts is None:
+            self._build_offsets()
+        assert self._audience_counts is not None
+        tokens = query_terms(str(text), limit=100)
+        found: list[tuple[int, int, str]] = []
+        for audience in self._audience_counts:
+            wanted = audience.split()
+            width = len(wanted)
+            for start in range(len(tokens) - width + 1):
+                if tokens[start : start + width] == wanted:
+                    found.append((start, -width, audience))
+                    break
+        return [
+            audience
+            for _, _, audience in sorted(found)[: max(0, int(count))]
+        ]
+
+    @staticmethod
+    def audience(product: Mapping[str, object]) -> str:
+        """The catalog's audience node, normalized for filtering/questions."""
+
+        path = list(_flatten_values(product.get("categories")))
+        if len(path) <= 1:
+            return ""
+        return " ".join(query_terms(str(path[1]), limit=6))
+
 
 _PARENT_ASIN_RE = re.compile(rb'"parent_asin"\s*:\s*"([^"]+)"')
 # The last string in the categories array is the leaf. Bounded to the array so a
@@ -297,6 +414,40 @@ _QUOTED_RE = re.compile(rb'"([^"]+)"')
 # Root plus a department plus a leaf. Below that the leaf is not a thing a
 # person shops for.
 _MIN_SUGGESTION_DEPTH = 3
+
+
+def _category_aliases(name: str) -> tuple[str, ...]:
+    """Catalog category plus conservative singular surface variants."""
+
+    words = query_terms(name, limit=12)
+    if not words:
+        return ()
+
+    def singular(word: str) -> str:
+        if word.endswith("ies") and len(word) > 4:
+            return f"{word[:-3]}y"
+        if word.endswith("sses"):
+            return word[:-2]
+        if word.endswith("es") and len(word) > 4:
+            return word[:-2]
+        if word.endswith("s") and not word.endswith("ss") and len(word) > 3:
+            return word[:-1]
+        return word
+
+    aliases = [" ".join(words)]
+    singular_words = [singular(word) for word in words]
+    aliases.append(" ".join(singular_words))
+    # A category such as "Suits & Sport Coats" must still understand the
+    # ordinary request "suit".  Restrict single-word aliases to substantial
+    # words; frequency and overlap handling above resolve shared nodes.
+    aliases.extend(
+        singular_word
+        for original, singular_word in zip(words, singular_words)
+        if len(singular_word) >= 4
+        and original.endswith("s")
+        and singular_word != original
+    )
+    return tuple(dict.fromkeys(alias for alias in aliases if alias))
 
 
 def _coerce_price(value: object) -> float | None:

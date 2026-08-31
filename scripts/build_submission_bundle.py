@@ -142,13 +142,19 @@ def main() -> None:
     # module scope because the bundler is otherwise deliberately free of package
     # imports.
     sys.path.insert(0, str(ROOT))
-    from needle.catalog import SIGNATURE_INDEX_SCHEMA_VERSION
+    from needle.catalog import SIGNATURE_INDEX_SCHEMA_VERSION, _facet_rules_fingerprint
 
     if metadata.get("schema_version") != SIGNATURE_INDEX_SCHEMA_VERSION:
         raise ValueError(
             "signature asset schema "
             f"{metadata.get('schema_version')!r} is not the {SIGNATURE_INDEX_SCHEMA_VERSION!r} "
             "this code reads; rebuild it with scripts/build_signature_index.py"
+        )
+    expected_parser = _facet_rules_fingerprint()
+    if metadata.get("facet_parser_sha256") != expected_parser:
+        raise ValueError(
+            "signature asset facet parser fingerprint does not match this code; "
+            "rebuild it with scripts/build_signature_index.py"
         )
 
     workspace = Path(tempfile.mkdtemp(prefix="needle-release-"))
@@ -176,6 +182,7 @@ def main() -> None:
                 "sha256": sha256_file(bundled_asset),
                 "schema_version": metadata.get("schema_version"),
                 "catalog_sha256": catalog_sha,
+                "facet_parser_sha256": metadata.get("facet_parser_sha256"),
             },
             "public_rehearsal": {
                 key: result[key]
