@@ -11,6 +11,13 @@ Offline, no network, no model, zero tokens.
     python3 scripts/demo_session.py                          # a buying session
     python3 scripts/demo_session.py --scenario intent_override
     python3 scripts/demo_session.py --scenario boundary --sample public_0041
+
+The official participant kit supplies the simulator, so this needs to be told
+where it is when run from anywhere other than the source repository, including
+from an extracted submission archive:
+
+    TECHJAM_KIT_ROOT=/path/to/techjam-conversational-search \
+        python3 scripts/demo_session.py --scenario intent_override
 """
 from __future__ import annotations
 
@@ -25,7 +32,20 @@ KIT = Path(os.environ.get("TECHJAM_KIT_ROOT", ROOT / ".artifacts/participant-kit
 sys.path.insert(0, str(ROOT))
 sys.path.insert(1, str(KIT))
 
-from evaluator import local_evaluator as official  # noqa: E402
+try:
+    from evaluator import local_evaluator as official  # noqa: E402
+except ModuleNotFoundError as error:  # pragma: no cover - operator guidance
+    # A traceback here reads as a broken submission when it is only a path.
+    # The kit is the organizer's and is never bundled, so say where to point.
+    raise SystemExit(
+        f"the official participant kit was not found at {KIT}.\n"
+        "This script drives the organizer's own simulator, which ships with the\n"
+        "kit rather than with this submission. Point it at the kit:\n\n"
+        "    TECHJAM_KIT_ROOT=/path/to/techjam-conversational-search \\\n"
+        "        python3 scripts/demo_session.py --scenario intent_override\n\n"
+        "The same transcript is printed in full in submission/REPORT.md, so\n"
+        "reading it needs nothing at all."
+    ) from error
 
 from needle.agent import Agent  # noqa: E402
 from needle.presets import PRIMARY_AGENT_KWARGS  # noqa: E402

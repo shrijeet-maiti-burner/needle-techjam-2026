@@ -106,7 +106,12 @@ class TheRequiredDeliverablesArePresent(unittest.TestCase):
         self.assertIn("starter/agent.py", self.shipped)
 
     def test_the_report_covers_every_required_topic(self) -> None:
-        for heading in ("## Method", "## Model choice", "## Disclosure",
+        # The specification asks for "architecture, models, cost, limitations,
+        # and team contributions". The headings use that vocabulary so a
+        # reviewer working down the list finds each one by its own name.
+        for heading in ("## Architecture and method",
+                        "## Model choice and models used",
+                        "## Cost, token usage, latency and resource disclosure",
                         "## Limitations", "## Team contributions"):
             with self.subTest(heading=heading):
                 self.assertIn(heading, self.report)
@@ -125,3 +130,31 @@ class TheRequiredDeliverablesArePresent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheArchiveRunsOnWhatItClaims(unittest.TestCase):
+    """The reproducibility rules make the version floor a promise, not a note.
+
+    "exact Python version requirement if non-default" is a required part of the
+    package, and an unreproducible bundle may be treated as invalid. A grep for
+    newer syntax is not a check; parsing every shipped file against the declared
+    grammar is.
+    """
+
+    def test_every_shipped_module_parses_under_the_declared_floor(self) -> None:
+        import ast
+
+        shipped = sorted(
+            name for name in _tracked_under(_shipping_paths()) if name.endswith(".py")
+        )
+        self.assertTrue(shipped, "no python files were found to check")
+        for name in shipped:
+            with self.subTest(module=name):
+                source = (ROOT / name).read_text(encoding="utf-8")
+                try:
+                    ast.parse(source, filename=name, feature_version=(3, 10))
+                except SyntaxError as error:  # pragma: no cover - the failure is the point
+                    self.fail(f"{name} needs newer than Python 3.10: {error}")
+
+    def test_the_declared_floor_matches_the_run_notes(self) -> None:
+        self.assertIn("Python: 3.10 or later", RUN_NOTES.read_text(encoding="utf-8"))

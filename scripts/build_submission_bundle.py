@@ -166,6 +166,11 @@ def main() -> None:
                 "size_bytes": bundled_asset.stat().st_size,
                 "sha256": sha256_file(bundled_asset),
                 "schema_version": metadata.get("schema_version"),
+                # What the asset is bound to, which is what the loader checks
+                # and therefore what a rebuild can be verified against. The
+                # file's own hash below identifies this build of it, not the
+                # contract: two builds of identical content can differ.
+                "facet_parser_sha256": metadata.get("facet_parser_sha256"),
                 "catalog_sha256": catalog_sha,
             },
             "public_rehearsal": {

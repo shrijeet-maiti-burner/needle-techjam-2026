@@ -4,7 +4,7 @@ Required by the participant kit's `docs/submission_rules.md` ("a short report de
 choice, and limitations" and "a disclosure of latency, token usage, and
 estimated model cost").
 
-## Method
+## Architecture and method
 
 The agent is a deterministic, standard-library retrieval system. No neural
 model, no embeddings, no network.
@@ -55,7 +55,7 @@ reduced to its subject clause and later replies are kept. This matters because
 `intent_override` sessions cannot score until the override fires, so the turns
 before it are spent gathering constraints that a full reset would then discard.
 
-## Model choice
+## Model choice and models used
 
 None. No LLM API and no local model is used at any point in the scored path.
 This was a deliberate choice: the task is recovering one catalog row from a
@@ -64,7 +64,7 @@ identified by a single verbatim constraint string, and exact matching does that
 better and far faster than a semantic model. It also removes credential,
 network, and cost risk from official scoring entirely.
 
-## Disclosure
+## Cost, token usage, latency and resource disclosure
 
 The separate [submission disclosure inventory](../docs/SUBMISSION_DISCLOSURES.md)
 tracks the required development tools, APIs, libraries and frameworks, and
@@ -173,6 +173,15 @@ Reproduce it from this bundle with:
 
 ```
 python3 scripts/demo_session.py --scenario intent_override
+```
+
+The script drives the organizer's own simulator, which ships with the
+participant kit rather than with this submission, so from an extracted archive
+it has to be told where the kit is:
+
+```
+TECHJAM_KIT_ROOT=/path/to/techjam-conversational-search \
+    python3 scripts/demo_session.py --scenario intent_override
 ```
 
 `--scenario` selects buying, browsing, intent_override or boundary; `--sample`
