@@ -7,8 +7,12 @@ against the belief state, not a leaderboard run.
 Base: `origin/main` at `4e36df6`. Every input below is exact and reproducible
 through `needle.state.StateStore` or `needle.state.extract_constraints`.
 
-Two findings were structural and are fixed on this branch with tests. The rest
-are recorded and deliberately not fixed, for the reasons given.
+Four findings were structural and are fixed on this branch with tests. The
+rest are recorded and deliberately not fixed, for the reasons given.
+
+F3 was found while measuring F4, not by a probe: chasing an in-message budget
+correction is what surfaced three public sessions extracting a price out of a
+size string.
 
 ## Fixed
 
@@ -82,7 +86,52 @@ Seven genuine retractions are asserted to still fire, including
 `I'm not sure, forget what I said.` and `That's not right. Ignore my earlier
 preference.`, where a negator is present but in a different clause.
 
-### What the two fixes cost
+### F3 A measurement was read as a price, on three live public sessions
+
+`BUDGET_RE` accepted any comparator in front of a number. Catalog feature text
+is full of measurements phrased exactly like a price cap, and `customer_reply`
+reads that text back verbatim:
+
+| session | exact disclosure text | before |
+|---|---|---|
+| `public_0042` | `...expansion band fits up to 8-inch wrist circumference` | budget **8** |
+| `public_0197` | `Fit for different sizes,Fit bands up to 30mm wide` | budget **30** |
+| `public_0119` | `Size: <1>Big handbag:26*15*18cm/10.2"*7"*5.9"` | budget **1** |
+
+A false budget is not inert: it is an active constraint, so it is counted by
+the slate-width gate and it reaches the customer as a preference they never
+gave.
+
+The discriminator is the character straight after the digits rather than a list
+of units. A unit is welded to its number and a stray `<1>` closes its bracket,
+while money is followed by punctuation, whitespace or nothing. A trailing digit
+is refused too, purely for backtracking: the first version of this guard turned
+`public_0197` from 30 into **3**, because the engine failed on "30", retreated
+to "3" and accepted "0". Worth recording as a near miss, since it would have
+replaced a wrong budget with a differently wrong one and still passed a naive
+"no longer 30" check.
+
+All 200 sessions are byte-identical in `best_rank` and `first_hit_turn` after
+the removal, so none of the three crossed the slate-width threshold.
+
+### F4 The first figure in a message won, not the one left standing
+
+```
+"Under $50. Actually, up to $200."       budget 50   -> 200
+"Not under $50, more like $200."         budget 50   -> 200
+"Budget is $200, definitely not $50."    budget 200  -> 200, negated figure skipped
+```
+
+`BUDGET_RE.search` took the opening match, so an in-message correction kept the
+number it replaced. Selection now takes the last figure that is not negated and
+not inside a declined clause.
+
+`"I want it under $50 but no more than $30."` still yields 50, unchanged. "no
+more than" is a budget idiom that the negation rule reads as an exclusion, and
+separating the two needs an idiom list, so that case is left exactly as it was
+rather than half-fixed.
+
+### What the fixes cost
 
 Nothing measurable, in either direction.
 
@@ -94,19 +143,28 @@ Nothing measurable, in either direction.
 | robustness `summary` | | byte-identical |
 | robustness `comparison` | | byte-identical |
 | robustness `gate_failures` | 6 pre-existing | identical, none added |
-| tests | 379 | 390 |
+| per-session `best_rank`, `first_hit_turn` | | identical on all 200 |
+| tests | 379 | 398 |
 
-That the robustness report is byte-identical is expected and worth stating
-plainly: **nothing in retrieval reads `excluded_values` today**. Constraint
-polarity reaches the customer-facing turn record and nothing else. So these are
-correctness fixes whose live effect is on what a person is told and on typed
-storefront input, not on the leaderboard number. They are cheap and they cannot
-move the score in either direction, which is the argument for taking them
-during a freeze rather than the argument that they win anything.
+That the robustness report is byte-identical is expected for F1 and F2, and
+worth stating plainly: **nothing in retrieval reads `excluded_values` today**.
+Constraint polarity reaches the customer-facing turn record and nothing else.
+
+F3 is neutral for a different reason and the distinction matters. Those three
+sessions really did carry a wrong constraint into the shipped agent, and the
+count of active constraints really is read, by the slate-width gate. It
+happened that none of the three crossed the threshold, which is luck rather
+than design, and it is the reason the per-session row above is in the table:
+neutrality there is measured, not argued.
+
+So these are correctness fixes whose live effect is on what a person is told
+and on typed storefront input, not on the leaderboard number. That they cannot
+move the score is the argument for taking them during a freeze, not an argument
+that they win anything.
 
 ## Recorded, not fixed
 
-### F3 Verb-sense ambiguity still fires a false override
+### F5 Verb-sense ambiguity still fires a false override
 
 ```
 "Drop it in my basket if it's under $50."      -> override
@@ -118,7 +176,7 @@ Distinguishing them needs a list of exempt objects, which is a phrase list, so
 it is out of scope for this pass. Lower severity than F2: neither reads as the
 customer reinforcing a requirement.
 
-### F4 Negation surfaces that carry no negator the extractor knows
+### F6 Negation surfaces that carry no negator the extractor knows
 
 ```
 "I don't like black."     -> color:black POSITIVE
@@ -136,7 +194,7 @@ mean the opposite: `I don't mind black` and `I wouldn't say no to black` would
 both become exclusions. Correcting that needs an exemption list. Left alone
 rather than half-done under a freeze.
 
-### F5 Mixed-language requests reach the belief state empty
+### F7 Mixed-language requests reach the belief state empty
 
 ```
 "Busco unas botas de cuero."                    -> no constraints
@@ -153,7 +211,7 @@ language.py`, its two test files and the `set_language` wiring did not survive
 the squash into #28, and nothing on main references them. That is a merge
 decision for the release owner, not a red-team fix.
 
-### F6 Coordinated values on one attribute collapse to the last one
+### F8 Coordinated values on one attribute collapse to the last one
 
 ```
 "I want a black and white striped shirt."  -> color:white only
@@ -165,23 +223,11 @@ genuine conjunction, and the two are not separable from the surface. Changing
 it would need multi-valued positive constraints, which is a data-model change
 and not a freeze-week edit.
 
-### F7 Only the first budget in a message is read, and budget ignores negation
-
-```
-"Under $50. Actually, up to $200."      -> budget 50
-"Not under $50, more like $200."        -> budget 50
-"I want it under $50 but no more than $30." -> budget 50
-```
-
-`BUDGET_RE.search` takes the first match and the result is unconditionally
-POSITIVE, so an in-message budget correction is lost. A later turn does
-supersede correctly, so this is confined to one message. No public session
-phrases a budget this way.
-
 ## Reproduction
 
 ```bash
-python3 -m pytest tests/test_negation_scope.py tests/test_negated_override_trigger.py
+python3 -m pytest tests/test_negation_scope.py \
+    tests/test_negated_override_trigger.py tests/test_budget_extraction.py
 python3 scripts/evaluate.py --output results.json
 python3 scripts/run_robustness.py --agent starter.agent:Agent
 ```
