@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -572,6 +573,69 @@ class JourneyArtifactTest(unittest.TestCase):
         self.assertIn("Compatibility evidence", source)
         self.assertIn("journey_trace", source)
         self.assertNotIn("innerHTML", source)
+
+
+class TheInterfaceWorksInBothThemes(unittest.TestCase):
+    """One token set, two palettes, and no surface painted by a literal.
+
+    The page used to be dark-only: panels were painted with hardcoded
+    `rgba(23, 31, 28, .95)` gradients and the body carried two coloured glows.
+    Those are invisible or wrong on a light page, so the structural rule is
+    that colour lives in the token blocks and nowhere else. A literal anywhere
+    in a rule is the thing that quietly breaks one of the two themes.
+    """
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        source = (Path(__file__).resolve().parents[1] / "demo" / "storefront.html").read_text(
+            encoding="utf-8"
+        )
+        cls.style = source[source.index("<style>"):source.index("</style>")]
+        cls.source = source
+
+    def _token_blocks(self) -> list[str]:
+        return re.findall(r"\{[^{}]*--[a-z-]+:[^{}]*\}", self.style)
+
+    def test_both_palettes_are_defined(self) -> None:
+        self.assertIn("@media (prefers-color-scheme: dark)", self.style)
+        self.assertIn(':root[data-theme="dark"]', self.style)
+        self.assertIn(':root:not([data-theme="light"])', self.style)
+
+    def test_every_light_token_has_a_dark_value(self) -> None:
+        blocks = self._token_blocks()
+        light = set(re.findall(r"(--[a-z0-9-]+):", blocks[0]))
+        dark = set()
+        for block in blocks[1:]:
+            dark |= set(re.findall(r"(--[a-z0-9-]+):", block))
+        missing = {name for name in light - dark if name != "--radius"}
+        self.assertEqual(missing, set(), f"tokens with no dark value: {sorted(missing)}")
+
+    def test_no_colour_literal_escapes_the_token_blocks(self) -> None:
+        rules = self.style
+        for block in self._token_blocks():
+            rules = rules.replace(block, "{}")
+        literals = re.findall(r"#[0-9a-fA-F]{3,8}\b|\brgba?\([\d\s.,]+\)", rules)
+        self.assertEqual(literals, [], f"colour literals outside the palette: {literals}")
+
+    def test_the_theme_choice_survives_storage_being_unavailable(self) -> None:
+        """Private windows and blocked site data make localStorage throw on
+        access, not return null, so an unguarded read takes the page down."""
+        script = self.source[self.source.index("const THEME_KEY"):]
+        script = script[:script.index("/* ---------- rendering")]
+        self.assertEqual(script.count("try {"), 2)
+        self.assertIn("localStorage.getItem", script)
+        self.assertIn("localStorage.setItem", script)
+
+    def test_the_accent_marks_the_action_and_the_live_item_only(self) -> None:
+        """`--lime` is the fill behind dark text. Anything that draws the accent
+        as text or as an edge has to use `--lime-line`, which is readable on a
+        light page, and the fill itself belongs to the send button."""
+        fills = re.findall(r"([^\n{]*)\{[^{}]*var\(--lime\)[^{}]*\}", self.style)
+        selectors = {selector.strip() for selector in fills}
+        self.assertTrue(
+            all("send" in selector for selector in selectors),
+            f"the accent fill is used outside the send button: {sorted(selectors)}",
+        )
 
 
 if __name__ == "__main__":
