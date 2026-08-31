@@ -27,6 +27,9 @@ from __future__ import annotations
 
 from typing import Sequence
 
+from needle.language import DEFAULT as DEFAULT_LANGUAGE
+from needle.language import phrases
+
 # How many disclosed values to name before summarising. Reading a sentence with
 # six clauses in it is worse than reading "and 3 more".
 _NAMED_VALUES = 3
@@ -38,16 +41,16 @@ def _readable(value: str) -> str:
     return text[:60].rstrip() + "..." if len(text) > 60 else text
 
 
-def _join(values: Sequence[str]) -> str:
+def _join(values: Sequence[str], joiner: str = "and") -> str:
     named = [_readable(value) for value in values[:_NAMED_VALUES]]
     remainder = len(values) - len(named)
     if remainder > 0:
-        named.append(f"{remainder} more")
+        named.append(f"{remainder} more" if joiner == "and" else f"+{remainder}")
     if not named:
         return ""
     if len(named) == 1:
         return named[0]
-    return ", ".join(named[:-1]) + " and " + named[-1]
+    return ", ".join(named[:-1]) + f" {joiner} " + named[-1]
 
 
 def _category(category: str) -> str:
@@ -66,6 +69,7 @@ def turn_record(
     emitted: Sequence[str],
     withheld: bool,
     sampled: bool = False,
+    language: str = DEFAULT_LANGUAGE,
 ) -> dict:
     """What this turn did, as the input `message_for` renders.
 
@@ -84,6 +88,7 @@ def turn_record(
         basis, confidence = "ranking", "exploring"
     return {
         "options": ("", ()),
+        "language": str(language or DEFAULT_LANGUAGE),
         "sampled": bool(sampled),
         "turn": int(turn),
         "category": _category(category),
@@ -111,6 +116,9 @@ def message_for(record: dict, *, asking: bool) -> str:
 
 
 def _message_for(record: dict, *, asking: bool) -> str:
+    language = str(record.get("language") or DEFAULT_LANGUAGE)
+    if language != DEFAULT_LANGUAGE:
+        return _translated_message_for(record, asking=asking, language=language)
     category = record.get("category") or "items"
     generic_category = " ".join(str(category).lower().split()) == "items"
     wanted = list(record.get("wanted") or ())
@@ -183,3 +191,63 @@ def _message_for(record: dict, *, asking: bool) -> str:
 
 
 __all__ = ["turn_record", "message_for"]
+
+
+def _translated_message_for(record: dict, *, asking: bool, language: str) -> str:
+    """The same turn, said in the language the customer wrote in.
+
+    Deliberately a separate path rather than a template pass over the English
+    one. The English wording carries distinctions this cannot: "in the catalog"
+    against "among boots", "one more detail" against naming the category. Those
+    were tuned on the English sentence, and a shared template flattens them, so
+    English keeps its own path byte for byte and only a customer who wrote in
+    another language reaches this one.
+
+    The templates are fixed sentences with catalog values interpolated. Nothing
+    here translates a product: a value stays exactly the string the catalog
+    holds, because inventing a translation of a product attribute would assert
+    something the catalog does not say. See needle/language.py.
+    """
+    say = phrases(language)
+    stop = say["stop"]
+    category = record.get("category") or "items"
+    # "items" is the English path's word for "no category known yet", not a
+    # catalog value, so it is the one category string that gets translated.
+    if " ".join(str(category).lower().split()) == "items":
+        category = say["items"]
+    wanted = list(record.get("wanted") or ())
+    unwanted = list(record.get("unwanted") or ())
+    candidates = record.get("candidates")
+    facet, options = record.get("options") or ("", ())
+
+    if asking and facet and options:
+        offered = (
+            ", ".join(value for value, _ in options)
+            if record.get("sampled")
+            else ", ".join(f"{value} ({count})" for value, count in options)
+        )
+        chosen = say["choose"].format(facet=say.get(facet, facet))
+        tail = f" {chosen} {offered} -- {say['or_other']}{stop}"
+    else:
+        tail = f" {say['ask']}" if asking else ""
+
+    ruled_out = (
+        " " + say["ruled_out"].format(values=_join(unwanted, say["and"])) if unwanted else ""
+    )
+
+    if record.get("identified") or (candidates == 1 and wanted):
+        head = say["single"].format(category=category, values=_join(wanted, say["and"]))
+        return f"{head}{ruled_out}".strip()
+
+    # `narrow` names a count, so it can only be used when there is one. The
+    # agent leaves `candidates` unset whenever the bucket was not resolved, and
+    # a sentence reading "there are  options left" is worse than not saying it.
+    if wanted and isinstance(candidates, int) and candidates > 1:
+        head = say["narrow"].format(
+            count=candidates, category=category, values=_join(wanted, say["and"])
+        )
+    elif wanted:
+        head = say["going_on"].format(category=category, values=_join(wanted, say["and"]))
+    else:
+        head = say["start"].format(category=category)
+    return f"{head}{ruled_out}{tail}".strip()

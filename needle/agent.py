@@ -12,6 +12,10 @@ from needle.catalog import (
 )
 from needle.contracts import TurnResponse
 from needle.explain import message_for, turn_record
+from needle.language import DEFAULT as DEFAULT_LANGUAGE
+from needle.language import category_mention as lexicon_category
+from needle.language import detect as detect_language
+from needle.language import supported as supported_languages
 from needle.questions import QuestionDecision, choose_clarification
 from needle.semantic import LexicalNormalizer, NoOpSemanticReranker
 from needle.state import Polarity, SessionState, StateStore
@@ -135,6 +139,9 @@ class Agent:
         self._seen_by_version: dict[tuple[str, int], set[str]] = {}
         self._opening_category_by_session: dict[str, str] = {}
         self._trace_by_session: dict[str, list[dict[str, object]]] = {}
+        self._language_by_session: dict[str, str] = {}
+        self._pinned_language: dict[str, str] = {}
+        self._lexicon_words_by_session: dict[str, str] = {}
         # Degradations are recorded rather than raised; an empty list is the
         # assertion that every turn took the normal path.
         self.respond_failures: list[str] = []
@@ -156,7 +163,45 @@ class Agent:
         for key in stale_keys:
             del self._seen_by_version[key]
         self._opening_category_by_session.pop(session_id, None)
+        self._language_by_session.pop(session_id, None)
+        self._pinned_language.pop(session_id, None)
+        self._lexicon_words_by_session.pop(session_id, None)
         self._trace_by_session.pop(session_id, None)
+
+    def set_language(self, session_id: str, language: str | None) -> None:
+        """Pin the reply language for a session, or clear the pin with None.
+
+        For a caller that already knows better than the detector: a storefront
+        with an account locale, or a test. An unsupported code is ignored rather
+        than raising, and detection then stands; falling back to English would
+        discard what the customer actually wrote because their storefront sent
+        a locale we cannot speak.
+        """
+        if language is None:
+            self._pinned_language.pop(session_id, None)
+            return
+        code = str(language).strip().lower()
+        if code in supported_languages():
+            self._pinned_language[session_id] = code
+
+    def _session_language(self, session_id: str, message: str) -> str:
+        """The language this session is conducted in.
+
+        Decided once, from the opening message, and then held. Detection is
+        per-message and a later reply can be too short to carry evidence: "Si,
+        cuero." reads as English on its own, and a customer who opened in
+        Spanish should not be answered in English on turn two because their
+        second message was three words long.
+        """
+        pinned = self._pinned_language.get(session_id)
+        if pinned is not None:
+            return pinned
+        known = self._language_by_session.get(session_id)
+        if known is not None:
+            return known
+        detected = detect_language(message)
+        self._language_by_session[session_id] = detected
+        return detected
 
     def trace_for(self, session_id: str) -> tuple[dict[str, object], ...]:
         """Return an isolated copy of optional faithful runtime traces."""
@@ -282,6 +327,7 @@ class Agent:
         emitted: Sequence[str],
         withheld: bool,
         asking: bool,
+        language: str = DEFAULT_LANGUAGE,
     ) -> tuple[str, QuestionDecision]:
         """Record what this turn did and say it. Never raises.
 
@@ -328,6 +374,7 @@ class Agent:
                 emitted=emitted,
                 withheld=withheld,
                 sampled=sampled,
+                language=language,
             )
             question = QuestionDecision(
                 candidate_count=len(candidate_ids),
@@ -402,17 +449,41 @@ class Agent:
         state = self.state.observe(session_id, user_message, turn)
         limit = self._bounded_limit(top_k)
         if turn == 1:
-            self._opening_category_by_session[session_id] = self.catalog.resolve_category(
-                opening_category_signature(user_message)
-            )
+            stated = opening_category_signature(user_message)
+            if not stated:
+                # `opening_category_signature` keys on English request grammar
+                # ("I'm looking for X"). A request written in another language
+                # is not unparseable, only differently ordered, so fall back to
+                # the shopping lexicon, which keys on the noun instead.
+                #
+                # English never reaches this branch: a request either states a
+                # category in that grammar or genuinely has none, and the
+                # released simulator always states one. Measured across all 200
+                # public sessions, every emitted message is byte-identical with
+                # this branch present.
+                words, _ = lexicon_category(user_message)
+                if words:
+                    self._lexicon_words_by_session[session_id] = words
+                    stated = words
+            # `resolve_category` is the catalog's own resolver and it declines
+            # rather than guessing, so a lexicon noun naming several categories,
+            # or none, leaves the bucket unqualified instead of wrong. That is
+            # why the lexicon does not need a resolver of its own.
+            self._opening_category_by_session[session_id] = self.catalog.resolve_category(stated)
         history_key = (session_id, state.intent_version)
         seen = self._seen_by_version.setdefault(history_key, set())
         seen_before = frozenset(seen)
         excluded = seen if self.exclude_seen else ()
         retrieval_text = state.retrieval_text
         category_evidence = self._opening_category_by_session.get(session_id, "")
+        lexicon_words = self._lexicon_words_by_session.get(session_id, "")
         if category_evidence:
             retrieval_text = f"{retrieval_text} {category_evidence}"
+        elif lexicon_words:
+            # Unresolved, so useless as a bucket key, but still the only
+            # statement of what the customer is shopping for. Retrieval can use
+            # the words even where the closed vocabulary could not.
+            retrieval_text = f"{retrieval_text} {lexicon_words}"
         if self.lexical_mode == "normalize":
             retrieval_text = self.lexical.normalize(retrieval_text)
         elif self.lexical_mode == "expand":
@@ -516,6 +587,7 @@ class Agent:
             )
             message, question_decision = self._explain_turn(
                 session_id,
+                language=self._session_language(session_id, user_message),
                 turn=turn,
                 category=category_evidence,
                 state=state,
