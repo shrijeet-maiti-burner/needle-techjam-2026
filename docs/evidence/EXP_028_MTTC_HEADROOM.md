@@ -1,0 +1,113 @@
+# EXP-028 where the remaining public score is, and why it is not reachable
+
+Status: measured, negative. No code change. Written so nobody spends the rest
+of the window re-deriving it.
+
+## Registered question
+
+"We are at 0.978500 against a protocol-conditioned oracle of 0.982500. Where is
+the 0.004, and is any of it reachable?"
+
+Answer: it is almost entirely turn-1 MTTC, and it is not reachable without
+leaning harder on a public-set sampling artefact that five prior experiments
+already measured as losing on held-out data.
+
+## Where the turns are
+
+`TechnicalScore = 0.50*HR@10 + 0.30*MRR + 0.20*Efficiency`, so one turn of MTTC
+is worth `0.20/10 = 0.02` across the set, and HR is already saturated.
+
+| scenario | n | our MTTC | oracle MTTC | gap |
+|---|---:|---:|---:|---:|
+| buying | 80 | 1.5000 | **1.0000** | 0.50 |
+| browsing | 80 | 1.8000 | 1.6375 | 0.16 |
+| boundary | 10 | 2.5000 | 2.4000 | 0.10 |
+| intent_override | 30 | 3.8667 | 3.8333 | 0.03 |
+
+`first_hit_turn` distribution:
+
+| scenario | t1 | t2 | t3 | t4 | t5 |
+|---|---:|---:|---:|---:|---:|
+| buying | 46 | 30 | 3 | 0 | 1 |
+| browsing | 29 | 41 | 8 | 1 | 1 |
+| boundary | 3 | 0 | 6 | 1 | 0 |
+| intent_override | 0 | 0 | 5 | 24 | 1 |
+
+MRR contributes almost nothing: 199 of 200 sessions are rank 1, and the single
+exception (`public_0020`, rank 3) is recorded elsewhere as unrecoverable in
+every configuration tried. Closing it is worth 0.001.
+
+## Three levers checked and closed
+
+**The question policy is already optimal, and cannot be improved.** The agent
+asks `other` on every turn. In `customer_reply`, `attribute == "other"` disables
+the classification filter entirely, so it returns the first two undisclosed
+constraints whatever they are. Any specific attribute is a subset of that, so
+`other` weakly dominates every alternative. Replayed over the full set: 175
+questions asked, 162 answered with a disclosure, and only **6 turns across 4
+sessions** produced a reply that disclosed nothing, all of them where the card's
+constraints were already exhausted. There is no waste to recover. This
+independently reconfirms EXP-013 at the current primary.
+
+**Emitting more at turn 1 loses.** Holding pays whenever it converts a mid-slate
+hit into a rank-1 hit, and the arithmetic is fixed: a turn is worth 0.02, moving
+rank 2 to rank 1 is worth `0.30 * 0.5 = 0.15`. Emitting the full slate at turn 1
+only breaks even if the target is already rank 1, which is what `emit_k=1`
+already does. The oracle's buying MTTC of 1.0000 says the target is inside our
+turn-1 top ten in all 80 buying sessions; it is at rank 1 in 46. Taking the
+other 34 by widening the slate would cost roughly 0.034 of MRR to buy 0.004 of
+efficiency.
+
+**The turn-1 pool is exchangeable, so the rest is not rankable.** For buying,
+the opening message discloses exactly one constraint, `hard_constraints[0]`.
+Counting catalog products that share the target's `(coarse category, first
+signature value)` key, which is every piece of evidence the customer has given
+by turn 1:
+
+```
+buying sessions                            80
+products sharing the target's turn-1 key   median 24, mean 65.9, max 1004
+key is unique to the target                 7
+two or more indistinguishable              73
+```
+
+Only **7 of 80** turn-1 answers are determined by the evidence. We get 46 right.
+The extra 39 come from popularity ordering, and the public targets are drawn
+from the popular tail (median `rating_number` 6846 against a catalog median of
+12, and 3 on the shape holdout). So we are already extracting substantially more
+from turn 1 than the disclosed evidence supports, and the remaining 34 are
+available only by leaning harder on that artefact.
+
+## Why that is the end of the road
+
+Every route into the exchangeable set has been measured and rejected:
+
+| attempt | result | record |
+|---|---|---|
+| stronger `popularity_strength` | +0.017 public, -0.024 shape holdout | EXP_006_SHAPES |
+| gated user-profile prior | +0.011 public, -0.011 holdout | EXP_006_SHAPES |
+| public-set popularity re-read | public set cannot judge it at all | EXP_022 |
+| catalog-only target propensity model | +0.0004, regresses 2 of 3 disjoint panels | EXP_024 |
+| promotion-release arms | regressed clean MRR | EXP_025 |
+| `early_slate_size` 2 and 3 | -0.020 and -0.032 clean | EXP_010 final |
+
+Five independent attacks on the same set, every one a public-set gain that
+inverts on held-out data. That is the signature of an artefact, not of an
+unexploited signal.
+
+## Conclusion
+
+0.978500 is at 99.6% of the protocol-conditioned oracle, and the remaining
+0.004 is turn-1 rank among products the customer has given us no way to tell
+apart. It is reachable only by fitting the public set's sampling, which costs
+more on every disjoint panel we hold. Recommend spending the remaining window
+on the private-run risks instead: packaging, reproduction, and contract safety.
+
+## Reproduction
+
+The replay harness mirrors `local_evaluator.run` exactly, including
+`initial_message`, `normalize_recommendations` and the override injection, and
+labels each customer reply.
+
+Pins: base `64e2158`, official `local_evaluator.py` at source commit
+`34078351e1c3615e5505a2e829600b56a542e462`, Python 3.12, macOS, stdlib only.
