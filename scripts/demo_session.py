@@ -39,6 +39,14 @@ def _wrap(label: str, text: str) -> str:
 
 
 def main() -> None:
+    # Product cards contain arbitrary Unicode.  Windows terminals commonly
+    # default to cp1252, which made a real demo abort before turn one when a
+    # hidden preference contained a heart symbol.  The transcript is UTF-8;
+    # replacement remains a safe fallback for unusual redirected streams.
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if callable(reconfigure):
+        reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="print one scored multi-turn session")
     parser.add_argument("--scenario", default="buying",
                         choices=["buying", "browsing", "intent_override", "boundary"])
