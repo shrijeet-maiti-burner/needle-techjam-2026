@@ -151,9 +151,15 @@ class StorefrontHandler(BaseHTTPRequestHandler):
 
         if route == "/api/session":
             profile = payload.get("profile")
-            conversation = self.service.start(
-                profile=profile if isinstance(profile, dict) else None
-            )
+            language = payload.get("language")
+            try:
+                conversation = self.service.start(
+                    profile=profile if isinstance(profile, dict) else None,
+                    language=str(language) if language else None,
+                )
+            except ValueError as error:
+                self._error(HTTPStatus.BAD_REQUEST, str(error))
+                return
             self._json(
                 HTTPStatus.OK,
                 {

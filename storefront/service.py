@@ -42,6 +42,19 @@ from needle.language import category_terms as language_category_terms
 from needle.language import detect as detect_language
 from needle.language import phrases as language_phrases
 from needle.language import supported as supported_languages
+
+# Endonyms, so the control reads in the language it selects rather than naming
+# it in English. Any code the language module gains and this map lacks falls
+# back to the code itself, which is why `get` is used at the call site.
+LANGUAGE_LABELS = {
+    "de": "Deutsch",
+    "en": "English",
+    "es": "Español",
+    "fr": "Français",
+    "hi": "हिन्दी",
+    "ja": "日本語",
+    "zh": "中文",
+}
 from needle.presets import PRIMARY_AGENT_KWARGS
 from needle.questions import QuestionDecision, clarification_board
 from needle.state import ConstraintStatus, Polarity
@@ -280,15 +293,34 @@ class StorefrontService:
         self,
         session_id: str | None = None,
         profile: Mapping[str, object] | None = None,
+        language: str | None = None,
     ) -> Conversation:
+        """Open a session, optionally pinned to one of the supported languages.
+
+        Detection from the first message still works and is what the scored
+        path relies on. This exists because a reviewer cannot discover that the
+        agent answers in seven languages by looking at an English page, and
+        typing Japanese to find out is not a discovery path.
+        """
+
         identifier = str(session_id or f"storefront-{uuid.uuid4().hex[:12]}")
+        requested = str(language or "").strip().lower()
+        if requested and requested not in supported_languages():
+            raise ValueError(f"unsupported language: {language!r}")
         with self._lock:
             agent = self.agent
             self._owned(agent.reset, identifier, dict(profile or {}))
+            plan = ShoppingPlan(identifier) if self.journey_mode else None
+            if plan is not None and requested:
+                plan.language = requested
+            if requested:
+                set_language = getattr(agent, "set_language", None)
+                if callable(set_language):
+                    self._owned(set_language, identifier, requested)
             conversation = Conversation(
                 identifier,
                 dict(profile or {}),
-                journey=ShoppingPlan(identifier) if self.journey_mode else None,
+                journey=plan,
             )
             self._conversations[identifier] = conversation
             self._conversations.move_to_end(identifier)
@@ -842,6 +874,14 @@ class StorefrontService:
             payload = selected.as_dict()
             payload["source"] = "released-candidate clarification board"
             payload["relationship_aware"] = bool(anchor_id)
+            # The questions this one beat, with the numbers that decided it.
+            # A ranked board is the whole argument for asking anything at all,
+            # and it was being computed and thrown away every turn.
+            payload["alternatives"] = [
+                decision.as_dict()
+                for decision in board
+                if decision.attribute != selected.attribute
+            ][:3]
             return self._render_question(remember(payload), language=language), payload
 
         if anchor_id:
@@ -1158,4 +1198,11 @@ class StorefrontService:
             "mode": "journey" if self.journey_mode else "benchmark",
             "scored_turn_budget": SCORED_TURN_BUDGET,
             "suggestions": self.view.common_categories(6),
+            # The interface offers these as session languages. It asks the
+            # language module rather than carrying its own list, so a language
+            # added there appears here without a second edit.
+            "languages": [
+                {"code": code, "label": LANGUAGE_LABELS.get(code, code)}
+                for code in supported_languages()
+            ],
         }

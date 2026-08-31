@@ -674,6 +674,31 @@ def journey_beliefs(plan: ShoppingPlan) -> dict[str, object]:
     }
 
 
+def retired_terms(item: LineItem) -> frozenset[str]:
+    """Words the customer has ruled out or replaced, as retrieval tokens.
+
+    A superseded group holds the value that was replaced and a negative group
+    holds one that was rejected. Neither belongs in a query, and both are still
+    sitting in the raw message text that produced them.
+    """
+
+    active = {
+        token
+        for group in item.positive_groups()
+        for value in group.values
+        for token in query_terms(str(value), limit=30)
+    }
+    retired = {
+        token
+        for group in (*item.negative_groups(), *item.superseded)
+        for value in group.values
+        for token in query_terms(str(value), limit=30)
+    }
+    # Something re-stated after being retracted is wanted again, and the
+    # positive groups are the authority on that.
+    return frozenset(retired - active)
+
+
 def query_for(plan: ShoppingPlan, item: LineItem) -> str:
     """Stable retrieval text containing only interpreted shopping evidence."""
 
@@ -682,9 +707,16 @@ def query_for(plan: ShoppingPlan, item: LineItem) -> str:
         terms.extend(group.values)
     # Retain bounded free-text evidence such as "garden" or "daytime" that is
     # useful to sparse retrieval but is not one of the scorer's compact facets.
-    # This is the shopper's language, not a generated expansion.
+    # Numeric directives are removed before retrieval, as are words the
+    # customer has explicitly rejected or replaced. Positive groups remain the
+    # authority, so a value stated again after a retraction is admitted again.
     recent = " ".join(searchable_text(message) for message in item.messages[-2:])
-    terms.extend(query_terms(recent, limit=30))
+    retired = retired_terms(item)
+    terms.extend(
+        term
+        for term in query_terms(recent, limit=30)
+        if term.lower() not in retired
+    )
     return " ".join(dict.fromkeys(term for term in terms if term)).strip()
 
 
@@ -718,6 +750,7 @@ __all__ = [
     "LineItem",
     "PlanDecision",
     "ShoppingPlan",
+    "retired_terms",
     "alternative_queries",
     "journey_beliefs",
     "query_for",
