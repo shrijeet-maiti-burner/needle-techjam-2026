@@ -63,6 +63,7 @@ def main() -> None:
     sys.path.insert(0, str(ROOT))
     from needle.catalog import (
         SIGNATURE_INDEX_SCHEMA_VERSION,
+        _facet_rules_fingerprint,
         build_signature_index,
         sha256_file,
     )
@@ -77,6 +78,7 @@ def main() -> None:
         current = (
             existing.get("schema_version") == SIGNATURE_INDEX_SCHEMA_VERSION
             and existing.get("catalog_sha256") == sha256_file(catalog)
+            and existing.get("facet_parser_sha256") == _facet_rules_fingerprint()
         )
         if current and not args.force:
             print(json.dumps({
@@ -89,7 +91,8 @@ def main() -> None:
         reason = "forced" if current else (
             f"stale: schema {existing.get('schema_version')!r} against "
             f"{SIGNATURE_INDEX_SCHEMA_VERSION!r}, catalog "
-            f"{'bound' if existing.get('catalog_sha256') == sha256_file(catalog) else 'unbound'}"
+            f"{'bound' if existing.get('catalog_sha256') == sha256_file(catalog) else 'unbound'}, "
+            f"parser {'current' if existing.get('facet_parser_sha256') == _facet_rules_fingerprint() else 'stale'}"
         )
         print(f"replacing existing index ({reason})", file=sys.stderr)
         output.unlink()

@@ -60,6 +60,14 @@ class BuilderReplacesAStaleIndex(unittest.TestCase):
         finally:
             connection.close()
 
+    def _set_metadata(self, key: str, value: str) -> None:
+        connection = sqlite3.connect(self.output)
+        try:
+            with connection:
+                connection.execute("UPDATE metadata SET value = ? WHERE key = ?", (value, key))
+        finally:
+            connection.close()
+
     def test_a_first_build_writes_the_index(self) -> None:
         completed = self._build()
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -92,6 +100,18 @@ class BuilderReplacesAStaleIndex(unittest.TestCase):
 
         from needle.catalog import SIGNATURE_INDEX_SCHEMA_VERSION
         self.assertEqual(self._schema(), SIGNATURE_INDEX_SCHEMA_VERSION)
+
+    def test_a_stale_facet_parser_is_replaced_even_when_schema_matches(self) -> None:
+        """Facet rules can move without a storage-schema change."""
+
+        self._build()
+        before = self.output.stat().st_mtime_ns
+        self._set_metadata("facet_parser_sha256", "stale-parser")
+        completed = self._build()
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue(json.loads(completed.stdout)["rebuilt"])
+        self.assertIn("parser stale", completed.stderr)
+        self.assertNotEqual(self.output.stat().st_mtime_ns, before)
 
     def test_an_index_bound_to_another_catalog_is_replaced(self) -> None:
         self._build()

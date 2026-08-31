@@ -60,7 +60,7 @@ docs/                   architecture, ownership, evidence, and disclosures
 python scripts/needle_storefront.py --warm
 ```
 
-Serves a local shopping interface on `http://127.0.0.1:8770` driven by the selected primary agent, so free-text behaviour the 200 released sessions never produce can be tested directly. It runs `PRIMARY_AGENT_KWARGS` and reports any deviation from it on screen. See [docs/STOREFRONT.md](docs/STOREFRONT.md).
+Serves a local shopping interface on `http://127.0.0.1:8770`. The frozen primary agent generates candidates; an explicitly labelled product layer adds multi-item plans, alternative constraints, user-confirmed anchors, catalog-grounded compatibility evidence and value-of-information questions. Use `--benchmark-mode` to disable that layer and reproduce the one-target scored session shape. The journey layer is product evidence, not part of the reported `.978500` measurement. See [docs/STOREFRONT.md](docs/STOREFRONT.md).
 
 ## Non-negotiable rules
 

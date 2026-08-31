@@ -14,7 +14,7 @@ reads `degraded` on every turn and fails the run if any turn set it.
 half-second slower breaks nothing and shows up nowhere. `--max-p95-ms` turns
 that into a failure.
 
-    python scripts/needle_storefront.py --warm          # in one shell
+    python scripts/needle_storefront.py --warm --benchmark-mode  # in one shell
     python scripts/storefront_smoke.py                  # in another
 
 Exits non-zero on the first failed assertion, so it is usable as a gate.

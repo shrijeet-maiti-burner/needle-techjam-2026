@@ -32,14 +32,30 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from needle.agent import Agent
-from needle.catalog import extract_category_terms, query_terms
+from needle.catalog import extract_category_terms, product_clarification_facets, query_terms
+from needle.language import DEFAULT as DEFAULT_LANGUAGE
+from needle.language import category_mention as language_category_mention
+from needle.language import category_terms as language_category_terms
+from needle.language import detect as detect_language
+from needle.language import phrases as language_phrases
+from needle.language import supported as supported_languages
 from needle.presets import PRIMARY_AGENT_KWARGS
+from needle.questions import QuestionDecision, clarification_board
 from needle.state import ConstraintStatus, Polarity
 
 from storefront.catalog_view import CatalogView
+from storefront.compatibility import RerankResult, rerank_products
+from storefront.journey import (
+    DeterministicJourneyPlanner,
+    JourneyAction,
+    ShoppingPlan,
+    alternative_queries,
+    journey_beliefs,
+    query_for,
+)
 
 # The evaluator and `StateStore` both accept at most ten turns. The interface
 # stops there too: sending an eleventh message would exercise the agent's
@@ -56,6 +72,15 @@ MAX_LIVE_SESSIONS = 64
 # target-blind decision receipt; neither is an unused diagnostic here.
 OPTIONAL_AGENT_KWARGS: Mapping[str, object] = {"explain": True, "trace_enabled": True}
 
+_WEARER_QUESTIONS: Mapping[str, str] = {
+    "es": "¿Para quién es?",
+    "fr": "Pour qui est-ce ?",
+    "de": "Für wen ist es?",
+    "hi": "यह किसके लिए है?",
+    "ja": "誰向けですか。",
+    "zh": "是给谁的？",
+}
+
 
 @dataclass(slots=True)
 class Turn:
@@ -71,6 +96,8 @@ class Turn:
     beliefs: dict[str, object]
     within_scored_budget: bool
     trace: dict[str, object] | None = None
+    journey: dict[str, object] | None = None
+    journey_trace: dict[str, object] | None = None
 
     def as_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -86,6 +113,10 @@ class Turn:
         }
         if self.trace is not None:
             payload["trace"] = self.trace
+        if self.journey is not None:
+            payload["journey"] = self.journey
+        if self.journey_trace is not None:
+            payload["journey_trace"] = self.journey_trace
         return payload
 
 
@@ -94,6 +125,7 @@ class Conversation:
     session_id: str
     profile: dict[str, object] = field(default_factory=dict)
     turns: list[Turn] = field(default_factory=list)
+    journey: ShoppingPlan | None = None
 
     @property
     def next_turn(self) -> int:
@@ -131,6 +163,7 @@ class StorefrontService:
         signature_index_path: str | Path | None = None,
         overrides: Mapping[str, object] | None = None,
         max_sessions: int = MAX_LIVE_SESSIONS,
+        journey_mode: bool = False,
     ) -> None:
         self.catalog_path = Path(catalog_path)
         if not self.catalog_path.is_file():
@@ -140,8 +173,13 @@ class StorefrontService:
         )
         self.overrides = dict(overrides or {})
         self.max_sessions = max(1, int(max_sessions))
+        self.journey_mode = bool(journey_mode)
 
         self.view = CatalogView(self.catalog_path)
+        self.journey_planner = DeterministicJourneyPlanner(
+            self._journey_category_mentions,
+            self.view.audience_mentions,
+        )
         self._agent: Agent | None = None
         self._conversations: OrderedDict[str, Conversation] = OrderedDict()
         self._lock = threading.RLock()
@@ -247,7 +285,11 @@ class StorefrontService:
         with self._lock:
             agent = self.agent
             self._owned(agent.reset, identifier, dict(profile or {}))
-            conversation = Conversation(identifier, dict(profile or {}))
+            conversation = Conversation(
+                identifier,
+                dict(profile or {}),
+                journey=ShoppingPlan(identifier) if self.journey_mode else None,
+            )
             self._conversations[identifier] = conversation
             self._conversations.move_to_end(identifier)
             while len(self._conversations) > self.max_sessions:
@@ -275,6 +317,8 @@ class StorefrontService:
                 raise ValueError(
                     "ten-turn budget exhausted; start a new conversation"
                 )
+            if self.journey_mode:
+                return self._send_journey(conversation, text, turn_number)
             agent = self.agent
 
             started = time.perf_counter()
@@ -313,6 +357,504 @@ class StorefrontService:
             )
             conversation.turns.append(turn)
             return turn
+
+    def select(self, session_id: str, parent_asin: str) -> dict[str, object]:
+        """Confirm one currently displayed product as the active line-item anchor."""
+
+        identifier = str(parent_asin or "").strip()
+        if not self.journey_mode:
+            raise ValueError("product selection is available only in journey mode")
+        with self._lock:
+            conversation = self.conversation(session_id)
+            if conversation is None or conversation.journey is None:
+                raise ValueError("unknown session")
+            item = conversation.journey.active_item
+            if item is None or identifier not in item.last_ids:
+                raise ValueError("product is not in the active line item's current slate")
+            item.selected_id = identifier
+            product = self.view.raw(identifier) or {}
+            audience = self.view.audience(product)
+            if item.audience is None and audience:
+                item.audience = audience
+            return {
+                "selected_id": identifier,
+                "journey": conversation.journey.as_dict(),
+            }
+
+    def _send_journey(
+        self,
+        conversation: Conversation,
+        text: str,
+        turn_number: int,
+    ) -> Turn:
+        """Product-facing orchestration over isolated measured-agent sessions.
+
+        The scored Agent is still the candidate generator.  Journey mode owns
+        only state that the one-target evaluator has no way to represent:
+        multiple line items, alternatives and cross-item relations.
+        """
+
+        plan = conversation.journey
+        if plan is None:
+            plan = ShoppingPlan(conversation.session_id)
+            conversation.journey = plan
+        detected_language = detect_language(text)
+        if (
+            plan.language == DEFAULT_LANGUAGE
+            and detected_language in supported_languages()
+            and detected_language != DEFAULT_LANGUAGE
+        ):
+            plan.language = detected_language
+        decision = self.journey_planner.observe(plan, text, turn_number)
+        item = plan.active_item
+        assert item is not None
+        _, customer_category = language_category_mention(text)
+        if customer_category and item.item_id in decision.created_item_ids:
+            item.label = customer_category
+        agent = self.agent
+
+        if item.local_turn == 0:
+            self._owned(agent.reset, item.agent_session_id, conversation.profile)
+        set_language = getattr(agent, "set_language", None)
+        if callable(set_language):
+            self._owned(set_language, item.agent_session_id, plan.language)
+        item.local_turn += 1
+        retrieval_text = query_for(plan, item)
+
+        started = time.perf_counter()
+        response = self._owned(
+            agent.respond,
+            item.agent_session_id,
+            retrieval_text,
+            item.local_turn,
+            10,
+        )
+        base_ids = [
+            str(candidate.get("parent_asin", ""))
+            for candidate in response.get("recommendations", [])
+            if isinstance(candidate, Mapping)
+        ]
+        related = plan.item(item.related_item_id)
+        anchor_id = None
+        relation_terms: list[str] = []
+        if related is not None:
+            anchor_id = related.selected_id or next(iter(related.last_ids), None)
+        if anchor_id:
+            anchor = self.view.raw(anchor_id)
+            if anchor is not None:
+                categories = anchor.get("categories")
+                if isinstance(categories, list) and len(categories) > 1:
+                    relation_terms.extend(query_terms(str(categories[1]), limit=4))
+                relation_terms.extend(
+                    product_clarification_facets(anchor).get(name, "")
+                    for name in ("style", "use_case")
+                )
+                relation_terms = [term for term in relation_terms if term]
+        ranked_sources: list[Sequence[str]] = [base_ids]
+        for query in alternative_queries(plan, item):
+            category_seeds = (
+                self.view.common_categories(6)
+                if item.category == "item"
+                else [item.category]
+            )
+            variants = [query, *category_seeds]
+            variants.extend(f"{query} {term}" for term in relation_terms)
+            variants.extend(
+                f"{category} {term}"
+                for category in category_seeds
+                for term in relation_terms
+            )
+            for relation_query in dict.fromkeys(variant.strip() for variant in variants):
+                candidates = self._owned(
+                    lambda q=relation_query: agent.catalog.search(
+                        q,
+                        120,
+                        messages=(q,),
+                        excluded_ids=(),
+                    )
+                )
+                ranked_sources.append(
+                    [candidate.parent_asin for candidate in candidates]
+                )
+        candidate_ids = self._reciprocal_rank_merge(ranked_sources, limit=500)
+
+        reranked = rerank_products(
+            self.view,
+            plan,
+            item,
+            candidate_ids,
+            anchor_id=anchor_id,
+            enforce_anchor_audience=bool(
+                related is not None and (related.selected_id or related.audience)
+            ),
+            explore=decision.exploration,
+            limit=10,
+        )
+        identifiers = [product.parent_asin for product in reranked.products]
+        item.last_ids = identifiers
+
+        beliefs = journey_beliefs(plan)
+        terms = self._journey_evidence_terms(plan, item)
+        cards = [
+            card.as_dict()
+            for card in self.view.cards(
+                identifiers,
+                terms=terms,
+                stale_terms=self._stale_terms(beliefs),
+            )
+        ]
+        by_id = {product.parent_asin: product for product in reranked.products}
+        for card in cards:
+            ranked = by_id.get(str(card.get("parent_asin", "")))
+            if ranked is None:
+                continue
+            card["journey_score"] = ranked.score
+            card["constraint_evidence"] = {
+                "matched": ranked.matched_constraints,
+                "total": ranked.total_constraints,
+            }
+            if ranked.compatibility is not None:
+                card["compatibility"] = ranked.compatibility.as_dict()
+
+        failures = list(getattr(agent, "respond_failures", ()))
+        degraded = len(failures) > self._failures_seen
+        self._failures_seen = len(failures)
+        latency_ms = (time.perf_counter() - started) * 1000.0
+        trace = self._trace(item.agent_session_id)
+        question_message, question_decision = self._journey_question(
+            plan,
+            item,
+            identifiers,
+            trace,
+            anchor_id=anchor_id,
+            turn_number=turn_number,
+            language=plan.language,
+        )
+        message = self._journey_message(
+            plan,
+            item,
+            decision.action,
+            reranked,
+            anchor_id=anchor_id,
+            anchor_confirmed=bool(related is not None and related.selected_id),
+            question_message=question_message,
+            language=plan.language,
+        )
+        journey_trace = {
+            "candidate_sources": len(ranked_sources),
+            "merged_candidates": len(candidate_ids),
+            "filtered_candidates": len(reranked.filtered_ids),
+            "released_candidates": len(identifiers),
+            "rerank_reason": reranked.reason,
+            "anchor_id": anchor_id,
+            "anchor_status": (
+                "confirmed"
+                if related is not None and related.selected_id
+                else "top proposal"
+                if anchor_id
+                else "none"
+            ),
+            "question": question_decision,
+            "llm_used": False,
+            "fallback": "deterministic catalog planner",
+        }
+        turn = Turn(
+            turn=turn_number,
+            user_message=text,
+            message=message,
+            ask_attribute=(
+                str(question_decision.get("attribute"))
+                if question_decision.get("asks")
+                else response.get("ask_attribute")
+            ),
+            cards=cards,
+            latency_ms=latency_ms,
+            degraded=degraded,
+            beliefs=beliefs,
+            within_scored_budget=turn_number <= SCORED_TURN_BUDGET,
+            trace=trace,
+            journey=plan.as_dict(),
+            journey_trace=journey_trace,
+        )
+        conversation.turns.append(turn)
+        return turn
+
+    @staticmethod
+    def _reciprocal_rank_merge(
+        sources: Sequence[Sequence[str]],
+        *,
+        limit: int,
+    ) -> list[str]:
+        """Deterministic union that gives every alternative a path to rank."""
+
+        scores: dict[str, float] = {}
+        first_seen: dict[str, tuple[int, int]] = {}
+        for source_index, source in enumerate(sources):
+            weight = 1.35 if source_index == 0 else 1.0
+            for rank, identifier in enumerate(source, start=1):
+                if not identifier:
+                    continue
+                scores[identifier] = scores.get(identifier, 0.0) + weight / (20.0 + rank)
+                first_seen.setdefault(identifier, (source_index, rank))
+        return [
+            identifier
+            for identifier, _ in sorted(
+                scores.items(),
+                key=lambda row: (-row[1], first_seen[row[0]], row[0]),
+            )[: max(0, int(limit))]
+        ]
+
+    def _journey_category_mentions(self, text: str) -> list[str]:
+        """Catalog categories named directly or through the language overlay."""
+
+        mentions = self.view.category_mentions(text)
+        translated = language_category_terms(text)
+        if translated:
+            mentions.extend(self.view.category_mentions(translated))
+        return list(dict.fromkeys(mentions))
+
+    @staticmethod
+    def _journey_evidence_terms(plan: ShoppingPlan, item: object) -> list[str]:
+        terms: list[str] = []
+        terms.extend(query_terms(getattr(item, "category", ""), limit=12))
+        terms.extend(query_terms(" ".join(plan.global_context), limit=20))
+        for group in getattr(item, "constraints", ()):
+            for value in group.values:
+                terms.extend(query_terms(value, limit=12))
+        return list(dict.fromkeys(terms))[:40]
+
+    @staticmethod
+    def _journey_message(
+        plan: ShoppingPlan,
+        item: object,
+        action: JourneyAction,
+        reranked: RerankResult,
+        *,
+        anchor_id: str | None,
+        anchor_confirmed: bool,
+        question_message: str,
+        language: str,
+    ) -> str:
+        label = str(getattr(item, "label", "this item")).lower()
+        if not reranked.products:
+            return (
+                f"I kept every stated requirement, but the catalog has no {label} "
+                "that satisfies all of them. Which requirement may I relax?"
+            )
+        if language != DEFAULT_LANGUAGE:
+            say = language_phrases(language)
+            evidence = [
+                *plan.global_context,
+                *(
+                    value
+                    for group in getattr(item, "positive_groups", lambda: ())()
+                    for value in group.values
+                ),
+            ]
+            if evidence:
+                prefix = say["going_on"].format(
+                    values=f" {say['and']} ".join(dict.fromkeys(evidence)),
+                    category=label,
+                )
+            else:
+                prefix = say["start"].format(category=label)
+        elif anchor_id:
+            prefix = (
+                f"I kept the earlier item in your plan and ranked these {label} "
+                f"against {'your selected product' if anchor_confirmed else 'its current top proposal'}. "
+                "Compatibility is confidence-labelled "
+                "where the metadata is incomplete."
+            )
+        elif action is JourneyAction.EXPLORE:
+            prefix = (
+                f"I kept your {label} intent and diversified the slate across the "
+                "catalog facets still available."
+            )
+        elif action is JourneyAction.CREATE and len(plan.items) > 1:
+            prefix = f"I added {label} as a separate line item without discarding the rest of your plan."
+        else:
+            prefix = f"I updated the {label} line item from the constraints I could verify in the catalog."
+        suffix = question_message.strip()
+        return f"{prefix} {suffix}".strip()
+
+    def _journey_question(
+        self,
+        plan: ShoppingPlan,
+        item: object,
+        candidate_ids: Sequence[str],
+        trace: Mapping[str, object] | None,
+        *,
+        anchor_id: str | None,
+        turn_number: int,
+        language: str,
+    ) -> tuple[str, dict[str, object]]:
+        """Ask the catalog question with the most journey-level information.
+
+        The benchmark trace remains a valid fallback, but its question was
+        chosen for one hidden target.  Journey mode recomputes the board over
+        the products it actually released.  For a related item, a facet whose
+        real options contain the anchor's own value is preferred: that makes
+        the question about the relationship without encoding outfit pairs.
+        """
+
+        facets = {
+            identifier: product_clarification_facets(self.view.raw(identifier) or {})
+            for identifier in candidate_ids
+        }
+        said = [
+            *getattr(item, "messages", ()),
+            *plan.global_context,
+            *(
+                value
+                for group in getattr(item, "constraints", ())
+                for value in group.values
+            ),
+        ]
+        excluded = [
+            value
+            for group in getattr(item, "negative_groups", lambda: ())()
+            for value in group.values
+        ]
+        board = clarification_board(
+            candidate_ids,
+            facets,
+            already_said=said,
+            turns_left=max(0, SCORED_TURN_BUDGET - turn_number),
+            excluded_values=excluded,
+        )
+        selected: QuestionDecision | None = None
+        audience_question = self._audience_question(item, candidate_ids, turn_number)
+        anchor_facets: Mapping[str, str] = {}
+        if anchor_id:
+            anchor_facets = product_clarification_facets(self.view.raw(anchor_id) or {})
+
+        if audience_question is not None:
+            payload = audience_question
+            return self._render_question(payload, language=language), payload
+
+        if board:
+            def relationship_value(decision: QuestionDecision) -> tuple[int, float, float, str]:
+                option_values = {value for value, _ in decision.options}
+                anchor_value = anchor_facets.get(decision.attribute, "")
+                direct_anchor_evidence = int(
+                    decision.attribute in {"style", "use_case", "color", "material"}
+                    and bool(anchor_value and anchor_value in option_values)
+                )
+                global_evidence = int(bool(option_values.intersection(plan.global_context)))
+                return (
+                    direct_anchor_evidence,
+                    global_evidence,
+                    decision.net_value,
+                    decision.attribute,
+                )
+
+            selected = max(board, key=relationship_value) if anchor_id else board[0]
+            if not selected.asks:
+                selected = None
+
+        if selected is not None:
+            payload = selected.as_dict()
+            payload["source"] = "released-candidate clarification board"
+            payload["relationship_aware"] = bool(anchor_id)
+            return self._render_question(payload, language=language), payload
+
+        fallback = self._trace_question_decision(trace)
+        if fallback is None:
+            payload = {
+                "asks": False,
+                "source": "catalog stop decision",
+                "reason": "no unanswered catalog facet divides the released candidates",
+            }
+            return "", payload
+        payload = dict(fallback)
+        payload["source"] = "single-target policy fallback"
+        payload["relationship_aware"] = False
+        return self._render_question(payload, language=language), payload
+
+    def _audience_question(
+        self,
+        item: object,
+        candidate_ids: Sequence[str],
+        turn_number: int,
+    ) -> dict[str, object] | None:
+        """Ask for wearer only when the released slate genuinely spans audiences."""
+
+        if getattr(item, "audience", None):
+            return None
+        counts: dict[str, int] = {}
+        for identifier in candidate_ids:
+            product = self.view.raw(identifier) or {}
+            audience = self.view.audience(product)
+            if audience:
+                counts[audience] = counts.get(audience, 0) + 1
+        if len(counts) < 2:
+            return None
+        total = len(candidate_ids)
+        expected_remaining = sum(size * size for size in counts.values()) / max(1, total)
+        expected_reduction = max(0.0, 1.0 - expected_remaining / max(1, total))
+        interaction_cost = 1.0 / (max(0, SCORED_TURN_BUDGET - turn_number) + 1.0)
+        net_value = expected_reduction - interaction_cost
+        if net_value <= 0.0:
+            return None
+        return {
+            "attribute": "wearer",
+            "options": tuple(sorted(counts.items(), key=lambda row: (-row[1], row[0]))[:4]),
+            "candidate_count": total,
+            "expected_remaining": round(expected_remaining, 6),
+            "expected_candidate_reduction": round(expected_reduction, 6),
+            "interaction_cost": round(interaction_cost, 6),
+            "net_value": round(net_value, 6),
+            "asks": True,
+            "reason": "audience ambiguity divides the released catalog slate",
+            "source": "catalog audience board",
+            "relationship_aware": False,
+        }
+
+    @staticmethod
+    def _trace_question_decision(
+        trace: Mapping[str, object] | None,
+    ) -> Mapping[str, object] | None:
+        if not isinstance(trace, Mapping):
+            return None
+        policy = trace.get("question_policy")
+        if not isinstance(policy, Mapping):
+            return None
+        decision = policy.get("human_message_decision")
+        return decision if isinstance(decision, Mapping) and decision.get("asks") else None
+
+    @staticmethod
+    def _render_question(
+        decision: Mapping[str, object],
+        *,
+        language: str = DEFAULT_LANGUAGE,
+    ) -> str:
+        attribute = str(decision.get("attribute") or "detail").replace("_", " ")
+        raw_options = decision.get("options")
+        options: list[str] = []
+        if isinstance(raw_options, (list, tuple)):
+            for option in raw_options[:4]:
+                if isinstance(option, (list, tuple)) and len(option) >= 2:
+                    options.append(f"{option[0]} ({option[1]})")
+        choices = ", ".join(options)
+        if language != DEFAULT_LANGUAGE:
+            say = language_phrases(language)
+            facet = say.get(attribute, attribute)
+            prompt = (
+                _WEARER_QUESTIONS[language]
+                if attribute == "wearer" and language in _WEARER_QUESTIONS
+                else say["choose"].format(facet=facet)
+            )
+            return (
+                f"{prompt} {choices} -- {say['or_other']}{say['stop']}"
+                if choices
+                else prompt
+            )
+        return (
+            f"Which {attribute} would help most? {choices}. "
+            "You can also answer outside these options."
+            if choices
+            else f"Which {attribute} would help most?"
+        )
 
     # -- introspection -------------------------------------------------------
 
@@ -505,6 +1047,7 @@ class StorefrontService:
             "index_fallback": self.index_fallback,
             "optional_features": sorted(self.enabled_optional),
             "deviations": self.deviations,
+            "mode": "journey" if self.journey_mode else "benchmark",
             "scored_turn_budget": SCORED_TURN_BUDGET,
             "suggestions": self.view.common_categories(6),
         }
