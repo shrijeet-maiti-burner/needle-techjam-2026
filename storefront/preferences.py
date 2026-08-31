@@ -60,6 +60,20 @@ _RATING_MAX_RE = re.compile(
     re.IGNORECASE,
 )
 _RATING_PLUS_RE = re.compile(rf"\b(?P<value>{_NUMBER})\s*\+\s*stars?\b", re.IGNORECASE)
+_RATING_SUFFIX_MIN_RE = re.compile(
+    rf"(?:\b(?:rated|rating)\s*(?P<after>{_NUMBER})\s*(?:stars?)?|"
+    rf"\b(?P<before>{_NUMBER})\s*stars?)\s*"
+    rf"(?P<after_op>or\s+(?:higher|better|above))\b",
+    re.IGNORECASE,
+)
+_RATING_EXACT_RE = re.compile(
+    rf"\b(?P<value>{_NUMBER})\s*[- ]stars?(?:[- ]rated)?\b",
+    re.IGNORECASE,
+)
+_RATING_WORD_RE = re.compile(
+    r"\b(?P<word>one|two|three|four|five)[- ]stars?(?:[- ]rated)?\b",
+    re.IGNORECASE,
+)
 _REVIEW_RANGE_RE = re.compile(
     rf"\b(?:(?:reviews?|ratings?)\s*)?(?:between|from)\s*(?P<low>{_NUMBER})\s*"
     rf"(?:and|to|[-\u2013\u2014])\s*(?P<high>{_NUMBER})\s*"
@@ -95,7 +109,10 @@ _PRICE_ASC_RE = re.compile(
 )
 _PRICE_DESC_RE = re.compile(r"\b(?:most\s+expensive|highest[- ]price(?:d)?)\b", re.IGNORECASE)
 _RATING_DESC_RE = re.compile(
-    r"\b(?:best|top|highest)[- ]rated\b|\b(?:best|highest)\s+(?:customer\s+)?rating\b",
+    r"\b(?:best|top|highest|highly|well)[- ]rated\b|"
+    r"\b(?:best|highest)\s+(?:customer\s+)?rating\b|"
+    r"\bwell[- ]reviewed\b|"
+    r"\b(?:good|great|excellent|positive)\s+(?:customer\s+)?reviews?\b",
     re.IGNORECASE,
 )
 _RATING_ASC_RE = re.compile(r"\b(?:worst|lowest)[- ]rated\b", re.IGNORECASE)
@@ -123,6 +140,15 @@ _CLEAR_PATTERNS = {
 
 def _number(value: str) -> float:
     return float(value.replace("$", "").replace(",", "").strip())
+
+
+_WORD_RATINGS = {
+    "one": 1.0,
+    "two": 2.0,
+    "three": 3.0,
+    "four": 4.0,
+    "five": 5.0,
+}
 
 
 def _operator(match: re.Match[str]) -> str:
@@ -273,6 +299,7 @@ def parse_numeric_intent(message: str, turn: int) -> NumericIntent:
                 )
 
     rating_range = _RATING_RANGE_RE.search(text)
+    rating_max = _RATING_MAX_RE.search(text)
     if (
         rating_range
         and _RATING_CUE_RE.search(rating_range.group(0))
@@ -281,29 +308,7 @@ def parse_numeric_intent(message: str, turn: int) -> NumericIntent:
         low, high = sorted((_number(rating_range.group("low")), _number(rating_range.group("high"))))
         if 0 < low <= 5 and 0 < high <= 5:
             filters[RATING] = NumericFilter(RATING, low, high, int(turn), text[:240])
-    else:
-        rating_min = _RATING_MIN_RE.search(text)
-        rating_plus = _RATING_PLUS_RE.search(text)
-        found = rating_min or rating_plus
-        if found and not _is_negated(text, found.start()):
-            raw = (
-                found.groupdict().get("after")
-                or found.groupdict().get("before")
-                or found.groupdict().get("value")
-            )
-            value = _number(str(raw))
-            if 0 < value <= 5:
-                filters[RATING] = NumericFilter(
-                    RATING,
-                    value,
-                    None,
-                    int(turn),
-                    text[:240],
-                    minimum_inclusive=not _strict_minimum(found),
-                )
-
-    rating_max = _RATING_MAX_RE.search(text)
-    if rating_max and not _is_negated(text, rating_max.start()):
+    elif rating_max and not _is_negated(text, rating_max.start()):
         raw = rating_max.groupdict().get("after") or rating_max.groupdict().get("before")
         value = _number(str(raw))
         if 0 < value <= 5:
@@ -315,6 +320,33 @@ def parse_numeric_intent(message: str, turn: int) -> NumericIntent:
                 text[:240],
                 maximum_inclusive=not _strict_maximum(rating_max),
             )
+    else:
+        rating_min = _RATING_MIN_RE.search(text)
+        rating_suffix_min = _RATING_SUFFIX_MIN_RE.search(text)
+        rating_plus = _RATING_PLUS_RE.search(text)
+        rating_exact = _RATING_EXACT_RE.search(text)
+        rating_word = _RATING_WORD_RE.search(text)
+        found = rating_min or rating_suffix_min or rating_plus or rating_exact or rating_word
+        if found and not _is_negated(text, found.start()):
+            word = found.groupdict().get("word")
+            if word:
+                value = _WORD_RATINGS[word.lower()]
+            else:
+                raw = (
+                    found.groupdict().get("after")
+                    or found.groupdict().get("before")
+                    or found.groupdict().get("value")
+                )
+                value = _number(str(raw))
+            if 0 < value <= 5:
+                filters[RATING] = NumericFilter(
+                    RATING,
+                    value,
+                    None,
+                    int(turn),
+                    text[:240],
+                    minimum_inclusive=not _strict_minimum(found),
+                )
 
     review_range = _REVIEW_RANGE_RE.search(text)
     if review_range and not _is_negated(text, review_range.start()):
@@ -358,6 +390,22 @@ def parse_numeric_intent(message: str, turn: int) -> NumericIntent:
             ranking = RankingPreference(field, descending, int(turn), text[:240])
             break
 
+    # A bare star target ("5 star") is both a hard floor and a request to put
+    # the strongest-supported member of that floor first.  Explicit comparator
+    # forms keep their filter-only meaning, while the ordering prevents a lone
+    # five-star review from outranking a well-established product by accident.
+    if ranking is None:
+        exact = _RATING_EXACT_RE.search(text) or _RATING_WORD_RE.search(text)
+        comparator = (
+            rating_range
+            or rating_max
+            or _RATING_MIN_RE.search(text)
+            or _RATING_SUFFIX_MIN_RE.search(text)
+            or _RATING_PLUS_RE.search(text)
+        )
+        if exact and comparator is None and not _is_negated(text, exact.start()):
+            ranking = RankingPreference(RATING, True, int(turn), text[:240])
+
     return NumericIntent(tuple(filters.values()), ranking, clear)
 
 
@@ -390,9 +438,12 @@ def searchable_text(message: str) -> str:
         text,
     )
     patterns = (
+        _RATING_SUFFIX_MIN_RE,
         _RATING_MIN_RE,
         _RATING_MAX_RE,
         _RATING_PLUS_RE,
+        _RATING_EXACT_RE,
+        _RATING_WORD_RE,
         _REVIEW_RANGE_RE,
         _REVIEW_MIN_RE,
         _REVIEW_MAX_RE,

@@ -175,6 +175,43 @@ class NumericIntentParserTest(unittest.TestCase):
                 self.assertIsNotNone(ranking)
                 self.assertEqual((ranking.field, ranking.descending), expected)
 
+    def test_natural_rating_phrases_use_confidence_adjusted_ordering(self) -> None:
+        for message in (
+            "highly rated running shoes",
+            "well reviewed running shoes",
+            "running shoes with great reviews",
+            "running shoes with good customer reviews",
+        ):
+            with self.subTest(message=message):
+                intent = parse_numeric_intent(message, 1)
+                self.assertEqual((intent.ranking.field, intent.ranking.descending), (RATING, True))
+                self.assertFalse(intent.filters)
+
+    def test_suffix_rating_floor_is_an_inclusive_filter(self) -> None:
+        for message in (
+            "rated 4.5 or higher",
+            "4.5 stars or better",
+            "rating 4.5 or above",
+        ):
+            with self.subTest(message=message):
+                intent = parse_numeric_intent(message, 1)
+                self.assertEqual(len(intent.filters), 1)
+                constraint = intent.filters[0]
+                self.assertEqual((constraint.field, constraint.minimum, constraint.maximum), (RATING, 4.5, None))
+                self.assertTrue(constraint.minimum_inclusive)
+
+    def test_bare_star_target_filters_then_uses_review_confidence(self) -> None:
+        for message in ("5 star running shoes", "five-star running shoes"):
+            with self.subTest(message=message):
+                intent = parse_numeric_intent(message, 1)
+                self.assertEqual((intent.filters[0].field, intent.filters[0].minimum), (RATING, 5.0))
+                self.assertEqual((intent.ranking.field, intent.ranking.descending), (RATING, True))
+
+    def test_quality_without_catalog_evidence_is_not_relabelled_as_rating(self) -> None:
+        intent = parse_numeric_intent("good quality running shoes", 1)
+        self.assertFalse(intent.filters)
+        self.assertIsNone(intent.ranking)
+
     def test_negated_numeric_intent_is_not_silently_reversed(self) -> None:
         cases = (
             "not the cheapest one",
@@ -199,6 +236,8 @@ class NumericIntentParserTest(unittest.TestCase):
             "shoes in sizes from 8 to 10",
         )
         self.assertEqual(searchable_text("up to 3 pairs of running shoes"), "up to 3 pairs of running shoes")
+        self.assertEqual(searchable_text("running shoes rated 4.5 stars or higher"), "running shoes")
+        self.assertEqual(searchable_text("highly rated running shoes"), "running shoes")
 
 
 class StructuredRerankingTest(unittest.TestCase):
@@ -278,6 +317,14 @@ class NumericJourneyIntegrationTest(unittest.TestCase):
         self.assertIn("confidence-adjusted rating", turn.message)
         self.assertEqual(turn.journey_trace["question"]["source"], "explicit shopper ranking")
         self.assertEqual(turn.journey_trace["ranking"]["field"], RATING)
+
+    def test_highly_rated_uses_the_same_evidence_bounded_ordering(self) -> None:
+        with StorefrontService(write_catalog(self), journey_mode=True) as service:
+            conversation = service.start("natural-quality")
+            turn = service.send(conversation.session_id, "highly rated suit for men")
+        self.assertEqual(turn.cards[0]["parent_asin"], "QUALITY")
+        self.assertIsNone(turn.ask_attribute)
+        self.assertEqual(turn.journey_trace["ranking"]["method"], "bayesian average weighted by catalog review count")
 
     def test_a_later_ranking_request_updates_the_existing_line_item(self) -> None:
         with StorefrontService(write_catalog(self), journey_mode=True) as service:
