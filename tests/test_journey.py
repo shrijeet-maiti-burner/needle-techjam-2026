@@ -439,6 +439,130 @@ class AnUnnamedItemIsNotReadAsANoun(unittest.TestCase):
         self.assertIn("shoes", turn.message.lower())
 
 
+class AQuestionIsNotPutTwiceToTheSamePerson(unittest.TestCase):
+    """Journey mode had its own question path and its own copy of this bug.
+
+    Driving the wedding journey live, the interface asked "which wearer would
+    help most" on five consecutive turns while the customer answered every
+    time: the released slate shrinks under each answer, so the same facet keeps
+    winning on the new numbers. An agent that repeats itself while you reply
+    reads as one that is not listening, which is worse than asking nothing.
+    """
+
+    SCRIPT = (
+        "I need an outfit for a wedding",
+        "a navy suit",
+        "actually not navy, make it black",
+        "no polyester",
+        "Add shoes to go along with it",
+    )
+
+    @staticmethod
+    def _wide_catalog(case: unittest.TestCase) -> Path:
+        """A slate wide enough that several facets stay viable for many turns.
+
+        The bundled fixture runs out of catalog facets after one question and
+        falls through to the open `other`, which is exactly the case the bug
+        did not appear in. Reproducing it needs a slate that keeps offering a
+        winner as it shrinks.
+        """
+        directory = tempfile.TemporaryDirectory()
+        case.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "catalog.jsonl"
+        products = []
+        colors = ("black", "blue", "brown", "green")
+        materials = ("leather", "canvas", "denim", "wool")
+        styles = ("classic", "casual", "formal", "athletic")
+        index = 0
+        for color in colors:
+            for material in materials:
+                for style in styles:
+                    index += 1
+                    products.append({
+                        "parent_asin": f"W{index:04d}",
+                        "title": f"Men's {style} {color} {material} Shoes",
+                        "categories": ["Clothing, Shoes & Jewelry", "Men", "Shoes"],
+                        "features": [f"{style} {material} upper"],
+                        "description": [f"A {color} shoe in {material}."],
+                        "details": {"Color": color.title(), "Material": material.title()},
+                        "price": 40 + index,
+                        "average_rating": 4.0,
+                        "rating_number": 100 + index,
+                        "store": f"Maker{index % 5}",
+                    })
+        path.write_text(
+            "\n".join(json.dumps(product) for product in products) + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_the_same_facet_is_not_offered_again_as_the_slate_shrinks(self) -> None:
+        catalog = self._wide_catalog(self)
+        asked: list[str] = []
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("wide")
+            for message in ("I need shoes for men", "something durable",
+                            "I do not know", "anything really", "you choose"):
+                turn = service.send(conversation.session_id, message)
+                if turn.ask_attribute and turn.ask_attribute != "other":
+                    asked.append(turn.ask_attribute)
+        self.assertTrue(asked, "the journey never asked a catalog facet")
+        self.assertEqual(sorted(asked), sorted(set(asked)), f"a facet repeated: {asked}")
+
+    def test_the_active_item_records_what_it_asked(self) -> None:
+        catalog = self._wide_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("record")
+            turn = service.send(conversation.session_id, "I need shoes for men")
+        active = next(item for item in turn.journey["items"] if item["active"])
+        if turn.ask_attribute and turn.ask_attribute != "other":
+            self.assertIn(turn.ask_attribute, active["asked_facets"])
+
+    def test_no_facet_is_asked_twice_for_one_line_item(self) -> None:
+        catalog = write_catalog(self)
+        asked_by_item: dict[str, list[str]] = {}
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("repeats")
+            for message in self.SCRIPT:
+                turn = service.send(conversation.session_id, message)
+                active = str(turn.journey["active_item_id"])
+                # `other` is the open question, "what else matters", and the
+                # fallback when no catalog facet divides the slate. Asking it
+                # again is not the defect; asking the same specific facet again
+                # is.
+                if turn.ask_attribute and turn.ask_attribute != "other":
+                    asked_by_item.setdefault(active, []).append(turn.ask_attribute)
+        self.assertTrue(asked_by_item, "the journey asked nothing at all")
+        for item_id, asked in asked_by_item.items():
+            with self.subTest(item=item_id):
+                self.assertEqual(sorted(asked), sorted(set(asked)))
+
+    def test_a_new_line_item_may_ask_about_itself(self) -> None:
+        """Shoes and a suit can have different wearers, so the guard is per
+        item rather than per session."""
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("peritem")
+            first = service.send(conversation.session_id, "I need formal shoes")
+            self.assertEqual(first.ask_attribute, "wearer")
+            service.send(conversation.session_id, "for men")
+            later = service.send(conversation.session_id, "Add a suit as well")
+        suit = later.journey["items"][-1]
+        self.assertIn("suit", suit["category"])
+        self.assertNotEqual(suit["item_id"], later.journey["items"][0]["item_id"])
+        # A separate line item keeps its own record of what it has asked.
+        self.assertEqual(len(later.journey["items"]), 2)
+
+    def test_the_placeholder_hands_over_what_it_already_asked(self) -> None:
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("handover")
+            first = service.send(conversation.session_id, "I need an outfit for a wedding")
+            second = service.send(conversation.session_id, "a men's suit")
+        if first.ask_attribute:
+            self.assertNotEqual(first.ask_attribute, second.ask_attribute)
+
+
 class JourneyArtifactTest(unittest.TestCase):
     def test_interface_renders_plan_and_compatibility_without_html_injection(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "demo" / "storefront.html").read_text(
