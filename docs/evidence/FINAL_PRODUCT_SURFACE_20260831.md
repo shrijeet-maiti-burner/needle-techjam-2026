@@ -2,7 +2,7 @@
 
 ## Scope
 
-Source commit `1023207` adds typed catalog-property behavior only to the
+Source commit `209dd56` adds typed catalog-property behavior only to the
 optional storefront. The official `starter.agent:Agent` import graph and
 `PRIMARY_AGENT_KWARGS` are unchanged. This record separates product evidence
 from the released-set score; neither predicts private judging or a win.
@@ -53,9 +53,9 @@ That remains a manual pre-upload gate and is not represented as complete.
 
 | field | value |
 |---|---|
-| path | `.artifacts/releases/needle-submission-final-1023207.zip` |
-| SHA-256 | `8d8aafed5ff521fbf31228993492a8c3afa899c5d13dc6c0d0cf0e5ad935810b` |
-| size | 25,606,971 bytes |
+| path | `.artifacts/releases/needle-submission-final-209dd56.zip` |
+| SHA-256 | `520c8cab8db177c72015874b19f8736c83decd5061cbb29985b144d8f5f9ed1d` |
+| size | 25,607,086 bytes |
 | tracked shipping files | 35 |
 | entry point | `starter.agent:Agent` |
 | generated asset | schema 9; 71,241,728 bytes |
