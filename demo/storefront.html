@@ -589,6 +589,133 @@
     }
     .theme-toggle:hover { color: var(--ink); border-color: var(--edge-accent-strong); }
 
+    table.compare { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.compare th, table.compare td {
+      text-align: left;
+      padding: 6px 6px 6px 0;
+      border-bottom: 1px solid var(--line-soft);
+      vertical-align: top;
+    }
+    .compare-name { font-size: 11.5px; color: var(--ink); font-weight: 600; overflow-wrap: anywhere; }
+    .compare-drop {
+      margin-top: 3px;
+      padding: 0;
+      border: 0;
+      background: none;
+      color: var(--dim);
+      font-size: 10.5px;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .compare-drop:hover { color: var(--red); }
+    .compare-row-label { font-weight: 400; color: var(--ink); }
+    .compare-row-label .attr {
+      color: var(--dim);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+    }
+    .compare-not { color: var(--red); font-size: 10.5px; }
+    .compare-none { color: var(--dim); font-style: italic; }
+    .verdict { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; }
+    .verdict.yes { color: var(--ink); }
+    .verdict.unknown { color: var(--dim); }
+    .verdict.bad { color: var(--red); }
+
+    .event { display: flex; gap: 9px; align-items: baseline; padding: 4px 0; }
+    .event + .event { border-top: 1px solid var(--line-soft); }
+    .event-turn {
+      flex: none;
+      width: 48px;
+      color: var(--dim);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .event-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .event-what { font-size: 12.5px; color: var(--ink); overflow-wrap: anywhere; }
+    .event-state {
+      font-size: 11px;
+      color: var(--dim);
+      font-family: "SFMono-Regular", Consolas, monospace;
+    }
+    .event.replaced .event-what { color: var(--muted); text-decoration: line-through; }
+    .event.ruled-out .event-what { color: var(--red); }
+
+    .languages { display: flex; flex-wrap: wrap; gap: 5px; }
+    .languages[hidden] { display: none; }
+    .lang {
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 11.5px;
+      cursor: pointer;
+      transition: border-color .15s, color .15s;
+    }
+    .lang:hover { color: var(--ink); }
+    .lang.on { color: var(--ink); border-color: var(--edge-accent-strong); }
+
+    details.reasoning { margin: 8px 0 2px; }
+    details.reasoning summary {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11.5px;
+      color: var(--muted);
+      list-style: none;
+    }
+    details.reasoning summary::-webkit-details-marker { display: none; }
+    details.reasoning summary::before {
+      content: "";
+      width: 0; height: 0;
+      border-left: 4px solid currentColor;
+      border-top: 3.5px solid transparent;
+      border-bottom: 3.5px solid transparent;
+      transition: transform .15s;
+    }
+    details.reasoning[open] summary::before { transform: rotate(90deg); }
+    details.reasoning summary:hover { color: var(--ink); }
+    .reasoning-attr {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      padding: 1px 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+    }
+    .reasoning-body {
+      margin-top: 8px;
+      padding: 10px 11px;
+      border: 1px solid var(--line-soft);
+      border-radius: 9px;
+      background: var(--panel-2);
+    }
+    .reasoning-label {
+      margin: 9px 0 4px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--dim);
+    }
+    .reasoning-row {
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+      padding: 2px 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .reasoning-row.asked { color: var(--ink); font-weight: 600; }
+    .reasoning-name { flex: none; min-width: 86px; }
+    .reasoning-why { font-weight: 400; color: var(--muted); }
+    .reasoning-note { margin-top: 9px; font-size: 11px; color: var(--dim); }
+
     /* ---------- rail ---------- */
 
     .rail { display: block; min-height: 0; padding-bottom: 18px; }
@@ -714,6 +841,8 @@
           <div><b id="fact-turn">turn 0</b></div>
           <button type="button" id="theme-toggle" class="theme-toggle"
                   aria-live="polite">follow system</button>
+          <div class="languages" id="languages" hidden
+               aria-label="Conversation language"></div>
         </div>
       </header>
 
@@ -752,6 +881,16 @@
         <div class="panel-body" id="journey"></div>
       </div>
 
+      <div class="panel" id="compare-panel" hidden>
+        <div class="panel-head"><span>Compare</span><span>stated constraints</span></div>
+        <div class="panel-body" id="compare"></div>
+      </div>
+
+      <div class="panel" id="timeline-panel" hidden>
+        <div class="panel-head"><span>How it changed</span><span>supersession</span></div>
+        <div class="panel-body" id="timeline"></div>
+      </div>
+
       <div class="panel">
         <div class="panel-head"><span>What I have understood</span><span id="intent-version">v1</span></div>
         <div class="panel-body" id="beliefs"><div class="none">Nothing disclosed yet.</div></div>
@@ -783,6 +922,11 @@
 
     const el = {
       themeToggle: document.getElementById("theme-toggle"),
+      languages: document.getElementById("languages"),
+      timeline: document.getElementById("timeline"),
+      compare: document.getElementById("compare"),
+      comparePanel: document.getElementById("compare-panel"),
+      timelinePanel: document.getElementById("timeline-panel"),
       thread: document.getElementById("thread"),
       inner: document.getElementById("thread-inner"),
       opening: document.getElementById("opening"),
@@ -1056,6 +1200,14 @@
         more.appendChild(node("div", "asin mono", card.parent_asin));
         wrap.appendChild(more);
       }
+      const compare = node("button", "chip compare-toggle", compareHas(card.parent_asin) ? "In compare" : "Compare");
+      compare.type = "button";
+      compare.addEventListener("click", () => {
+        toggleCompare(card);
+        compare.textContent = compareHas(card.parent_asin) ? "In compare" : "Compare";
+      });
+      wrap.appendChild(compare);
+
       if (config && config.mode === "journey") {
         const select = node("button", "chip", "Use in plan");
         select.type = "button";
@@ -1227,6 +1379,9 @@
 
       if (turn.message) wrap.appendChild(node("div", "agent-message", turn.message));
 
+      const reasoning = renderQuestionReasoning(turn);
+      if (reasoning) wrap.appendChild(reasoning);
+
       const receipt = renderDecisionReceipt(turn.trace, turn.turn, turn.journey_trace);
       if (receipt) wrap.appendChild(receipt);
 
@@ -1247,6 +1402,168 @@
         }
       }
       return wrap;
+    }
+
+    /* Compare tray.
+
+       Up to three products held side by side against the constraints the
+       customer has actually stated, from the same belief state the rail shows.
+       A cell is only ticked on evidence the card carries: the term appears in
+       a named field of that product. Anything the catalog does not say is
+       "not stated" rather than a cross, because absent metadata is not a
+       failed constraint and pretending otherwise would be the one dishonest
+       thing a comparison can do. */
+    const COMPARE_LIMIT = 3;
+    const compared = [];
+    let latestBeliefs = { wanted: [], excluded: [] };
+
+    function compareHas(parentAsin) {
+      return compared.some((card) => card.parent_asin === parentAsin);
+    }
+
+    function toggleCompare(card) {
+      const at = compared.findIndex((held) => held.parent_asin === card.parent_asin);
+      if (at >= 0) {
+        compared.splice(at, 1);
+      } else {
+        compared.push(card);
+        while (compared.length > COMPARE_LIMIT) compared.shift();
+      }
+      renderCompare();
+    }
+
+    function cardSatisfies(card, value) {
+      const wanted = String(value || "").toLowerCase();
+      if (!wanted) return null;
+      const hits = Array.isArray(card.matched) ? card.matched : [];
+      const hit = hits.find((entry) => String(entry.term || "").toLowerCase() === wanted);
+      if (hit) return { state: "yes", where: hit.field };
+      const haystack = [
+        card.title, card.description, card.category_path,
+        ...(Array.isArray(card.features) ? card.features : []),
+      ].join(" ").toLowerCase();
+      if (haystack.includes(wanted)) return { state: "yes", where: "listing" };
+      return { state: "unknown", where: "" };
+    }
+
+    function renderCompare() {
+      clear(el.compare);
+      if (compared.length < 2) {
+        el.comparePanel.hidden = true;
+        return;
+      }
+      el.comparePanel.hidden = false;
+
+      const stated = [
+        ...(latestBeliefs.wanted || []).map((entry) => ({ ...entry, polarity: "wanted" })),
+        ...(latestBeliefs.excluded || []).map((entry) => ({ ...entry, polarity: "excluded" })),
+      ];
+
+      const table = node("table", "compare");
+      const head = node("tr");
+      head.appendChild(node("th", "", ""));
+      compared.forEach((card, index) => {
+        const cell = node("th", "");
+        cell.appendChild(node("div", "compare-name", card.title || card.parent_asin));
+        const drop = node("button", "compare-drop", "remove");
+        drop.type = "button";
+        drop.addEventListener("click", () => { compared.splice(index, 1); renderCompare(); });
+        cell.appendChild(drop);
+        head.appendChild(cell);
+      });
+      table.appendChild(head);
+
+      if (!stated.length) {
+        const row = node("tr");
+        const cell = node("td", "compare-none", "Nothing stated yet to compare against.");
+        cell.colSpan = compared.length + 1;
+        row.appendChild(cell);
+        table.appendChild(row);
+      }
+
+      stated.forEach((entry) => {
+        const row = node("tr");
+        const label = node("th", "compare-row-label");
+        label.appendChild(node("span", "attr", entry.attribute));
+        label.appendChild(node("span", "", " " + entry.value));
+        if (entry.polarity === "excluded") label.appendChild(node("span", "compare-not", " ruled out"));
+        row.appendChild(label);
+        compared.forEach((card) => {
+          const verdict = cardSatisfies(card, entry.value);
+          const cell = node("td", "");
+          if (!verdict || verdict.state === "unknown") {
+            cell.appendChild(node("span", "verdict unknown", "not stated"));
+          } else if (entry.polarity === "excluded") {
+            cell.appendChild(node("span", "verdict bad", "present"));
+            cell.title = "Found in this product's " + verdict.where;
+          } else {
+            cell.appendChild(node("span", "verdict yes", "yes"));
+            cell.title = "Found in this product's " + verdict.where;
+          }
+          row.appendChild(cell);
+        });
+        table.appendChild(row);
+      });
+
+      el.compare.appendChild(table);
+      el.compare.appendChild(node("div", "reasoning-note",
+        "A tick means the value appears in that product's listing. " +
+        "\u201cNot stated\u201d means the catalog is silent, which is not the same as a mismatch."));
+    }
+
+    /* Why this question, and what it beat.
+
+       The board ranks every catalog facet by how much of the slate an answer
+       would remove, discounted by the share of candidates that can answer at
+       all and by the cost of spending a turn. All of it was computed on every
+       turn and none of it was shown, which left "which style would help most"
+       looking like a guess rather than the top of a ranking. */
+    function percent(value) {
+      return Math.round((Number(value) || 0) * 100) + "%";
+    }
+
+    function renderQuestionReasoning(turn) {
+      const decision = turn.journey_trace && turn.journey_trace.question
+        ? turn.journey_trace.question
+        : (turn.trace && turn.trace.question_policy
+            ? turn.trace.question_policy.human_message_decision
+            : null);
+      if (!decision || !decision.asks || !decision.attribute) return null;
+
+      const box = node("details", "reasoning");
+      const head = node("summary", "", "Why this question");
+      head.appendChild(node("span", "reasoning-attr", human(decision.attribute)));
+      box.appendChild(head);
+
+      const body = node("div", "reasoning-body");
+      const asked = node("div", "reasoning-row asked");
+      asked.appendChild(node("span", "reasoning-name", human(decision.attribute)));
+      asked.appendChild(node("span", "reasoning-why",
+        decision.candidate_count + " candidates, about " +
+        Math.round(Number(decision.expected_remaining)) + " left after an answer; " +
+        "the options cover " + percent(decision.catalog_coverage) + " of them"));
+      body.appendChild(asked);
+
+      const alternatives = Array.isArray(decision.alternatives) ? decision.alternatives : [];
+      if (alternatives.length) {
+        body.appendChild(node("div", "reasoning-label", "Ranked below it"));
+        alternatives.forEach((other) => {
+          const row = node("div", "reasoning-row");
+          row.appendChild(node("span", "reasoning-name", human(other.attribute)));
+          const detail = "about " + Math.round(Number(other.expected_remaining)) +
+            " left, options cover " + percent(other.catalog_coverage) +
+            (Number(other.net_value) <= 0 ? "; not worth a turn" : "");
+          row.appendChild(node("span", "reasoning-why", detail));
+          body.appendChild(row);
+        });
+      }
+
+      body.appendChild(node("div", "reasoning-note",
+        "Ranked by expected candidates removed, weighted by how many can answer, " +
+        "less the cost of spending one of the remaining turns. The scored " +
+        "channel still asks the open question; this chooses what to put to a person."));
+      box.appendChild(body);
+      return box;
     }
 
     function renderJourney(journey) {
@@ -1300,6 +1617,50 @@
         items.appendChild(box);
       });
       el.journey.appendChild(items);
+    }
+
+    /* What replaced what, and when.
+
+       The rail shows the state the plan is in. This shows how it got there,
+       which is the part a correction actually exercises: a superseded value is
+       retired rather than deleted, so "actually not navy, make it black" is
+       recoverable evidence rather than a silent overwrite. Intent override is
+       15% of the scored scenario mix and the only visible sign of it was the
+       absence of the old value. */
+    function renderTimeline(journey) {
+      clear(el.timeline);
+      const items = journey && Array.isArray(journey.items) ? journey.items : [];
+      const events = [];
+      items.forEach((item) => {
+        (item.superseded || []).forEach((group) => {
+          (group.values || []).forEach((value) => events.push({
+            turn: group.turn, item: item.label, attribute: group.attribute,
+            value: value, state: "replaced",
+          }));
+        });
+        (item.constraints || []).forEach((group) => {
+          (group.values || []).forEach((value) => events.push({
+            turn: group.turn, item: item.label, attribute: group.attribute,
+            value: value, state: group.operator === "not" ? "ruled out" : "stated",
+          }));
+        });
+      });
+      const replaced = events.some((event) => event.state === "replaced");
+      if (!replaced) {
+        el.timelinePanel.hidden = true;
+        return;
+      }
+      el.timelinePanel.hidden = false;
+      events.sort((a, b) => (a.turn - b.turn) || a.attribute.localeCompare(b.attribute));
+      events.forEach((event) => {
+        const row = node("div", "event " + event.state.replace(" ", "-"));
+        row.appendChild(node("span", "event-turn", "turn " + event.turn));
+        const body = node("span", "event-body");
+        body.appendChild(node("span", "event-what", event.attribute + " " + event.value));
+        body.appendChild(node("span", "event-state", event.state + " · " + event.item));
+        row.appendChild(body);
+        el.timeline.appendChild(row);
+      });
     }
 
     function renderBeliefs(beliefs) {
@@ -1453,8 +1814,35 @@
       scrollToEnd();
     }
 
+    /* The agent answers in seven languages and a reviewer cannot find that out
+       from an English page. Starting a session in a chosen language exercises
+       the same code path detection would reach, so what is demonstrated is the
+       real behaviour and not a translated interface. */
+    let sessionLanguage = "";
+
+    function renderLanguages(languages) {
+      clear(el.languages);
+      if (!Array.isArray(languages) || languages.length < 2) {
+        el.languages.hidden = true;
+        return;
+      }
+      el.languages.hidden = false;
+      languages.forEach((entry) => {
+        const button = node("button", "lang" + (entry.code === (sessionLanguage || "en") ? " on" : ""), entry.label);
+        button.type = "button";
+        button.title = "Start a new conversation in " + entry.label;
+        button.addEventListener("click", async () => {
+          if (pending) return;
+          sessionLanguage = entry.code === "en" ? "" : entry.code;
+          clear(el.inner);
+          await newSession();
+        });
+        el.languages.appendChild(button);
+      });
+    }
+
     async function newSession() {
-      const data = await api("/api/session", {});
+      const data = await api("/api/session", sessionLanguage ? { language: sessionLanguage } : {});
       sessionId = data.session_id;
       config = data.config;
       budgetExhausted = false;
@@ -1463,8 +1851,16 @@
       el.input.placeholder = "Describe what you are looking for...";
       el.send.disabled = false;
       renderConfig(config);
+      renderLanguages(config.languages);
       renderSuggestions(config.suggestions);
       renderJourney(null);
+      // Everything derived from the old conversation goes with it. A compare
+      // tray holding products from a session that no longer exists would be
+      // measured against a belief state that is now empty.
+      compared.length = 0;
+      latestBeliefs = { wanted: [], excluded: [] };
+      renderCompare();
+      renderTimeline(null);
       renderBeliefs({ wanted: [], excluded: [], superseded: [], intent_version: 1 });
       el.intentVersion.style.color = "";
       el.statTurn.textContent = "0";
@@ -1487,7 +1883,10 @@
         const turn = await api("/api/message", { session_id: sessionId, message: text });
         thinking.replaceWith(renderTurn(turn));
         renderJourney(turn.journey || null);
+        latestBeliefs = turn.beliefs || { wanted: [], excluded: [] };
         renderBeliefs(turn.beliefs || {});
+        renderTimeline(turn.journey);
+        renderCompare();
         el.statTurn.textContent = String(turn.turn);
         el.factTurn.textContent = "turn " + turn.turn;
         el.statLatency.textContent = turn.latency_ms.toFixed(0) + " ms";
