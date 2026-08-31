@@ -123,6 +123,18 @@ NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 NEGATION_WINDOW = 24
+# Where a negator stops governing. A fixed-width lookbehind alone cannot tell
+# "not black but red" from "not black or navy": in the first the negator is
+# corrected away before "red" is reached, in the second it still applies. The
+# distance is the same, so only the punctuation between them carries the
+# difference.
+#
+# Terminators and contrast end the scope; coordination does not. "and" is
+# deliberately absent: it continues the negated list rather than separating
+# from it, so "no black and navy" must keep both exclusions. This is why the
+# rule is not `CLAUSE_END_RE`, which answers a different question (where a
+# no-preference clause stops) and does treat "and" as a boundary.
+NEGATION_SCOPE_END_RE = re.compile(r"[;,.]|\bbut\b", re.IGNORECASE)
 
 MATERIALS = (
     "cotton", "polyester", "nylon", "leather", "wool", "spandex", "silk",
@@ -216,7 +228,23 @@ def _find_values(message: str, vocabulary: tuple[str, ...]) -> list[tuple[str, i
 
 
 def _is_negated(message: str, offset: int) -> bool:
+    """Whether a negator still governs the value at ``offset``.
+
+    The lookbehind is truncated at the last scope terminator, so a negator on
+    the far side of one is not read as applying here. Without this the window
+    leaks a correction's negation onto the value that corrects it, which is
+    the exact opposite of what the customer said and reaches them as a
+    "ruled out" line naming the thing they just asked for.
+
+    The width cap is kept as well. It is what bounds a negator that governs
+    nothing in particular when there is no punctuation to stop it.
+    """
     window = message[max(0, offset - NEGATION_WINDOW):offset]
+    last_boundary = None
+    for boundary in NEGATION_SCOPE_END_RE.finditer(window):
+        last_boundary = boundary
+    if last_boundary is not None:
+        window = window[last_boundary.end():]
     return bool(NEGATION_RE.search(window))
 
 
