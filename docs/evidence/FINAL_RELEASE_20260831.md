@@ -54,10 +54,10 @@ so they test target disjointness rather than estimating private performance.
 - the resulting archive contained 24 entries and no `.artifacts/`, `data/`, or
   `evaluator/` path.
 
-The verified freeze-hardening archive is
-`.artifacts/releases/needle-freeze-hardening.zip`: 24,881,280 bytes, 22 tracked
+The verified submission archive is
+`.artifacts/releases/needle-submission-final.zip`: 24,881,401 bytes, 22 tracked
 source files plus the generated manifest and schema-8 asset, SHA-256
-`2c588086658acce39c4c58b0488068ab9eb4369806f87679662c1e6a15c6ef2e`.
+`43a5d5182e11caa5004fc23439c1bc8016827f022cc3faf7e3a874db4890bdf8`.
 The builder extracted it into an empty staging tree and reproduced
 TechnicalScore 0.978500 through `starter.agent:Agent` before writing the zip.
 
