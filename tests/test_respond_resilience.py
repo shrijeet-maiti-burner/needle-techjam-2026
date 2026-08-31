@@ -104,6 +104,14 @@ class RespondResilience(unittest.TestCase):
             ("top_k is huge", ("session", "black shoes", 8, 10_000)),
             ("top_k is a string", ("session", "black shoes", 8, "ten")),
             ("all arguments wrong", (None, None, None, None)),
+            # `int()` rejects an unusable value three ways, and only two were
+            # caught. NaN is a ValueError and was already covered; an infinity
+            # is an OverflowError and escaped, which is the one a float carries.
+            ("turn is infinity", ("session", "black shoes", float("inf"), 10)),
+            ("turn is negative infinity", ("session", "black shoes", float("-inf"), 10)),
+            ("turn is NaN", ("session", "black shoes", float("nan"), 10)),
+            ("top_k is infinity", ("session", "black shoes", 8, float("inf"))),
+            ("top_k is NaN", ("session", "black shoes", 8, float("nan"))),
         ]
         for label, arguments in cases:
             with self.subTest(case=label):
@@ -114,6 +122,23 @@ class RespondResilience(unittest.TestCase):
                 identifiers = _assert_contract_valid(self, response)
                 for parent_asin in identifiers:
                     self.assertIn(parent_asin, self.catalog_ids, f"{label} invented an id")
+
+    def test_an_unusable_top_k_still_fills_the_slate(self) -> None:
+        """An unusable bound must mean "the contract's ten", never "nothing".
+
+        `_bounded_limit` already documents that intent. Before `OverflowError`
+        was caught, an infinite `top_k` raised past it into
+        `_degraded_response`, which caught the exception and returned an empty
+        slate -- contract-valid, and scored as an ordinary miss.
+        """
+        self.agent.reset("bounds", {})
+        for label, top_k in (("infinity", float("inf")), ("NaN", float("nan"))):
+            with self.subTest(top_k=label):
+                response = self.agent.respond("bounds", "black shoes", 1, top_k)
+                self.assertTrue(
+                    response["recommendations"],
+                    f"an unusable top_k ({label}) emptied the slate",
+                )
 
     def test_hostile_message_content_is_survivable(self) -> None:
         """FTS5 is a query language; user text reaches it as terms."""
