@@ -13,7 +13,7 @@ This is a hypothesis, not a result. Architecture decisions are accepted only aft
 
 ## Current status
 
-H0 began on 29 August 2026 at 12:00 SGT. The contract-valid integration path is complete and the selected development primary plus pure-sparse rollback are encoded in `needle/presets.py`. The primary measures TechnicalScore 0.978500 on the 200 released sessions, with HR@10 1.000, MRR 0.996667, MTTC 2.025, and zero contract violations. Three 200-target, distribution-matched catalog-disjoint panels rerun from this exact tree score 0.979075, 0.965625, and 0.959900. A full registered robustness run is reported with its unresolved target-removal gates rather than being converted into a blanket robustness claim. These are development measurements, not a private-score estimate or winning claim.
+The build is complete and the release is frozen. The selected primary and the pure-sparse rollback are encoded in `needle/presets.py`, and the submission archive is reproduced from a clean extraction rather than from this tree. The primary measures TechnicalScore 0.978500 on the 200 released sessions, with HR@10 1.000, MRR 0.996667, MTTC 2.025, and zero contract violations. Three 200-target, distribution-matched catalog-disjoint panels rerun from this exact tree score 0.979075, 0.965625, and 0.959900. A full registered robustness run is reported with its unresolved target-removal gates rather than being converted into a blanket robustness claim. Every response of the official run validates against the participant kit's own `agent_api_contract.json`: 405 responses, zero violations. Refusing the bundled index rebuilds an equivalent one in memory and scores identically. These are development measurements, not a private-score estimate or winning claim.
 
 ## Quick start
 
@@ -48,7 +48,7 @@ needle/                 production components and integration facade
 starter/agent.py        strict official entry-point adapter
 submission/             final-bundle entry point and run notes
 scripts/                artifact bootstrap and official evaluator launcher
-storefront/             conversational interface service (not shipped)
+storefront/             conversational interface service (ships, unscored)
 demo/                   local interfaces, no build step
 tests/                  dependency-free contract and behavior checks
 docs/                   architecture, ownership, evidence, and disclosures
