@@ -315,6 +315,8 @@ def facet_rules_fingerprint() -> str:
     material = "\x1f".join(
         [
             NEGATION_RE.pattern,
+            NON_EXCLUDING_NEGATION_RE.pattern,
+            EXCEPTION_NEGATION_RE.pattern,
             NO_PREFERENCE_RE.pattern,
             NEGATION_RESET_RE.pattern,
             CLAUSE_END_RE.pattern,

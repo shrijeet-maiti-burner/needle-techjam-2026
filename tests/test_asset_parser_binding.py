@@ -51,6 +51,12 @@ class FacetRulesFingerprint(unittest.TestCase):
         changes = {
             "NEGATION_WINDOW": 25,
             "NEGATION_RE": state.re.compile(r"\bno\b", state.re.IGNORECASE),
+            "NON_EXCLUDING_NEGATION_RE": state.re.compile(
+                r"\bnot only\b", state.re.IGNORECASE
+            ),
+            "EXCEPTION_NEGATION_RE": state.re.compile(
+                r"\banything but\s*$", state.re.IGNORECASE
+            ),
             "NO_PREFERENCE_RE": state.re.compile(r"\bwhatever\b", state.re.IGNORECASE),
             "BUDGET_RE": state.re.compile(r"\$(\d+)"),
             "ATTRIBUTE_VOCABULARY": (("material", ("cotton",)),),
