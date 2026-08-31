@@ -36,7 +36,25 @@ from typing import Iterable, Mapping, Sequence
 # Facet name -> the attribute word `local_evaluator.classify_constraint` would
 # give the same value, so a question here is answerable in the same vocabulary
 # the simulator and the belief state already speak.
-FACETS: tuple[str, ...] = ("material", "color", "style", "use_case", "size")
+# Ordered only for stable tie-breaking; the board ranks them by measured
+# expected reduction, so a new facet has to earn its place on the numbers
+# rather than on its position here. `brand`, `budget` and `category` come from
+# catalog fields rather than prose, and they separate candidates the four
+# vocabulary facets cannot tell apart.
+FACETS: tuple[str, ...] = (
+    "material", "color", "style", "use_case", "size", "brand", "budget", "category",
+)
+# `brand` and `category` are the highest-coverage facets in the catalog, 99% and
+# 100% against 70% for the best prose-derived one, because they come from stated
+# fields rather than from parsing a description. Two hiking boots can agree on
+# material, colour, style and use and still differ by maker and by whether they
+# are hiking boots or snow boots, which is exactly the case where the agent
+# cannot tell candidates apart and should be asking.
+#
+# `budget` and `category` are only present when the bundled signature asset
+# loaded: the FTS table has no price column and flattens the category path into
+# text that cannot be split back. The board ranks whatever it is handed, so the
+# source-only path asks a slightly worse question rather than a wrong one.
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +118,7 @@ def clarification_board(
     facets: Mapping[str, Mapping[str, str]],
     *,
     already_said: Iterable[str] = (),
+    already_asked: Iterable[str] = (),
     max_options: int = 4,
     min_candidates: int = 2,
     turns_left: int = 9,
@@ -118,8 +137,16 @@ def clarification_board(
     spoken = " ".join(str(value).lower() for value in already_said)
     excluded = frozenset(str(value).lower() for value in excluded_values)
     interaction_cost = 1.0 / (max(0, int(turns_left)) + 1.0)
+    asked = frozenset(str(name).lower() for name in already_asked)
     board: list[QuestionDecision] = []
     for name in FACETS:
+        # A facet the customer has already been shown and did not answer is not
+        # a better question the second time. The set shrinks between turns, so
+        # the same facet keeps winning on fresh numbers and the conversation
+        # stalls: asked four times running, it reads as an agent that is not
+        # listening, which is worse than asking nothing.
+        if name in asked:
+            continue
         if re.search(rf"\b{re.escape(name)}\b", spoken):
             continue
         counts = _groups(candidates, facets, name, excluded)
@@ -130,14 +157,36 @@ def clarification_board(
             continue
         if any(value in spoken for value in known):
             continue
-        expected_remaining = _expected_remaining(counts, total)
-        expected_reduction = max(0.0, 1.0 - expected_remaining / total)
         known_count = sum(known.values())
         coverage = known_count / total
-        net_value = coverage * expected_reduction - interaction_cost
         options = tuple(
             sorted(known.items(), key=lambda item: (-item[1], item[0]))[:max_options]
         )
+        # Score the question the customer is actually asked, not the facet.
+        #
+        # A facet is only worth its expected reduction if the customer can pick
+        # one of the values on offer. `brand` divides a 400-product pool to 2.8
+        # expected candidates, the best number any facet produces, and offers
+        # four makers that between them cover 9% of the pool: nine times in ten
+        # the honest answer is "none of those", the set does not shrink, and a
+        # turn is gone. Ranking on the facet's full partition rewards exactly
+        # that shape, because splitting into hundreds of singletons is what
+        # minimises expected remaining.
+        #
+        # So the partition scored here is the one the question creates: one
+        # group per offered value, and a single group for everything else,
+        # which is what an unoffered value and an unknown value both mean to
+        # the customer looking at the choices.
+        offered = {value: size for value, size in options}
+        offered_count = sum(offered.values())
+        remainder = total - offered_count
+        asked_counts = Counter(offered)
+        if remainder:
+            asked_counts[""] = remainder
+        expected_remaining = _expected_remaining(asked_counts, total)
+        expected_reduction = max(0.0, 1.0 - expected_remaining / total)
+        offered_coverage = offered_count / total
+        net_value = offered_coverage * expected_reduction - interaction_cost
         board.append(
             QuestionDecision(
                 attribute=name,
@@ -176,6 +225,7 @@ def choose_clarification(
     facets: Mapping[str, Mapping[str, str]],
     *,
     already_said: Iterable[str] = (),
+    already_asked: Iterable[str] = (),
     max_options: int = 4,
     min_candidates: int = 2,
     turns_left: int = 9,
@@ -188,6 +238,7 @@ def choose_clarification(
         candidates,
         facets,
         already_said=already_said,
+        already_asked=already_asked,
         max_options=max_options,
         min_candidates=min_candidates,
         turns_left=turns_left,

@@ -142,6 +142,7 @@ class Agent:
         self._language_by_session: dict[str, str] = {}
         self._pinned_language: dict[str, str] = {}
         self._lexicon_words_by_session: dict[str, str] = {}
+        self._asked_facets_by_session: dict[str, list[str]] = {}
         # Degradations are recorded rather than raised; an empty list is the
         # assertion that every turn took the normal path.
         self.respond_failures: list[str] = []
@@ -166,6 +167,7 @@ class Agent:
         self._language_by_session.pop(session_id, None)
         self._pinned_language.pop(session_id, None)
         self._lexicon_words_by_session.pop(session_id, None)
+        self._asked_facets_by_session.pop(session_id, None)
         self._trace_by_session.pop(session_id, None)
 
     def set_language(self, session_id: str, language: str | None) -> None:
@@ -265,6 +267,7 @@ class Agent:
         self,
         candidate_ids: Sequence[str],
         already_said: Sequence[str],
+        already_asked: Sequence[str] = (),
         *,
         turns_left: int,
         sampled: bool,
@@ -275,6 +278,7 @@ class Agent:
             candidate_ids,
             self.catalog.clarification_facets(candidate_ids),
             already_said=already_said,
+            already_asked=already_asked,
             turns_left=turns_left,
             sampled=sampled,
             excluded_values=excluded_values,
@@ -395,13 +399,20 @@ class Agent:
                     for constraint in state.active_constraints()
                     if constraint.polarity is Polarity.NEGATIVE
                 ]
+                asked = self._asked_facets_by_session.setdefault(session_id, [])
                 question = self._question_for(
                     candidate_ids,
                     already_said,
+                    already_asked=asked,
                     turns_left=max(0, 10 - self._safe_turn(turn)),
                     sampled=sampled,
                     excluded_values=excluded_values,
                 )
+                # Recorded only when the question is actually put to the
+                # customer, so a facet the board declined to ask is still
+                # available on a later turn when the set has changed.
+                if question.asks and question.attribute:
+                    asked.append(question.attribute)
                 record["options"] = (question.attribute, question.options)
             return message_for(record, asking=asking), question
         except Exception as error:  # noqa: BLE001 - a dull message beats a lost turn

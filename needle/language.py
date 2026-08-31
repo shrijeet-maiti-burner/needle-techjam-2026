@@ -149,6 +149,7 @@ _PHRASES: Mapping[str, Mapping[str, str]] = {
         "going_on": "Going on {values} in {category}.",
         "material": "material", "color": "colour",
         "style": "style", "use_case": "use", "size": "size", "budget": "budget", "items": "the catalog", "stop": ".",
+        "brand": "brand", "category": "kind",
     },
     "es": {
         "start": "Empezamos por {category}. Dime lo que más te importa.",
@@ -162,6 +163,7 @@ _PHRASES: Mapping[str, Mapping[str, str]] = {
         "going_on": "Voy por {values} en {category}.",
         "material": "material", "color": "color",
         "style": "estilo", "use_case": "uso", "size": "talla", "budget": "presupuesto", "items": "el catálogo", "stop": ".",
+        "brand": "marca", "category": "tipo",
     },
     "fr": {
         "start": "On part de {category}. Dites-moi ce qui compte le plus.",
@@ -175,6 +177,7 @@ _PHRASES: Mapping[str, Mapping[str, str]] = {
         "going_on": "Je pars de {values} dans {category}.",
         "material": "Quelle matière", "color": "Quelle couleur",
         "style": "Quel style", "use_case": "Quel usage", "size": "Quelle taille", "budget": "Quel budget", "items": "notre catalogue", "stop": ".",
+        "brand": "Quelle marque", "category": "Quel type",
     },
     "de": {
         "start": "Wir beginnen mit {category}. Sagen Sie mir, was am wichtigsten ist.",
@@ -188,6 +191,7 @@ _PHRASES: Mapping[str, Mapping[str, str]] = {
         "going_on": "Ich gehe nach {values} in {category}.",
         "material": "Welches Material", "color": "Welche Farbe",
         "style": "Welcher Stil", "use_case": "Welcher Einsatz", "size": "Welche Größe", "budget": "Welches Budget", "items": "unserem Katalog", "stop": ".",
+        "brand": "Welche Marke", "category": "Welche Art",
     },
     "hi": {
         "start": "{category} से शुरू करते हैं। बताइए आपके लिए सबसे ज़रूरी क्या है।",
@@ -201,6 +205,7 @@ _PHRASES: Mapping[str, Mapping[str, str]] = {
         "going_on": "{category} में {values} के आधार पर देख रहा हूँ।",
         "material": "मटीरियल", "color": "रंग",
         "style": "स्टाइल", "use_case": "इस्तेमाल", "size": "साइज़", "budget": "बजट", "items": "कैटलॉग", "stop": "।",
+        "brand": "ब्रांड", "category": "प्रकार",
     },
     "ja": {
         "start": "{category}から始めます。いちばん重視する点を教えてください。",
@@ -214,6 +219,7 @@ _PHRASES: Mapping[str, Mapping[str, str]] = {
         "going_on": "{category}で{values}を手がかりにしています。",
         "material": "素材", "color": "色",
         "style": "スタイル", "use_case": "用途", "size": "サイズ", "budget": "予算", "items": "カタログ", "stop": "。",
+        "brand": "ブランド", "category": "種類",
     },
     "zh": {
         "start": "从{category}开始。请告诉我你最看重什么。",
@@ -227,6 +233,7 @@ _PHRASES: Mapping[str, Mapping[str, str]] = {
         "going_on": "在{category}中依据 {values} 查找。",
         "material": "材质", "color": "颜色",
         "style": "款式", "use_case": "用途", "size": "尺码", "budget": "预算", "items": "商品目录", "stop": "。",
+        "brand": "品牌", "category": "类型",
     },
 }
 
