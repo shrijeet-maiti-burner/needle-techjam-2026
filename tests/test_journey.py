@@ -17,6 +17,7 @@ from storefront.journey import (
     LineItem,
     ShoppingPlan,
     alternative_queries,
+    journey_beliefs,
 )
 from storefront.service import StorefrontService
 
@@ -211,6 +212,41 @@ class JourneyPlannerTest(unittest.TestCase):
         self.assertEqual(self.plan.active_item.category, "suit")
         self.assertEqual(self.plan.active_item.constraints[0].values, ("white",))
 
+    def test_concrete_category_promotes_the_vague_placeholder(self) -> None:
+        self.planner.observe(self.plan, "I need something for a wedding", 1)
+        placeholder_id = self.plan.active_item_id
+        self.planner.observe(self.plan, "make it a suit", 2)
+        self.assertEqual(len(self.plan.items), 1)
+        self.assertEqual(self.plan.active_item_id, placeholder_id)
+        self.assertEqual(self.plan.active_item.category, "suit")
+        self.assertEqual(self.plan.active_item.label, "Suit")
+        self.assertIsNone(self.plan.active_item.relation)
+
+    def test_an_offered_facet_value_refines_instead_of_creating_an_item(self) -> None:
+        planner = DeterministicJourneyPlanner(
+            lambda text: [value for value in ("suit", "formal") if value in text.lower()]
+        )
+        plan = ShoppingPlan("offered-value")
+        planner.observe(plan, "I need a suit", 1)
+        item = plan.active_item
+        assert item is not None
+        item.asked_facets.append("style")
+        item.offered_values["style"] = ["formal", "casual"]
+        planner.observe(plan, "formal", 2)
+        self.assertEqual(len(plan.items), 1)
+        self.assertEqual(plan.active_item.category, "suit")
+
+    def test_a_typed_facet_value_is_not_mistaken_for_a_product_type(self) -> None:
+        planner = DeterministicJourneyPlanner(
+            lambda text: [value for value in ("suit", "formal", "shoes") if value in text.lower()]
+        )
+        plan = ShoppingPlan("typed-value")
+        planner.observe(plan, "I need a suit", 1)
+        planner.observe(plan, "formal", 2)
+        self.assertEqual([item.category for item in plan.items], ["suit"])
+        planner.observe(plan, "add formal shoes", 3)
+        self.assertEqual([item.category for item in plan.items], ["suit", "shoes"])
+
 
 class CompatibilityTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -304,6 +340,9 @@ class JourneyServiceTest(unittest.TestCase):
         self.assertEqual(turn.ask_attribute, "wearer")
         self.assertIsNone(turn.journey["items"][0]["audience"])
         self.assertEqual(turn.journey_trace["question"]["source"], "catalog audience board")
+        self.assertEqual(turn.journey_trace["question"]["catalog_coverage"], 1.0)
+        self.assertIn("Who will wear it?", turn.message)
+        self.assertNotIn("constraints I could verify", turn.message)
 
     def test_a_displayed_product_can_be_confirmed_as_the_relation_anchor(self) -> None:
         catalog = write_catalog(self)
@@ -316,6 +355,8 @@ class JourneyServiceTest(unittest.TestCase):
         self.assertEqual(selected["selected_id"], identifier)
         self.assertEqual(second.journey_trace["anchor_id"], identifier)
         self.assertEqual(second.journey_trace["anchor_status"], "confirmed")
+        self.assertNotIn(second.ask_attribute, {"brand", "category", "budget"})
+        self.assertTrue(second.journey_trace["question"]["relationship_aware"])
         with StorefrontService(catalog, journey_mode=True) as service:
             conversation = service.start("bad-selection")
             service.send(conversation.session_id, "I need shoes")
@@ -347,6 +388,221 @@ class JourneyServiceTest(unittest.TestCase):
         self.assertNotIn("wearer", turn.message.lower())
 
 
+class TheRailShowsWhatThePlanUnderstands(unittest.TestCase):
+    """The panel is headed "what I have understood", so it has to mean the plan.
+
+    Scoped to the active line item it contradicted the plan beside it: after a
+    wedding, a navy suit and then shoes, the plan showed the occasion and the
+    colour while the rail said nothing had been disclosed, because navy belongs
+    to the suit and the shoes had become active.
+    """
+
+    def _plan(self) -> ShoppingPlan:
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("rail")
+            service.send(conversation.session_id, "I am getting married and need a men's suit")
+            service.send(conversation.session_id, "make it navy")
+            turn = service.send(conversation.session_id, "Add shoes to go along with it")
+        self.assertEqual(turn.journey["items"][-1]["category"], "shoes")
+        return turn
+
+    def test_a_constraint_on_an_earlier_item_still_appears(self) -> None:
+        turn = self._plan()
+        wanted = turn.beliefs["wanted"]
+        self.assertTrue(wanted, "the rail is empty while the plan holds constraints")
+        colours = [entry for entry in wanted if entry["value"] == "navy"]
+        self.assertEqual(len(colours), 1)
+        self.assertEqual(colours[0]["attribute"], "color")
+
+    def test_every_entry_names_the_item_it_constrains(self) -> None:
+        turn = self._plan()
+        # Without an owner, "color navy" beside an active shoes item reads as
+        # the shoes being navy.
+        for entry in turn.beliefs["wanted"] + turn.beliefs["excluded"]:
+            self.assertIn("item", entry)
+            self.assertTrue(str(entry["item"]).strip())
+        navy = next(entry for entry in turn.beliefs["wanted"] if entry["value"] == "navy")
+        self.assertNotEqual(navy["item"].lower(), "shoes")
+
+    def test_shared_context_is_attributed_to_the_journey_and_to_a_real_turn(self) -> None:
+        turn = self._plan()
+        shared = [entry for entry in turn.beliefs["wanted"] if entry["item"] == "shared"]
+        self.assertTrue(shared, "the journey occasion never reaches the rail")
+        for entry in shared:
+            self.assertIn(entry["value"], turn.journey["global_context"])
+            # The chip tooltip claims a turn. It has to be one that happened.
+            self.assertGreaterEqual(entry["turn"], 1)
+            self.assertLessEqual(entry["turn"], turn.turn)
+
+    def test_an_empty_plan_still_reports_the_three_groups(self) -> None:
+        beliefs = journey_beliefs(ShoppingPlan(session_id="empty"))
+        self.assertEqual(beliefs["wanted"], [])
+        self.assertEqual(beliefs["excluded"], [])
+        self.assertEqual(beliefs["superseded"], [])
+        self.assertEqual(beliefs["intent_version"], 1)
+
+
+class AnUnnamedItemIsNotReadAsANoun(unittest.TestCase):
+    """A line item the customer has not named carries the label "Current item".
+
+    That is a heading in the plan rail and a noun in a sentence, and the
+    opening turn of the wedding journey read "I updated the current item line
+    item from the constraints I could verify in the catalog."
+    """
+
+    def test_no_message_doubles_the_placeholder_label(self) -> None:
+        catalog = write_catalog(self)
+        openings = (
+            "I need an outfit for a wedding",
+            "something for a formal event",
+            "show me what you have",
+        )
+        for opening in openings:
+            with self.subTest(opening=opening):
+                with StorefrontService(catalog, journey_mode=True) as service:
+                    conversation = service.start("unnamed")
+                    turn = service.send(conversation.session_id, opening)
+                message = turn.message.lower()
+                self.assertNotIn("current item line item", message)
+                self.assertNotIn("these current item", message)
+                self.assertNotIn("your current item intent", message)
+                self.assertNotIn("no current item that", message)
+                self.assertNotIn("added current item", message)
+
+    def test_a_named_item_still_names_itself(self) -> None:
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("named")
+            service.send(conversation.session_id, "I am getting married and need a men's suit")
+            turn = service.send(conversation.session_id, "Add shoes to go along with it")
+        self.assertIn("shoes", turn.message.lower())
+
+
+class AQuestionIsNotPutTwiceToTheSamePerson(unittest.TestCase):
+    """Journey mode had its own question path and its own copy of this bug.
+
+    Driving the wedding journey live, the interface asked "which wearer would
+    help most" on five consecutive turns while the customer answered every
+    time: the released slate shrinks under each answer, so the same facet keeps
+    winning on the new numbers. An agent that repeats itself while you reply
+    reads as one that is not listening, which is worse than asking nothing.
+    """
+
+    SCRIPT = (
+        "I need an outfit for a wedding",
+        "a navy suit",
+        "actually not navy, make it black",
+        "no polyester",
+        "Add shoes to go along with it",
+    )
+
+    @staticmethod
+    def _wide_catalog(case: unittest.TestCase) -> Path:
+        """A slate wide enough that several facets stay viable for many turns.
+
+        The bundled fixture runs out of catalog facets after one question and
+        falls through to the open `other`, which is exactly the case the bug
+        did not appear in. Reproducing it needs a slate that keeps offering a
+        winner as it shrinks.
+        """
+        directory = tempfile.TemporaryDirectory()
+        case.addCleanup(directory.cleanup)
+        path = Path(directory.name) / "catalog.jsonl"
+        products = []
+        colors = ("black", "blue", "brown", "green")
+        materials = ("leather", "canvas", "denim", "wool")
+        styles = ("classic", "casual", "formal", "athletic")
+        index = 0
+        for color in colors:
+            for material in materials:
+                for style in styles:
+                    index += 1
+                    products.append({
+                        "parent_asin": f"W{index:04d}",
+                        "title": f"Men's {style} {color} {material} Shoes",
+                        "categories": ["Clothing, Shoes & Jewelry", "Men", "Shoes"],
+                        "features": [f"{style} {material} upper"],
+                        "description": [f"A {color} shoe in {material}."],
+                        "details": {"Color": color.title(), "Material": material.title()},
+                        "price": 40 + index,
+                        "average_rating": 4.0,
+                        "rating_number": 100 + index,
+                        "store": f"Maker{index % 5}",
+                    })
+        path.write_text(
+            "\n".join(json.dumps(product) for product in products) + "\n",
+            encoding="utf-8",
+        )
+        return path
+
+    def test_the_same_facet_is_not_offered_again_as_the_slate_shrinks(self) -> None:
+        catalog = self._wide_catalog(self)
+        asked: list[str] = []
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("wide")
+            for message in ("I need shoes for men", "something durable",
+                            "I do not know", "anything really", "you choose"):
+                turn = service.send(conversation.session_id, message)
+                if turn.ask_attribute and turn.ask_attribute != "other":
+                    asked.append(turn.ask_attribute)
+        self.assertTrue(asked, "the journey never asked a catalog facet")
+        self.assertEqual(sorted(asked), sorted(set(asked)), f"a facet repeated: {asked}")
+
+    def test_the_active_item_records_what_it_asked(self) -> None:
+        catalog = self._wide_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("record")
+            turn = service.send(conversation.session_id, "I need shoes for men")
+        active = next(item for item in turn.journey["items"] if item["active"])
+        if turn.ask_attribute and turn.ask_attribute != "other":
+            self.assertIn(turn.ask_attribute, active["asked_facets"])
+
+    def test_no_facet_is_asked_twice_for_one_line_item(self) -> None:
+        catalog = write_catalog(self)
+        asked_by_item: dict[str, list[str]] = {}
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("repeats")
+            for message in self.SCRIPT:
+                turn = service.send(conversation.session_id, message)
+                active = str(turn.journey["active_item_id"])
+                # `other` is the open question, "what else matters", and the
+                # fallback when no catalog facet divides the slate. Asking it
+                # again is not the defect; asking the same specific facet again
+                # is.
+                if turn.ask_attribute and turn.ask_attribute != "other":
+                    asked_by_item.setdefault(active, []).append(turn.ask_attribute)
+        self.assertTrue(asked_by_item, "the journey asked nothing at all")
+        for item_id, asked in asked_by_item.items():
+            with self.subTest(item=item_id):
+                self.assertEqual(sorted(asked), sorted(set(asked)))
+
+    def test_a_new_line_item_may_ask_about_itself(self) -> None:
+        """Shoes and a suit can have different wearers, so the guard is per
+        item rather than per session."""
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("peritem")
+            first = service.send(conversation.session_id, "I need formal shoes")
+            self.assertEqual(first.ask_attribute, "wearer")
+            service.send(conversation.session_id, "for men")
+            later = service.send(conversation.session_id, "Add a suit as well")
+        suit = later.journey["items"][-1]
+        self.assertIn("suit", suit["category"])
+        self.assertNotEqual(suit["item_id"], later.journey["items"][0]["item_id"])
+        # A separate line item keeps its own record of what it has asked.
+        self.assertEqual(len(later.journey["items"]), 2)
+
+    def test_the_placeholder_hands_over_what_it_already_asked(self) -> None:
+        catalog = write_catalog(self)
+        with StorefrontService(catalog, journey_mode=True) as service:
+            conversation = service.start("handover")
+            first = service.send(conversation.session_id, "I need an outfit for a wedding")
+            second = service.send(conversation.session_id, "a men's suit")
+        if first.ask_attribute:
+            self.assertNotEqual(first.ask_attribute, second.ask_attribute)
+
+
 class JourneyArtifactTest(unittest.TestCase):
     def test_interface_renders_plan_and_compatibility_without_html_injection(self) -> None:
         source = (Path(__file__).resolve().parents[1] / "demo" / "storefront.html").read_text(
@@ -355,6 +611,20 @@ class JourneyArtifactTest(unittest.TestCase):
         self.assertIn("function renderJourney(journey)", source)
         self.assertIn("Compatibility evidence", source)
         self.assertIn("journey_trace", source)
+        self.assertIn("receipt.open = false", source)
+        self.assertIn("why needle asked", source)
+        self.assertIn('["considered", numberFormat.format(considered)]', source)
+        self.assertIn('["ruled out", numberFormat.format(ruledOut)]', source)
+        self.assertIn("catalog evidence only", source)
+        self.assertIn('id="mobile-journey-panel"', source)
+        self.assertIn("Shopping plan · ", source)
+        self.assertIn("retirePlanButtons()", source)
+        self.assertIn("button.plan-select[data-current='true']", source)
+        self.assertIn("Previous option", source)
+        self.assertNotIn("Journey overlay:", source)
+        self.assertNotIn("slate released", source)
+        self.assertNotIn("fallback unresolved", source)
+        self.assertNotIn("Product journey mode. ", source)
         self.assertNotIn("innerHTML", source)
 
 

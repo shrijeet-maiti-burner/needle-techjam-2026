@@ -636,9 +636,19 @@ class StorefrontService:
         language: str,
     ) -> str:
         label = str(getattr(item, "label", "this item")).lower()
+        # An item the customer has not named yet carries the placeholder label
+        # "Current item", which is a fine heading in the plan rail and a bad
+        # noun in a sentence: "I updated the current item line item" is the
+        # first thing the wedding journey says. Every sentence below therefore
+        # has a phrasing that does not need a product word.
+        unnamed = str(getattr(item, "category", "")) == "item" or label in {
+            "current item",
+            "this item",
+        }
         if not reranked.products:
+            missing = "nothing" if unnamed else f"no {label}"
             return (
-                f"I kept every stated requirement, but the catalog has no {label} "
+                f"I kept every stated requirement, but the catalog has {missing} "
                 "that satisfies all of them. Which requirement may I relax?"
             )
         if language != DEFAULT_LANGUAGE:
@@ -660,20 +670,25 @@ class StorefrontService:
                 prefix = say["start"].format(category=label)
         elif anchor_id:
             prefix = (
-                f"I kept the earlier item in your plan and ranked these {label} "
-                f"against {'your selected product' if anchor_confirmed else 'its current top proposal'}. "
-                "Compatibility is confidence-labelled "
-                "where the metadata is incomplete."
+                f"I ranked these {label} against "
+                f"{'your selected item' if anchor_confirmed else 'the current top match'} "
+                "using the compatibility evidence available in the catalog."
             )
         elif action is JourneyAction.EXPLORE:
             prefix = (
-                f"I kept your {label} intent and diversified the slate across the "
-                "catalog facets still available."
+                f"I found {len(reranked.products)} varied "
+                f"{'catalog matches' if unnamed else f'matches for your {label} search'}."
             )
         elif action is JourneyAction.CREATE and len(plan.items) > 1:
-            prefix = f"I added {label} as a separate line item without discarding the rest of your plan."
+            prefix = (
+                f"I added {'another item' if unnamed else label} "
+                "without losing the rest of your plan."
+            )
         else:
-            prefix = f"I updated the {label} line item from the constraints I could verify in the catalog."
+            prefix = (
+                f"I found {len(reranked.products)} strong catalog matches "
+                f"{'for your search' if unnamed else f'for your {label} search'}."
+            )
         suffix = question_message.strip()
         return f"{prefix} {suffix}".strip()
 
@@ -715,21 +730,47 @@ class StorefrontService:
             for group in getattr(item, "negative_groups", lambda: ())()
             for value in group.values
         ]
+        asked: list[str] = getattr(item, "asked_facets", [])
+
+        def remember(payload: dict[str, object]) -> dict[str, object]:
+            """A facet already put to this customer is not a better question the
+            second time. Without this the wedding journey asks "which wearer"
+            five turns running, because the slate shrinks under every answer and
+            the same facet keeps winning on the new numbers."""
+            attribute = str(payload.get("attribute") or "")
+            if payload.get("asks") and attribute and attribute not in asked:
+                asked.append(attribute)
+            raw_options = payload.get("options")
+            if payload.get("asks") and attribute and isinstance(raw_options, (list, tuple)):
+                values = [
+                    str(option[0]).strip().lower()
+                    for option in raw_options
+                    if isinstance(option, (list, tuple)) and option and str(option[0]).strip()
+                ]
+                if values:
+                    getattr(item, "offered_values", {})[attribute] = values
+            return payload
+
         board = clarification_board(
             candidate_ids,
             facets,
             already_said=said,
+            already_asked=asked,
             turns_left=max(0, SCORED_TURN_BUDGET - turn_number),
             excluded_values=excluded,
         )
         selected: QuestionDecision | None = None
-        audience_question = self._audience_question(item, candidate_ids, turn_number)
+        audience_question = (
+            None
+            if "wearer" in asked
+            else self._audience_question(item, candidate_ids, turn_number)
+        )
         anchor_facets: Mapping[str, str] = {}
         if anchor_id:
             anchor_facets = product_clarification_facets(self.view.raw(anchor_id) or {})
 
         if audience_question is not None:
-            payload = audience_question
+            payload = remember(audience_question)
             return self._render_question(payload, language=language), payload
 
         if board:
@@ -748,18 +789,44 @@ class StorefrontService:
                     decision.attribute,
                 )
 
-            selected = max(board, key=relationship_value) if anchor_id else board[0]
-            if not selected.asks:
+            if anchor_id:
+                relationship_board = [
+                    decision
+                    for decision in board
+                    if decision.attribute in {"style", "use_case", "color", "material"}
+                ]
+                selected = (
+                    max(relationship_board, key=relationship_value)
+                    if relationship_board
+                    else None
+                )
+            else:
+                selected = board[0]
+            if selected is not None and not selected.asks:
                 selected = None
 
         if selected is not None:
             payload = selected.as_dict()
             payload["source"] = "released-candidate clarification board"
             payload["relationship_aware"] = bool(anchor_id)
-            return self._render_question(payload, language=language), payload
+            return self._render_question(remember(payload), language=language), payload
+
+        if anchor_id:
+            payload = {
+                "asks": False,
+                "source": "relationship-aware stop decision",
+                "reason": "no unanswered compatibility facet improves the released candidates",
+                "relationship_aware": True,
+            }
+            return "", payload
 
         fallback = self._trace_question_decision(trace)
-        if fallback is None:
+        fallback_attribute = (
+            str(fallback.get("attribute") or "")
+            if isinstance(fallback, Mapping)
+            else ""
+        )
+        if fallback is None or fallback_attribute in asked:
             payload = {
                 "asks": False,
                 "source": "catalog stop decision",
@@ -769,7 +836,7 @@ class StorefrontService:
         payload = dict(fallback)
         payload["source"] = "single-target policy fallback"
         payload["relationship_aware"] = False
-        return self._render_question(payload, language=language), payload
+        return self._render_question(remember(payload), language=language), payload
 
     def _audience_question(
         self,
@@ -790,7 +857,11 @@ class StorefrontService:
         if len(counts) < 2:
             return None
         total = len(candidate_ids)
-        expected_remaining = sum(size * size for size in counts.values()) / max(1, total)
+        known_count = sum(counts.values())
+        unknown_count = max(0, total - known_count)
+        expected_remaining = (
+            sum(size * size for size in counts.values()) + unknown_count * unknown_count
+        ) / max(1, total)
         expected_reduction = max(0.0, 1.0 - expected_remaining / max(1, total))
         interaction_cost = 1.0 / (max(0, SCORED_TURN_BUDGET - turn_number) + 1.0)
         net_value = expected_reduction - interaction_cost
@@ -800,8 +871,12 @@ class StorefrontService:
             "attribute": "wearer",
             "options": tuple(sorted(counts.items(), key=lambda row: (-row[1], row[0]))[:4]),
             "candidate_count": total,
+            "known_count": known_count,
+            "unknown_count": unknown_count,
+            "distinct_answer_groups": len(counts) + int(bool(unknown_count)),
             "expected_remaining": round(expected_remaining, 6),
             "expected_candidate_reduction": round(expected_reduction, 6),
+            "catalog_coverage": round(known_count / max(1, total), 6),
             "interaction_cost": round(interaction_cost, 6),
             "net_value": round(net_value, 6),
             "asks": True,
@@ -849,11 +924,11 @@ class StorefrontService:
                 if choices
                 else prompt
             )
+        prompt = "Who will wear it?" if attribute == "wearer" else f"Which {attribute} matters most?"
         return (
-            f"Which {attribute} would help most? {choices}. "
-            "You can also answer outside these options."
+            f"{prompt} {choices}. You can also answer outside these options."
             if choices
-            else f"Which {attribute} would help most?"
+            else prompt
         )
 
     # -- introspection -------------------------------------------------------
