@@ -116,8 +116,21 @@ class TheAssetIsBoundToTheParser(unittest.TestCase):
         )
 
     def test_the_fingerprint_is_recorded(self) -> None:
-        self.assertEqual(
-            self._metadata().get("facet_parser_sha256"), state.facet_rules_fingerprint()
+        """The recorded value is the combined one, not the state half alone.
+
+        The facets have two authors: `needle.state` parses the product's prose
+        and `needle.catalog` derives brand, budget band and category leaf from
+        fields. A fingerprint covering only the first would accept an asset
+        built before the field facets existed, which is the same silent
+        acceptance this binding was added to stop.
+        """
+        from needle.catalog import _facet_rules_fingerprint
+
+        recorded = self._metadata().get("facet_parser_sha256")
+        self.assertEqual(recorded, _facet_rules_fingerprint())
+        self.assertNotEqual(
+            recorded, state.facet_rules_fingerprint(),
+            "the field-derived facets are not covered by the recorded fingerprint",
         )
 
     def test_a_matching_asset_is_used(self) -> None:

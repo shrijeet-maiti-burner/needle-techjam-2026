@@ -36,6 +36,15 @@ SHIPPING_PATHS = (
     "scripts/demo_session.py",
     "docs/OWNERSHIP.md",
     "docs/SUBMISSION_DISCLOSURES.md",
+    # The storefront. The specification puts interface work out of scope, so
+    # this is not required and nothing in the scored path imports it, but a
+    # reviewer who wants to type at the agent rather than read a transcript
+    # should be able to without cloning the repository. 118KB of source with no
+    # build step and no dependency beyond the standard library.
+    "scripts/needle_storefront.py",
+    "storefront",
+    "demo/storefront.html",
+    "docs/STOREFRONT.md",
 )
 
 

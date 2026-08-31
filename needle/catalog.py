@@ -319,16 +319,83 @@ def product_signatures(product: dict[str, object]) -> tuple[str, ...]:
 
 
 def _facet_rules_fingerprint() -> str:
-    """Lazy for the same reason `product_clarification_facets` is: sparse
-    search must not require the state module to import."""
+    """Identity of everything that decides what a stored facet says.
+
+    Two halves, because the facets have two authors. `needle.state` owns the
+    parse of the product's prose and fingerprints its own rules. This module
+    owns the field-derived facets -- brand, budget band, category leaf -- and
+    the state fingerprint cannot see those at all.
+
+    That gap was real: adding the three field facets changed every stored row
+    while leaving the state rules untouched, so an asset built before them
+    would have been accepted and served four facets where the code now expects
+    seven. Hashing this function's own source closes it without anyone having
+    to remember a version number, which is the same reason the state half is
+    derived rather than hand-maintained.
+
+    Lazy for the same reason `product_clarification_facets` is: sparse search
+    must not require the state module to import.
+    """
+    import hashlib
+    import inspect
+
     from needle.state import facet_rules_fingerprint
 
-    return facet_rules_fingerprint()
+    try:
+        source = inspect.getsource(product_clarification_facets)
+    except (OSError, TypeError):  # pragma: no cover - source-less deployment
+        # Without source the field half cannot be fingerprinted, so fall back
+        # to the state half alone rather than to a constant that would silently
+        # accept anything.
+        return facet_rules_fingerprint()
+    material = facet_rules_fingerprint() + "\x1f" + source
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+# Price is continuous, so it cannot be a facet the way a colour can: five
+# thousand distinct values divide a candidate set into five thousand groups of
+# one and answer nothing. A ladder makes it answerable, and these are the
+# boundaries a shopper is actually offered on a storefront rather than
+# quantiles of this catalog, so the question reads the same whatever set it is
+# asked about.
+_PRICE_BANDS: tuple[tuple[float, str], ...] = (
+    (25.0, "under $25"),
+    (50.0, "$25 to $50"),
+    (100.0, "$50 to $100"),
+    (200.0, "$100 to $200"),
+)
+_PRICE_BAND_TOP = "over $200"
+
+
+def _price_band(value: object) -> str:
+    """The band a price falls in, or "" when the catalog does not state one."""
+    try:
+        price = float(str(value).replace("$", "").replace(",", "").strip())
+    except (TypeError, ValueError):
+        return ""
+    if price <= 0:
+        return ""
+    for ceiling, label in _PRICE_BANDS:
+        if price < ceiling:
+            return label
+    return _PRICE_BAND_TOP
 
 
 def product_clarification_facets(product: dict[str, object]) -> dict[str, str]:
-    """Catalog-grounded values the conversation state can consume verbatim."""
+    """Catalog-grounded values the conversation state can consume verbatim.
 
+    Three of these come from fields rather than from prose. `store`, `price`
+    and the leaf of `categories` are stated by the catalog directly, so they
+    are answerable without parsing a description, and they divide sets that the
+    vocabulary facets cannot: two hiking boots can agree on material, colour,
+    style and use and still differ by brand, price and whether they are hiking
+    boots or snow boots.
+
+    Nothing is invented. A product with no `store` simply has no brand facet,
+    and the question policy already treats an unknown value as its own answer
+    group rather than dropping it from the denominator, so a sparse facet
+    cannot look informative merely because few candidates can answer it.
+    """
     # Lazy import keeps the retrieval module's ordinary startup surface small
     # and avoids making state construction a prerequisite for sparse search.
     from needle.state import Polarity, extract_constraints
@@ -338,6 +405,27 @@ def product_clarification_facets(product: dict[str, object]) -> dict[str, str]:
     for attribute, value, polarity in extract_constraints(blob):
         if polarity is Polarity.POSITIVE and attribute not in values:
             values[attribute] = value
+
+    store = " ".join(str(product.get("store") or "").split())
+    if store and len(store) <= 40:
+        values["brand"] = store
+
+    # `extract_constraints` also yields a "budget" when a number appears in the
+    # prose, and that is not an answerable option: offering "500" as a choice
+    # asks the customer to pick a number out of a description. A band or
+    # nothing.
+    values.pop("budget", None)
+    band = _price_band(product.get("price"))
+    if band:
+        values["budget"] = band
+
+    # The leaf of the category path, which is what separates "Hiking Boots"
+    # from "Snow Boots" once the coarse category has already been agreed.
+    categories = product.get("categories")
+    if isinstance(categories, (list, tuple)) and categories:
+        leaf = " ".join(str(categories[-1]).split())
+        if leaf and len(leaf) <= 40:
+            values["category"] = leaf.lower()
     return values
 
 
@@ -803,25 +891,38 @@ class CatalogIndex:
                     facets[key] = dict(values)
             return facets
 
-        # The fallback path has no bundled facet table. Parse only the bounded
-        # products requested by the question policy, using the same extractor
-        # that consumes a customer's eventual answer.
-        from needle.state import Polarity, extract_constraints
-
+        # The fallback path has no bundled facet table, so it parses the bounded
+        # products the question policy asked about. It calls the same extractor
+        # rather than repeating it, because a second copy is how the two paths
+        # came to disagree: this one used to inline the prose parse and so could
+        # never produce a field-derived facet at all.
+        #
+        # It still produces fewer of them, and that is a property of the FTS
+        # table rather than of the extractor. `store` is a column, so brand
+        # survives; `price` is not one, and `categories` is flattened to text
+        # that cannot be split back into a path, so budget and category are
+        # available only when the bundled asset loaded. The question policy
+        # ranks whatever it is given, so the degraded path asks a slightly
+        # worse question rather than a wrong one.
         for offset in range(0, len(missing), 400):
             batch = missing[offset:offset + 400]
             placeholders = ", ".join("?" for _ in batch)
             rows = self.connection.execute(
-                "SELECT parent_asin, title, categories, features, details, description "
-                f"FROM products WHERE parent_asin IN ({placeholders})",
+                "SELECT parent_asin, title, categories, features, details, "
+                f"description, store FROM products WHERE parent_asin IN ({placeholders})",
                 batch,
             ).fetchall()
-            for parent_asin, *fields in rows:
-                blob = " ".join(str(value or "") for value in fields)
-                values: dict[str, str] = {}
-                for attribute, value, polarity in extract_constraints(blob):
-                    if polarity is Polarity.POSITIVE and attribute not in values:
-                        values[attribute] = value
+            for parent_asin, title, categories, features, details, description, store in rows:
+                values = product_clarification_facets(
+                    {
+                        "title": title,
+                        "categories": categories,
+                        "features": features,
+                        "details": details,
+                        "description": description,
+                        "store": store,
+                    }
+                )
                 key = str(parent_asin)
                 self._clarification_facets_cache[key] = values
                 facets[key] = dict(values)
