@@ -91,6 +91,23 @@ class TheAssetIsBoundToTheParser(unittest.TestCase):
         finally:
             connection.close()
 
+    @staticmethod
+    def _facets(path: Path) -> dict[str, str]:
+        """Read the facet table and close the handle before returning.
+
+        Windows will not unlink a file that still has an open handle, so a
+        connection left to garbage collection makes `TemporaryDirectory`
+        cleanup raise `WinError 32` after the assertions have already passed.
+        Linux does not, which is why this is invisible in CI.
+        """
+        connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+        try:
+            return dict(
+                connection.execute("SELECT parent_asin, payload FROM clarification_facets")
+            )
+        finally:
+            connection.close()
+
     def _open(self) -> CatalogIndex:
         return CatalogIndex(
             str(self.catalog),
@@ -151,10 +168,7 @@ class TheAssetIsBoundToTheParser(unittest.TestCase):
 
     def test_the_rebuilt_asset_disagrees_with_the_old_one(self) -> None:
         """Not just a label change: the stored facets really do differ."""
-        before = dict(
-            sqlite3.connect(f"file:{self.asset.as_posix()}?mode=ro", uri=True)
-            .execute("SELECT parent_asin, payload FROM clarification_facets")
-        )
+        before = self._facets(self.asset)
         keep = state.NEGATION_RE
         # Simulate the narrow legacy parser that missed auxiliary negation.
         # The current parser excludes black in "don't like black"; this one
@@ -164,10 +178,7 @@ class TheAssetIsBoundToTheParser(unittest.TestCase):
         try:
             rebuilt = self.asset.with_name("rebuilt.sqlite3")
             build_signature_index(self.catalog, rebuilt)
-            after = dict(
-                sqlite3.connect(f"file:{rebuilt.as_posix()}?mode=ro", uri=True)
-                .execute("SELECT parent_asin, payload FROM clarification_facets")
-            )
+            after = self._facets(rebuilt)
         finally:
             state.NEGATION_RE = keep
         self.assertNotIn("black", before["A1"])
