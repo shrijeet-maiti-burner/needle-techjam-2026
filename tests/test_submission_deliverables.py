@@ -105,10 +105,21 @@ class TheRequiredDeliverablesArePresent(unittest.TestCase):
         self.assertIn("starter/agent.py", self.shipped)
 
     def test_the_report_covers_every_required_topic(self) -> None:
-        for heading in ("## Method", "## Model choice", "## Disclosure",
+        for heading in ("## Architecture and method", "## Model choice and models used",
+                        "## Cost, token usage, latency, and network disclosure",
                         "## Limitations", "## Team contributions"):
             with self.subTest(heading=heading):
                 self.assertIn(heading, self.report)
+
+    def test_the_report_uses_the_words_the_specification_asks_for(self) -> None:
+        """`Final Deliverables` names the coverage: architecture, models, cost,
+        limitations, team contributions. A reviewer checking that list should
+        find each word in the report rather than having to infer it from a
+        section called something else."""
+        lowered = self.report.lower()
+        for word in ("architecture", "model", "cost", "limitation", "contribution"):
+            with self.subTest(word=word):
+                self.assertIn(word, lowered)
 
     def test_one_demonstrated_multi_turn_session_is_in_the_report(self) -> None:
         """Readable from the archive alone, not only by running something."""
@@ -120,6 +131,42 @@ class TheRequiredDeliverablesArePresent(unittest.TestCase):
                 self.assertIn(marker, transcript)
         self.assertIn("scripts/demo_session.py", self.shipped,
                       "the transcript must also be reproducible from the archive")
+
+
+class TheDisclosedAssetIsTheShippedAsset(unittest.TestCase):
+    """The report states the index size and its two bindings, and a reviewer can
+    check all three from the archive in one command.
+
+    They had already drifted: the report described a 68,702,208-byte index built
+    by an earlier parser, while the archive carried a 71,241,728-byte index whose
+    parser fingerprint had moved with the clarification-facet change. Both
+    numbers are mechanical, so nothing about them should depend on someone
+    remembering to retype them.
+    """
+
+    ASSET = ROOT / ".artifacts" / "indexes" / "catalog-signatures.sqlite3"
+
+    def setUp(self) -> None:
+        if not self.ASSET.is_file():
+            self.skipTest("no built signature index on this machine")
+        import sqlite3
+
+        connection = sqlite3.connect(f"file:{self.ASSET.as_posix()}?mode=ro", uri=True)
+        try:
+            self.metadata = dict(connection.execute("SELECT key, value FROM metadata"))
+        finally:
+            connection.close()
+        self.report = REPORT.read_text(encoding="utf-8")
+
+    def test_the_report_cites_this_catalog_binding(self) -> None:
+        self.assertIn(self.metadata["catalog_sha256"], self.report)
+
+    def test_the_report_cites_this_parser_binding(self) -> None:
+        self.assertIn(self.metadata["facet_parser_sha256"], self.report)
+
+    def test_the_report_cites_this_size_and_schema(self) -> None:
+        self.assertIn(f"{self.ASSET.stat().st_size:,}", self.report)
+        self.assertIn(f"{self.metadata['schema_version']}; ", self.report)
 
 
 class TheStorefrontShips(unittest.TestCase):

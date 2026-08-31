@@ -1,10 +1,30 @@
-# Method, model choice, and limitations
+# Architecture, model choice, cost, and limitations
 
 Required by the participant kit's `docs/submission_rules.md` ("a short report describing method, model
 choice, and limitations" and "a disclosure of latency, token usage, and
 estimated model cost").
 
-## Method
+## Architecture and method
+
+```text
+official evaluator
+      |
+starter.agent.Agent                     entry point, one frozen preset
+      |
+needle.state       versioned belief state, clause-scoped negation, override retraction
+needle.agent       intent routing, question policy, per-session lifecycle
+needle.questions   catalog-grounded clarification ranking (human-facing only)
+      |
+needle.catalog     signature index in catalog-bound SQLite
+                     -> category-bound disclosure prefixes -> popularity ordering
+                     -> fielded FTS5 BM25 fallback
+      |
+adaptive slate + seen exclusion -> needle.explain -> strict response
+                     {message, ask_attribute, recommendations, usage}
+```
+
+Every box is standard library. The only artifact is the SQLite index, which is
+derived from the frozen catalog and rebuilt in process if it is absent.
 
 The agent is a deterministic, standard-library retrieval system. No neural
 model, no embeddings, no network.
@@ -55,7 +75,7 @@ reduced to its subject clause and later replies are kept. This matters because
 `intent_override` sessions cannot score until the override fires, so the turns
 before it are spent gathering constraints that a full reset would then discard.
 
-## Model choice
+## Model choice and models used
 
 None. No LLM API and no local model is used at any point in the scored path.
 This was a deliberate choice: the task is recovering one catalog row from a
@@ -64,7 +84,7 @@ identified by a single verbatim constraint string, and exact matching does that
 better and far faster than a semantic model. It also removes credential,
 network, and cost risk from official scoring entirely.
 
-## Disclosure
+## Cost, token usage, latency, and network disclosure
 
 The separate [submission disclosure inventory](../docs/SUBMISSION_DISCLOSURES.md)
 tracks the required development tools, APIs, libraries and frameworks, and
@@ -78,26 +98,34 @@ datasets and assets for the final Devpost description.
 | estimated model cost | $0.00 |
 | network access required | no |
 | credentials required | no |
-| per-response latency, p50 | 6.529 ms |
-| per-response latency, p95 | 147.513 ms |
-| per-response latency, p99 | 254.434 ms |
-| per-response latency, max | 631.962 ms |
-| construction with bundled index | 2.728 s |
-| construction without bundled index, in-process rebuild | 24.400 s |
-| peak resident memory, bundled index | 220.0 MB |
-| peak resident memory, in-process rebuild | 302.1 MB |
-| generated index schema and size | 9; 68,702,208 bytes |
+| per-response latency, p50 | 1.361 ms |
+| per-response latency, p95 | 94.287 ms |
+| per-response latency, p99 | 173.244 ms |
+| per-response latency, max | 304.992 ms |
+| construction with bundled index | 2.895 s |
+| construction without bundled index, in-memory rebuild | 27.870 s |
+| peak resident memory, bundled index | 208.8 MB |
+| peak resident memory, in-memory rebuild | 287.7 MB |
+| generated index schema and size | 9; 71,241,728 bytes |
 | generated index catalog binding | `da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67` |
-| generated index parser binding | `5d1bae732fbd6ab366ddc19e9cc5a963080b68e8edbaedb590bee5a18f424938` |
+| generated index parser binding | `6a56e3549d6da62b017546a5393ce59acfa49ebaae1049b967e0917998437bca` |
 | contract violations | 0 of 405 responses |
+| score with the bundled index refused | 0.978500, identical |
+
+Latency is per `respond` call over the 405 responses of the official public
+run. Construction and memory are the median of repeated runs, each in a fresh
+process. Measured on an Apple M2, 8 cores, 16 GB, macOS 26.6.2, CPython 3.12.3,
+from the extracted archive rather than from the repository.
 
 Construction happens once per evaluation run, not per session or per turn, so
 the figures above are one-off. Both paths are reported because the specification
 reserves the right to run the submission under CPU, memory, timeout and network
 restrictions, and to treat a timeout as a miss. The worst case is the second
 row: if the bundled index is refused for any reason the agent rebuilds an
-equivalent one in process rather than failing, which costs 24.4 s once and
-121 MB more, and then scores identically.
+equivalent one, which costs 27.9 s once and 79 MB more, and then scores
+identically, which the last row records. That rebuild is held in a SQLite
+`:memory:` database and writes nothing, so it survives a read-only filesystem
+as well as a missing asset.
 
 The index is identified by what it is bound to rather than by its own file
 hash. Two builds of identical content can differ byte for byte, so a published
