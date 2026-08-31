@@ -82,11 +82,27 @@ datasets and assets for the final Devpost description.
 | per-response latency, p95 | 147.513 ms |
 | per-response latency, p99 | 254.434 ms |
 | per-response latency, max | 631.962 ms |
-| construction with bundled index | 8.364 s |
-| construction without bundled index | 84.788 s |
-| generated index schema and size | 8; 68,702,208 bytes |
-| generated index SHA-256 | `797dd7ef14911a43966599f7157e41db8e80e3feda56e9e09f197cad0e1917e3` |
+| construction with bundled index | 2.728 s |
+| construction without bundled index, in-process rebuild | 24.400 s |
+| peak resident memory, bundled index | 220.0 MB |
+| peak resident memory, in-process rebuild | 302.1 MB |
+| generated index schema and size | 9; 68,702,208 bytes |
+| generated index catalog binding | `da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67` |
+| generated index parser binding | `e8a0572f0938ed83b000869f2396de2183dbe03ed3c1c94c4491250784da23d2` |
 | contract violations | 0 of 405 responses |
+
+Construction happens once per evaluation run, not per session or per turn, so
+the figures above are one-off. Both paths are reported because the specification
+reserves the right to run the submission under CPU, memory, timeout and network
+restrictions, and to treat a timeout as a miss. The worst case is the second
+row: if the bundled index is refused for any reason the agent rebuilds an
+equivalent one in process rather than failing, which costs 24.4 s once and
+121 MB more, and then scores identically.
+
+The index is identified by what it is bound to rather than by its own file
+hash. Two builds of identical content can differ byte for byte, so a published
+file hash is not something a rebuild can be checked against; the catalog and
+parser bindings above are, and they are what the loader compares.
 
 Measured on the 200 official public sessions, `retrieval_mode=signature_first`,
 `signature_bucket_limit=500`, `category_strength=1.00`, `popularity_strength=0.30`,
@@ -147,23 +163,86 @@ only be paid early.
 
 ## Demonstrated session
 
-`python scripts/needle_storefront.py --warm` runs an unscripted local storefront
-against the selected primary. Each turn renders the active/superseded belief
-ledger, grounded product fields, latency, and an expandable decision receipt
-read directly from the same target-blind trace as Needle Lens. There is no
-demo-only reranking path.
+Required deliverable, printed in full below so it is readable from the archive
+alone rather than only by running something. It is a real transcript, not a
+staged one: the customer messages come from the official `local_evaluator`'s own
+`initial_message`, `customer_reply` and override injection, and the hit test is
+the evaluator's, so what is printed is what the scorer saw.
 
-`python3 scripts/demo_session.py --scenario intent_override` prints one full
-multi-turn session. It is a real transcript, not a staged one: the customer
-messages come from the official `local_evaluator`'s own `initial_message`,
-`customer_reply` and override injection, and the hit test is the evaluator's, so
-what is printed is what the scorer saw. `--scenario` selects buying, browsing,
-intent_override or boundary; `--sample` runs a specific `sample_id`.
+Reproduce it from this bundle with:
 
-The override transcript is the one worth reading. It shows the turns the
+```
+python3 scripts/demo_session.py --scenario intent_override
+```
+
+`--scenario` selects buying, browsing, intent_override or boundary; `--sample`
+runs a specific `sample_id`.
+
+```text
+------------------------------------------------------------------------------
+  session   public_0002   scenario intent_override
+  target    B071X54486  Hide & Drink, Rustic Handmade Full Grain Leather [...]
+  hidden    hard=['leather', '100% Leather']
+            soft=['Imported', 'Buckle closure']
+------------------------------------------------------------------------------
+
+turn 1
+  customer I'm looking for Accessories Belts. Buckle closure
+  agent    I am starting with accessories belts. Which material? leather, nylon,
+           rhinestone, polyester. You can also tell me anything else you
+           prefer.
+  asks     other
+     1. B08FLYBP2J  Lavemi Men's Real Leather Ratchet Dress [...]
+  (not scorable yet: the override has not been sent)
+
+turn 2
+  customer For that, what matters is: leather; 100% Leather.
+  agent    I have 23 candidates among accessories belts and am narrowing with
+           leather. Showing the most reviewed. Which style? casual (8),
+           classic (3), elegant (2), vintage (2). You can also tell me
+           anything else you prefer.
+  asks     other
+     1. B08L13LJ5M  BULLIANT Men's Belt, Slide Ratchet Belt [...]
+  (not scorable yet: the override has not been sent)
+
+turn 3
+  customer Actually, ignore my earlier preference. What I need is: leather.
+  agent    I am narrowing accessories belts using leather. Which style? casual (51),
+           classic (25), elegant (21), vintage (11). You can also tell me
+           anything else you prefer.
+  asks     other
+     1. B06XYH8FH8  Hanks 1.5" Freedom Men’s Heavy Duty [...]
+
+turn 4
+  customer For that, what matters is: Imported; Buckle closure.
+  agent    I have 4 candidates among accessories belts and am narrowing with leather.
+           Showing the most reviewed. Which style? classic (1), formal
+           (1), vintage (1). You can also tell me anything else you
+           prefer.
+  asks     other
+     1. B071X54486  Hide & Drink, Rustic Handmade Full Grain [...]  <-- target
+
+  HIT on turn 4 at rank 1. Session ends here:
+  the evaluator breaks on the first appearance and never re-reads the rank.
+
+------------------------------------------------------------------------------
+  turns to conversion 4   session score contribution 0.9400
+  tokens 0, no network, no model.
+------------------------------------------------------------------------------
+```
+
+The override transcript is the one worth reading. It shows the two turns the
 evaluator refuses to score before the new intent arrives, which is why that
 slice carries the highest turns-to-conversion by construction rather than
-through any ranking weakness.
+through any ranking weakness. It also shows the emission policy: one product per
+turn while the belief state is still thin, because the scorer freezes a
+session's rank at the first turn the target appears, so a premature slate locks
+in a worse rank than waiting one turn would have earned.
+
+A local storefront (`scripts/needle_storefront.py --warm`) and the target-blind
+decision trace are in the source repository rather than this archive; the
+specification puts interface work out of scope, and the transcript above is the
+required artefact.
 
 ## Team contributions
 
@@ -179,5 +258,6 @@ directly.
 | robustness, lexical normalization, conversational interface | Aryaman Anand | offline lexical normalizer and robustness fixtures (#3); EXP-010 perturbation library (#4); session-level robustness driver, slice runner and comparison report (#7); query/corpus tokenizer symmetry, SQLite handle release and the never-failing turn guard (#13); override-trigger tolerance to surface corruption (#15); vocabulary-derived typo recovery, measured and retained default-off as a negative result (#16); the conversational storefront interface (#27); concurrent traced storefront smoke gate (#35) |
 | evaluation baseline and reruns | Yazhiniyan | no merged repository contribution is recorded in this release candidate; add only independently verifiable release or submission work before the final description is frozen |
 
-Every experiment in `docs/evidence/` names an independent rerun owner, and the
+Every experiment in the source repository's `docs/evidence/` names an
+independent rerun owner, and the
 headline arms were reproduced by a second person before being cited.

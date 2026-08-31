@@ -84,9 +84,10 @@ An earlier revision of this file pinned a file hash that no longer reproduced,
 which under the submission rules is the kind of thing that gets a bundle treated
 as unreproducible.
 
-The recorded bundled construction takes 8.364s; the source-only fallback takes
-84.788s on the same machine. Both reproduce TechnicalScore 0.978500. A stale
-index is never trusted.
+Construction with the bundled index takes 2.728s and peaks at 220.0MB; the
+in-process rebuild takes 24.400s and peaks at 302.1MB on the same machine.
+Both reproduce TechnicalScore 0.978500, and construction happens once per
+evaluation run rather than per session. A stale index is never trusted.
 
 Rebuild it for a given catalog with:
 
