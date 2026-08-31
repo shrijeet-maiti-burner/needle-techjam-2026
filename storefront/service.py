@@ -50,11 +50,22 @@ SCORED_TURN_BUDGET = 10
 # the least recently used conversation is dropped, not the newest.
 MAX_LIVE_SESSIONS = 64
 
-# Optional agent keywords this service will pass if the installed Agent accepts
+# Optional agent keywords this service turns on when the installed Agent accepts
 # them. Each is default-off upstream, so absence is the normal case and never an
-# error. `explain` is PR #24 (grounded customer message); `trace_enabled` is
-# PR #25 (target-blind decision trace).
-OPTIONAL_AGENT_KWARGS: Mapping[str, object] = {"explain": True, "trace_enabled": True}
+# error.
+#
+# `explain` (#24) is on: the interface renders `message`, so a grounded sentence
+# is the whole point of it.
+#
+# `trace_enabled` (#25) is deliberately NOT here. It was, and it cost 583.8ms
+# p50 per turn against 19.6ms with it off -- 30x -- because `build_turn_trace`
+# runs on every `respond`. The storefront renders none of it; the Needle Lens
+# console is where a trace is read, and it pays that cost per replayed sample
+# with a cache in front. Paying it per keystroke here bought nothing.
+#
+# An operator can still ask for it with `--set trace_enabled=true`, and
+# `_trace` reads it correctly when they do.
+OPTIONAL_AGENT_KWARGS: Mapping[str, object] = {"explain": True}
 
 
 @dataclass(slots=True)
@@ -442,20 +453,24 @@ class StorefrontService:
         return list(dict.fromkeys(terms))[:40]
 
     def _trace(self, session_id: str) -> dict[str, object] | None:
-        """The lens trace for the turn just run, when the installed Agent emits one."""
-        if "trace_enabled" not in self.enabled_optional:
+        """The lens trace for the turn just run, when the agent is emitting one.
+
+        Read through the public `trace_for` accessor. An earlier version reached
+        for an `agent.traces` mapping, which has never existed -- so the trace
+        was always `None` while the agent was being asked to build one on every
+        turn. Nothing surfaced the waste because a missing trace is a legitimate
+        state that this returns silently.
+
+        Only reached when an operator passes `--set trace_enabled=true`; see
+        `OPTIONAL_AGENT_KWARGS` for why it is not on by default.
+        """
+        if not self.agent_kwargs.get("trace_enabled"):
             return None
         try:
-            traces = getattr(self.agent, "traces", None)
-            if isinstance(traces, Mapping):
-                recorded = traces.get(session_id)
-                if isinstance(recorded, list) and recorded:
-                    return dict(recorded[-1])
-                if isinstance(recorded, Mapping):
-                    return dict(recorded)
-        except Exception:  # noqa: BLE001
+            recorded = self.agent.trace_for(session_id)
+        except Exception:  # noqa: BLE001 - a missing trace never costs the turn
             return None
-        return None
+        return dict(recorded[-1]) if recorded else None
 
     # -- interface metadata --------------------------------------------------
 

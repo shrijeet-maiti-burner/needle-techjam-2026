@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import inspect
 import json
 import tempfile
 import threading
 import unittest
 from pathlib import Path
 
+from needle.agent import Agent
 from needle.presets import PRIMARY_AGENT_KWARGS
 
 from storefront.catalog_view import CatalogView
@@ -179,6 +181,37 @@ class StorefrontServiceTest(unittest.TestCase):
             service.deviations["slate_size"],
             {"primary": PRIMARY_AGENT_KWARGS["slate_size"], "effective": 3},
         )
+
+    def test_the_decision_trace_is_not_built_unless_it_is_asked_for(self) -> None:
+        """Trace construction cost 583.8ms p50 per turn against 19.6ms without.
+
+        `build_turn_trace` runs inside every `respond`. The storefront renders
+        none of it -- the Needle Lens console is where a trace is read -- so
+        enabling it here paid 30x per turn for output nothing displayed. The
+        cost is invisible from the outside, which is why this asserts on the
+        keyword rather than on a timing that would be flaky in CI.
+        """
+        self.assertNotIn("trace_enabled", self.service.enabled_optional)
+        self.assertIsNone(self.service.agent_kwargs.get("trace_enabled"))
+        conversation = self.service.start()
+        turn = self.service.send(conversation.session_id, "leather belt")
+        self.assertIsNone(turn.trace)
+
+    def test_an_operator_can_still_ask_for_the_trace(self) -> None:
+        """And when they do it must actually arrive.
+
+        The first version read `agent.traces`, which has never existed, so the
+        trace was always None while the agent was still building one.
+        """
+        agent_accepts = "trace_enabled" in inspect.signature(Agent.__init__).parameters
+        if not agent_accepts:
+            self.skipTest("installed Agent does not support trace_enabled")
+        service = StorefrontService(self.catalog, overrides={"trace_enabled": True})
+        self.addCleanup(service.close)
+        conversation = service.start()
+        turn = service.send(conversation.session_id, "leather belt")
+        self.assertIsInstance(turn.trace, dict)
+        self.assertTrue(turn.trace)
 
     def test_an_override_the_agent_does_not_accept_fails_loudly(self) -> None:
         """A stale flag must not be silently ignored into a wrong demo."""
