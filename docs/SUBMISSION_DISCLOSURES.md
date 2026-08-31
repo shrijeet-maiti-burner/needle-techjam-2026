@@ -22,6 +22,7 @@ speak for the others.
 | development tool | PowerShell | local automation and release checks | no |
 | development tool | Google Chrome headless mode and DevTools Protocol | responsive rendered-interface QA | no |
 | development tool | AI coding assistant (Anthropic Claude, via Claude Code) | authoring and reviewing source, tests, and evidence records during development | no |
+| development tool | AI coding assistant (OpenAI Codex) | authoring, reviewing, testing, release checks, and repository integration during development | no |
 | language/runtime | Python 3.10+ | implementation and tests | yes |
 | library/framework | Python standard library, including `sqlite3` FTS5 | retrieval, state, scripts, and tests | yes |
 | API | official local Python `Agent` interface | evaluator integration | yes |

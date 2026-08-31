@@ -88,7 +88,7 @@ datasets and assets for the final Devpost description.
 | peak resident memory, in-process rebuild | 302.1 MB |
 | generated index schema and size | 9; 68,702,208 bytes |
 | generated index catalog binding | `da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67` |
-| generated index parser binding | `e8a0572f0938ed83b000869f2396de2183dbe03ed3c1c94c4491250784da23d2` |
+| generated index parser binding | `5d1bae732fbd6ab366ddc19e9cc5a963080b68e8edbaedb590bee5a18f424938` |
 | contract violations | 0 of 405 responses |
 
 Construction happens once per evaluation run, not per session or per turn, so

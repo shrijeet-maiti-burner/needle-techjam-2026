@@ -71,7 +71,7 @@ Current asset, schema 9, 68,702,208 bytes:
 | | |
 |---|---|
 | `catalog_sha256` | `da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67` |
-| `facet_parser_sha256` | `e8a0572f0938ed83b000869f2396de2183dbe03ed3c1c94c4491250784da23d2` |
+| `facet_parser_sha256` | `5d1bae732fbd6ab366ddc19e9cc5a963080b68e8edbaedb590bee5a18f424938` |
 | product signature rows | 897,046 |
 | distinct category-bound card keys | 177,768 |
 | popularity-ordered card rows | 296,951 |
