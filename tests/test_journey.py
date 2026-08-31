@@ -211,6 +211,16 @@ class JourneyPlannerTest(unittest.TestCase):
         self.assertEqual(self.plan.active_item.category, "suit")
         self.assertEqual(self.plan.active_item.constraints[0].values, ("white",))
 
+    def test_concrete_category_promotes_the_vague_placeholder(self) -> None:
+        self.planner.observe(self.plan, "I need something for a wedding", 1)
+        placeholder_id = self.plan.active_item_id
+        self.planner.observe(self.plan, "make it a suit", 2)
+        self.assertEqual(len(self.plan.items), 1)
+        self.assertEqual(self.plan.active_item_id, placeholder_id)
+        self.assertEqual(self.plan.active_item.category, "suit")
+        self.assertEqual(self.plan.active_item.label, "Suit")
+        self.assertIsNone(self.plan.active_item.relation)
+
 
 class CompatibilityTest(unittest.TestCase):
     def setUp(self) -> None:
@@ -304,6 +314,9 @@ class JourneyServiceTest(unittest.TestCase):
         self.assertEqual(turn.ask_attribute, "wearer")
         self.assertIsNone(turn.journey["items"][0]["audience"])
         self.assertEqual(turn.journey_trace["question"]["source"], "catalog audience board")
+        self.assertEqual(turn.journey_trace["question"]["catalog_coverage"], 1.0)
+        self.assertIn("Who will wear it?", turn.message)
+        self.assertNotIn("constraints I could verify", turn.message)
 
     def test_a_displayed_product_can_be_confirmed_as_the_relation_anchor(self) -> None:
         catalog = write_catalog(self)
@@ -316,6 +329,8 @@ class JourneyServiceTest(unittest.TestCase):
         self.assertEqual(selected["selected_id"], identifier)
         self.assertEqual(second.journey_trace["anchor_id"], identifier)
         self.assertEqual(second.journey_trace["anchor_status"], "confirmed")
+        self.assertNotIn(second.ask_attribute, {"brand", "category", "budget"})
+        self.assertTrue(second.journey_trace["question"]["relationship_aware"])
         with StorefrontService(catalog, journey_mode=True) as service:
             conversation = service.start("bad-selection")
             service.send(conversation.session_id, "I need shoes")
@@ -355,6 +370,20 @@ class JourneyArtifactTest(unittest.TestCase):
         self.assertIn("function renderJourney(journey)", source)
         self.assertIn("Compatibility evidence", source)
         self.assertIn("journey_trace", source)
+        self.assertIn("receipt.open = false", source)
+        self.assertIn("why needle asked", source)
+        self.assertIn('["considered", numberFormat.format(considered)]', source)
+        self.assertIn('["ruled out", numberFormat.format(ruledOut)]', source)
+        self.assertIn("catalog evidence only", source)
+        self.assertIn('id="mobile-journey-panel"', source)
+        self.assertIn("Shopping plan · ", source)
+        self.assertIn("retirePlanButtons()", source)
+        self.assertIn("button.plan-select[data-current='true']", source)
+        self.assertIn("Previous option", source)
+        self.assertNotIn("Journey overlay:", source)
+        self.assertNotIn("slate released", source)
+        self.assertNotIn("fallback unresolved", source)
+        self.assertNotIn("Product journey mode. ", source)
         self.assertNotIn("innerHTML", source)
 
 

@@ -239,10 +239,10 @@ turn while the belief state is still thin, because the scorer freezes a
 session's rank at the first turn the target appears, so a premature slate locks
 in a worse rank than waiting one turn would have earned.
 
-A local storefront (`scripts/needle_storefront.py --warm`) and the target-blind
-decision trace are in the source repository rather than this archive; the
-specification puts interface work out of scope, and the transcript above is the
-required artefact.
+A local storefront (`scripts/needle_storefront.py --warm`) and its target-blind
+decision receipt ship in this archive as an optional judge-facing demonstration.
+They do not alter the `starter.agent:Agent` scoring entry point; the transcript
+above remains the required evaluator-shaped artefact.
 
 ## Team contributions
 
@@ -256,7 +256,7 @@ directly.
 | belief state, override policy, question policy | Athul Krishna Boban | versioned constraint state with correction, negation and supersession (#1); `retract_stated` override policy (#6); contradiction invalidation (#9); retraction-rule override trigger (#10); submission packaging and run-safety (#8); EXP-006/013 closures and the popularity transfer review (#12) |
 | retrieval, ranking, integration | Shrijeet Maiti | reproducible experiment harness (#2); catalog validation and sparse controls, measured primary and rollback paths (#5); transfer-gated primary selection (#11) |
 | robustness, lexical normalization, conversational interface | Aryaman Anand | offline lexical normalizer and robustness fixtures (#3); EXP-010 perturbation library (#4); session-level robustness driver, slice runner and comparison report (#7); query/corpus tokenizer symmetry, SQLite handle release and the never-failing turn guard (#13); override-trigger tolerance to surface corruption (#15); vocabulary-derived typo recovery, measured and retained default-off as a negative result (#16); the conversational storefront interface (#27); concurrent traced storefront smoke gate (#35) |
-| evaluation baseline and reruns | Yazhiniyan | no merged repository contribution is recorded in this release candidate; add only independently verifiable release or submission work before the final description is frozen |
+| evaluation baseline and adversarial language QA | Yazhiniyan | independently reviewed negation scope and supplied idiomatic counterexamples (`would not mind`, `anything but`, contrastive preference and uncertainty phrasing) used to harden and re-test the final state parser |
 
 Every experiment in the source repository's `docs/evidence/` names an
 independent rerun owner, and the

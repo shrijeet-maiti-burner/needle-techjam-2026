@@ -660,20 +660,21 @@ class StorefrontService:
                 prefix = say["start"].format(category=label)
         elif anchor_id:
             prefix = (
-                f"I kept the earlier item in your plan and ranked these {label} "
-                f"against {'your selected product' if anchor_confirmed else 'its current top proposal'}. "
-                "Compatibility is confidence-labelled "
-                "where the metadata is incomplete."
+                f"I ranked these {label} against "
+                f"{'your selected item' if anchor_confirmed else 'the current top match'} "
+                "using the compatibility evidence available in the catalog."
             )
         elif action is JourneyAction.EXPLORE:
             prefix = (
-                f"I kept your {label} intent and diversified the slate across the "
-                "catalog facets still available."
+                f"I found {len(reranked.products)} varied matches for your {label} search."
             )
         elif action is JourneyAction.CREATE and len(plan.items) > 1:
-            prefix = f"I added {label} as a separate line item without discarding the rest of your plan."
+            prefix = f"I added {label} as a separate item without losing the rest of your plan."
         else:
-            prefix = f"I updated the {label} line item from the constraints I could verify in the catalog."
+            prefix = (
+                f"I found {len(reranked.products)} strong catalog matches "
+                f"for your {label} search."
+            )
         suffix = question_message.strip()
         return f"{prefix} {suffix}".strip()
 
@@ -748,8 +749,20 @@ class StorefrontService:
                     decision.attribute,
                 )
 
-            selected = max(board, key=relationship_value) if anchor_id else board[0]
-            if not selected.asks:
+            if anchor_id:
+                relationship_board = [
+                    decision
+                    for decision in board
+                    if decision.attribute in {"style", "use_case", "color", "material"}
+                ]
+                selected = (
+                    max(relationship_board, key=relationship_value)
+                    if relationship_board
+                    else None
+                )
+            else:
+                selected = board[0]
+            if selected is not None and not selected.asks:
                 selected = None
 
         if selected is not None:
@@ -757,6 +770,15 @@ class StorefrontService:
             payload["source"] = "released-candidate clarification board"
             payload["relationship_aware"] = bool(anchor_id)
             return self._render_question(payload, language=language), payload
+
+        if anchor_id:
+            payload = {
+                "asks": False,
+                "source": "relationship-aware stop decision",
+                "reason": "no unanswered compatibility facet improves the released candidates",
+                "relationship_aware": True,
+            }
+            return "", payload
 
         fallback = self._trace_question_decision(trace)
         if fallback is None:
@@ -790,7 +812,11 @@ class StorefrontService:
         if len(counts) < 2:
             return None
         total = len(candidate_ids)
-        expected_remaining = sum(size * size for size in counts.values()) / max(1, total)
+        known_count = sum(counts.values())
+        unknown_count = max(0, total - known_count)
+        expected_remaining = (
+            sum(size * size for size in counts.values()) + unknown_count * unknown_count
+        ) / max(1, total)
         expected_reduction = max(0.0, 1.0 - expected_remaining / max(1, total))
         interaction_cost = 1.0 / (max(0, SCORED_TURN_BUDGET - turn_number) + 1.0)
         net_value = expected_reduction - interaction_cost
@@ -800,8 +826,12 @@ class StorefrontService:
             "attribute": "wearer",
             "options": tuple(sorted(counts.items(), key=lambda row: (-row[1], row[0]))[:4]),
             "candidate_count": total,
+            "known_count": known_count,
+            "unknown_count": unknown_count,
+            "distinct_answer_groups": len(counts) + int(bool(unknown_count)),
             "expected_remaining": round(expected_remaining, 6),
             "expected_candidate_reduction": round(expected_reduction, 6),
+            "catalog_coverage": round(known_count / max(1, total), 6),
             "interaction_cost": round(interaction_cost, 6),
             "net_value": round(net_value, 6),
             "asks": True,
@@ -849,11 +879,11 @@ class StorefrontService:
                 if choices
                 else prompt
             )
+        prompt = "Who will wear it?" if attribute == "wearer" else f"Which {attribute} matters most?"
         return (
-            f"Which {attribute} would help most? {choices}. "
-            "You can also answer outside these options."
+            f"{prompt} {choices}. You can also answer outside these options."
             if choices
-            else f"Which {attribute} would help most?"
+            else prompt
         )
 
     # -- introspection -------------------------------------------------------

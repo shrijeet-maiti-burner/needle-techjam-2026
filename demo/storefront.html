@@ -131,6 +131,7 @@
     .opening p { margin: 0 0 18px; color: var(--muted); max-width: 54ch; overflow-wrap: anywhere; }
     .chips { display: flex; flex-wrap: wrap; gap: 8px; }
     .chip {
+      min-height: 40px;
       padding: 7px 12px;
       border-radius: 999px;
       border: 1px solid var(--line);
@@ -144,6 +145,8 @@
     }
     .chip:hover { color: var(--lime); border-color: var(--lime); }
     .chip:active { transform: translateY(1px); }
+    .chip:disabled { color: var(--dim); border-color: var(--line); cursor: default; opacity: .72; }
+    .chip:disabled:active { transform: none; }
 
     /* messages */
     .row { display: flex; }
@@ -189,9 +192,9 @@
       overflow-wrap: anywhere;
     }
 
-    /* A compact rendering of the exact target-blind trace emitted by the
-       selected Agent. This is an audit receipt, not a second explanation
-       policy: every number below arrives on the same response as the slate. */
+    /* A compact shopper-facing summary of the target-blind decision evidence.
+       The detailed engine trace stays in the API; the interface shows only
+       facts a judge can interpret without knowing the retrieval internals. */
     details.receipt {
       border: 1px solid rgba(85, 232, 207, .24);
       border-radius: 10px;
@@ -206,9 +209,10 @@
       padding: 9px 11px;
       cursor: pointer;
       color: var(--aqua);
-      font: 10.5px/1.4 "SFMono-Regular", Consolas, monospace;
-      letter-spacing: .055em;
-      text-transform: uppercase;
+      font-size: 12px;
+      font-weight: 650;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
       list-style: none;
     }
     details.receipt summary::-webkit-details-marker { display: none; }
@@ -221,6 +225,7 @@
       border: 1px solid rgba(85, 232, 207, .34);
       border-radius: 5px;
       color: var(--aqua);
+      flex: 0 0 auto;
     }
     details.receipt[open] summary::before { content: "−"; }
     .receipt-body {
@@ -255,21 +260,6 @@
       font-weight: 650;
       overflow-wrap: anywhere;
     }
-    .funnel {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      flex-wrap: wrap;
-      color: var(--dim);
-      font: 10px/1.4 "SFMono-Regular", Consolas, monospace;
-    }
-    .funnel-step {
-      padding: 3px 6px;
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      color: var(--muted);
-      background: rgba(8, 12, 11, .35);
-    }
     .receipt-note {
       color: var(--muted);
       font-size: 11.5px;
@@ -285,6 +275,7 @@
 
     @media (max-width: 600px) {
       .receipt-grid { grid-template-columns: 1fr 1fr; }
+      .chip, button.send, button.ghost { min-height: 44px; }
     }
 
     /* ---------- product cards ---------- */
@@ -466,6 +457,48 @@
     .rail { display: none; min-height: 0; overflow-y: auto; padding-bottom: 18px; }
     @media (min-width: 1080px) { .rail { display: block; } }
 
+    .mobile-journey {
+      display: none;
+      width: min(780px, calc(100% - 8px));
+      margin: 10px auto 0;
+      border: 1px solid rgba(201, 255, 100, .30);
+      border-radius: 10px;
+      background: rgba(18, 24, 22, .96);
+      overflow: hidden;
+    }
+    .mobile-journey[hidden] { display: none; }
+    .mobile-journey summary {
+      min-height: 44px;
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      color: var(--lime);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 650;
+      list-style: none;
+      overflow-wrap: anywhere;
+    }
+    .mobile-journey summary::-webkit-details-marker { display: none; }
+    .mobile-journey summary::before { content: "+"; margin-right: 8px; color: var(--aqua); }
+    .mobile-journey[open] summary::before { content: "−"; }
+    .mobile-journey .panel-body { padding-top: 4px; border-top: 1px solid var(--line); }
+    @media (max-width: 1079px) { .mobile-journey { display: block; } }
+
+    @media (max-width: 600px) {
+      .shell { width: min(100% - 20px, 1280px); gap: 10px; padding-top: 10px; }
+      header { padding-bottom: 9px; gap: 8px; }
+      .brand h1 { font-size: 21px; }
+      .eyebrow { display: none; }
+      .header-facts { gap: 10px; font-size: 10.5px; }
+      .thread { padding-top: 12px; }
+      .thread-inner { gap: 16px; }
+      .opening { padding-top: 14px; }
+      .composer-wrap { padding: 8px 0 10px; }
+      .composer-hint span:first-child { display: none; }
+      .composer-hint { justify-content: flex-end; }
+    }
+
     .panel {
       border: 1px solid var(--line);
       border-radius: var(--radius);
@@ -571,6 +604,11 @@
 
       <div class="notice warn" id="deviation" hidden></div>
 
+      <details class="mobile-journey" id="mobile-journey-panel" hidden>
+        <summary id="mobile-journey-summary">Shopping plan</summary>
+        <div class="panel-body" id="mobile-journey"></div>
+      </details>
+
       <div class="thread" id="thread" aria-live="polite" aria-label="Conversation">
         <div class="thread-inner" id="thread-inner">
           <div class="opening" id="opening">
@@ -644,6 +682,9 @@
       reset: document.getElementById("reset"),
       journeyPanel: document.getElementById("journey-panel"),
       journey: document.getElementById("journey"),
+      mobileJourneyPanel: document.getElementById("mobile-journey-panel"),
+      mobileJourneySummary: document.getElementById("mobile-journey-summary"),
+      mobileJourney: document.getElementById("mobile-journey"),
       beliefs: document.getElementById("beliefs"),
       intentVersion: document.getElementById("intent-version"),
       deviation: document.getElementById("deviation"),
@@ -662,6 +703,7 @@
     let pending = false;
     let budgetExhausted = false;
     let lastIntentVersion = 1;
+    let mobilePlanRevealed = false;
 
     /* ---------- dom helpers ----------
        Everything user- or catalog-supplied goes in through textContent. The
@@ -754,6 +796,14 @@
       return wrap;
     }
 
+    function retirePlanButtons() {
+      document.querySelectorAll("button.plan-select[data-current='true']").forEach((button) => {
+        button.dataset.current = "false";
+        button.disabled = true;
+        if (button.textContent === "Use in plan") button.textContent = "Previous option";
+      });
+    }
+
     function renderCard(card, index, spotlight) {
       const wrap = node("div", "card" + (spotlight ? " spotlight" : ""));
 
@@ -835,8 +885,9 @@
         wrap.appendChild(more);
       }
       if (config && config.mode === "journey") {
-        const select = node("button", "chip", "Use in plan");
+        const select = node("button", "chip plan-select", "Use in plan");
         select.type = "button";
+        select.dataset.current = "true";
         select.addEventListener("click", async () => {
           select.disabled = true;
           try {
@@ -845,7 +896,12 @@
               parent_asin: card.parent_asin,
             });
             renderJourney(selected.journey);
+            document.querySelectorAll("button.plan-select[data-current='true']").forEach((button) => {
+              button.disabled = false;
+              button.textContent = "Use in plan";
+            });
             select.textContent = "Selected";
+            select.disabled = true;
           } catch (error) {
             select.disabled = false;
             showError(error && error.message ? error.message : String(error));
@@ -856,49 +912,68 @@
       return wrap;
     }
 
-    function renderDecisionReceipt(trace, turnNumber, journeyTrace) {
+    function renderDecisionReceipt(trace, _turnNumber, journeyTrace) {
       if (!trace || typeof trace !== "object") return null;
 
       const receipt = node("details", "receipt");
-      receipt.open = turnNumber === 1;
+      receipt.open = false;
       if (trace.trace_error) {
-        receipt.appendChild(node("summary", "", "Decision trace unavailable"));
+        receipt.appendChild(node("summary", "", "why needle decided · evidence unavailable"));
         const body = node("div", "receipt-body");
-        body.appendChild(node("div", "receipt-note", trace.trace_error));
+        body.appendChild(node("div", "receipt-note", "The recommendation still completed, but its evidence receipt was unavailable."));
         receipt.appendChild(body);
         return receipt;
       }
 
-      const certificate = trace.ambiguity_certificate || {};
       const decision = trace.decision || {};
+      const certificate = trace.ambiguity_certificate || {};
       const policy = trace.question_policy || {};
       const question = journeyTrace && journeyTrace.question
         ? journeyTrace.question
         : (policy.human_message_decision || {});
-      const candidateCount = Number(
+      const baseShown = Array.isArray(decision.recommendations)
+        ? decision.recommendations.length
+        : Number(decision.output_limit || 0);
+      const questionCount = Number(
         question.candidate_count || certificate.candidate_count || 0
       );
-      const questionLabel = question.asks && question.attribute
-        ? "asked " + human(question.attribute)
-        : "no extra question";
-      const reductionLabel = question.asks
-        ? percent(question.expected_candidate_reduction) + " expected reduction"
-        : human(question.reason || "stopping rule");
+      const considered = journeyTrace
+        ? Number(journeyTrace.merged_candidates || questionCount)
+        : questionCount;
+      const ruledOut = journeyTrace
+        ? Number(journeyTrace.filtered_candidates || 0)
+        : 0;
+      const eligible = journeyTrace ? Math.max(0, considered - ruledOut) : considered;
+      const shown = journeyTrace
+        ? Number(journeyTrace.released_candidates || questionCount || baseShown)
+        : baseShown;
+      const expectedRemaining = Number(question.expected_remaining || shown);
+
       receipt.appendChild(node(
         "summary",
         "",
-        "Why this turn · " + numberFormat.format(candidateCount) +
-          " candidates · " + questionLabel + " · " + reductionLabel
+        question.asks
+          ? "why needle asked · " + human(question.attribute) + " · " +
+              numberFormat.format(shown) + " to about " + expectedRemaining.toFixed(1) + " options"
+          : "why needle recommended now · " + numberFormat.format(shown) + " catalog matches"
       ));
 
       const body = node("div", "receipt-body");
       const grid = node("div", "receipt-grid");
-      [
-        ["ambiguity", human(certificate.status)],
-        ["candidates", numberFormat.format(candidateCount)],
-        ["decision path", human(decision.path)],
-        ["slate released", numberFormat.format(Number(decision.output_limit || 0))],
-      ].forEach(([label, value]) => {
+      const stats = journeyTrace
+        ? [
+            ["considered", numberFormat.format(considered)],
+            ["ruled out", numberFormat.format(ruledOut)],
+            ["eligible", numberFormat.format(eligible)],
+            ["shown", numberFormat.format(shown)],
+          ]
+        : [
+            ["candidate pool", numberFormat.format(questionCount)],
+            ["shown", numberFormat.format(shown)],
+            ["question", question.asks ? human(question.attribute) : "none"],
+            ["expected after answer", question.asks ? expectedRemaining.toFixed(1) : "not needed"],
+          ];
+      stats.forEach(([label, value]) => {
         const stat = node("div", "receipt-stat");
         stat.appendChild(node("div", "r-label", label));
         stat.appendChild(node("div", "r-value", value));
@@ -906,80 +981,65 @@
       });
       body.appendChild(grid);
 
-      if (journeyTrace && typeof journeyTrace === "object") {
-        const journeyNote = node("div", "receipt-note");
-        journeyNote.appendChild(node("b", "", "Journey overlay: "));
-        journeyNote.appendChild(node(
-          "span",
-          "",
-          numberFormat.format(Number(journeyTrace.merged_candidates || 0)) +
-            " merged candidates · " +
-            numberFormat.format(Number(journeyTrace.filtered_candidates || 0)) +
-            " rejected by category, constraints or relationship evidence · " +
-            human(journeyTrace.rerank_reason)
-        ));
-        body.appendChild(journeyNote);
-        const journeyDecision = node("div", "receipt-note");
-        journeyDecision.appendChild(node("b", "", "Journey decision: "));
-        journeyDecision.appendChild(node(
-          "span",
-          "",
-          human(journeyTrace.anchor_status || "no relation anchor") +
-            " · " + human(
-              journeyTrace.question && journeyTrace.question.source
-                ? journeyTrace.question.source
-                : "catalog stop decision"
-            )
-        ));
-        body.appendChild(journeyDecision);
-      }
-
-      const funnelRows = Array.isArray(trace.candidate_funnel)
-        ? trace.candidate_funnel.filter((row) => row && typeof row === "object")
-        : [];
-      if (funnelRows.length) {
-        const funnel = node("div", "funnel");
-        funnelRows.forEach((row, index) => {
-          if (index) funnel.appendChild(node("span", "", "→"));
-          funnel.appendChild(node(
-            "span",
-            "funnel-step",
-            human(row.stage) + " " + numberFormat.format(Number(row.count || 0))
-          ));
-        });
-        body.appendChild(funnel);
-      }
-
       if (question.asks) {
+        const options = Array.isArray(question.options)
+          ? question.options
+              .filter((option) => Array.isArray(option) && option.length >= 2)
+              .map((option) => human(option[0]) + " " + numberFormat.format(Number(option[1] || 0)))
+          : [];
         const note = node("div", "receipt-note");
-        note.appendChild(node("b", "", "Why ask " + human(question.attribute) + ": "));
+        note.appendChild(node("b", "", "Why this question: "));
         note.appendChild(node(
           "span",
           "",
-          percent(question.catalog_coverage) + " of this candidate pool can answer it; " +
-            "the expected residual set is " +
-            Number(question.expected_remaining || 0).toFixed(1) + "."
+          (options.length ? "the current options split into " + options.join(", ") + ". " : "") +
+            "One answer is expected to remove " +
+            percent(question.expected_candidate_reduction) +
+            " of the remaining ambiguity."
         ));
         body.appendChild(note);
       } else {
-        body.appendChild(node(
-          "div",
-          "receipt-note",
-          "The stopping rule found no positive-value clarification for this turn."
+        const note = node("div", "receipt-note");
+        note.appendChild(node("b", "", "Why stop asking: "));
+        note.appendChild(node(
+          "span",
+          "",
+          "no unanswered catalog detail was expected to improve the current slate."
         ));
+        body.appendChild(note);
       }
+
+      if (journeyTrace && journeyTrace.anchor_status === "confirmed") {
+        const relation = node("div", "receipt-note");
+        relation.appendChild(node("b", "", "Related-item evidence: "));
+        relation.appendChild(node(
+          "span",
+          "",
+          "compatibility was ranked against the product you selected."
+        ));
+        body.appendChild(relation);
+      } else if (journeyTrace && journeyTrace.anchor_status === "top proposal") {
+        const relation = node("div", "receipt-note");
+        relation.appendChild(node("b", "", "Related-item evidence: "));
+        relation.appendChild(node(
+          "span",
+          "",
+          "compatibility currently uses the top match; selecting a product will make the anchor explicit."
+        ));
+        body.appendChild(relation);
+      }
+
       body.appendChild(node(
         "div",
         "receipt-proof",
-        journeyTrace
-          ? "target-blind · frozen candidate generator · catalog-derived journey overlay"
-          : "target-blind · catalog-derived · same agent and response as evaluation"
+        "catalog evidence only · stated hard constraints preserved · no evaluator target access"
       ));
       receipt.appendChild(body);
       return receipt;
     }
 
     function renderTurn(turn) {
+      retirePlanButtons();
       const wrap = node("div", "agent");
 
       const meta = node("div", "agent-meta");
@@ -1027,16 +1087,10 @@
       return wrap;
     }
 
-    function renderJourney(journey) {
-      if (!journey || journey.mode !== "journey" || !Array.isArray(journey.items)) {
-        el.journeyPanel.hidden = true;
-        clear(el.journey);
-        return;
-      }
-      el.journeyPanel.hidden = false;
-      clear(el.journey);
+    function renderJourneyInto(destination, journey) {
+      clear(destination);
       const context = Array.isArray(journey.global_context) ? journey.global_context : [];
-      el.journey.appendChild(node(
+      destination.appendChild(node(
         "div",
         "journey-context",
         (journey.language && journey.language !== "en" ? "language · " + journey.language + " · " : "") +
@@ -1077,7 +1131,28 @@
         if (groups.childNodes.length) box.appendChild(groups);
         items.appendChild(box);
       });
-      el.journey.appendChild(items);
+      destination.appendChild(items);
+    }
+
+    function renderJourney(journey) {
+      if (!journey || journey.mode !== "journey" || !Array.isArray(journey.items)) {
+        el.journeyPanel.hidden = true;
+        el.mobileJourneyPanel.hidden = true;
+        el.mobileJourneyPanel.open = false;
+        clear(el.journey);
+        clear(el.mobileJourney);
+        return;
+      }
+      el.journeyPanel.hidden = false;
+      el.mobileJourneyPanel.hidden = false;
+      const labels = journey.items.map((item) => item.label || item.category || "Item");
+      el.mobileJourneySummary.textContent = "Shopping plan · " + labels.join(" → ");
+      if (labels.length > 1 && !mobilePlanRevealed) {
+        el.mobileJourneyPanel.open = true;
+        mobilePlanRevealed = true;
+      }
+      renderJourneyInto(el.journey, journey);
+      renderJourneyInto(el.mobileJourney, journey);
     }
 
     function renderBeliefs(beliefs) {
@@ -1139,11 +1214,7 @@
       const names = Object.keys(deviations);
       const parts = [];
       if (data.mode === "journey") {
-        parts.push([
-          "Product journey mode. ",
-          "The frozen primary agent generates candidates; the visible multi-item planner and compatibility reranker are an explicitly separate catalog-grounded layer.",
-        ]);
-        el.openingCopy.textContent = "Build a multi-item shopping plan in ordinary language. Candidate generation comes from the frozen primary agent; journey routing, alternatives and compatibility evidence are displayed separately.";
+        el.openingCopy.textContent = "Build a multi-item shopping plan in ordinary language. Needle keeps each item and shows the catalog evidence behind its questions and recommendations.";
       } else {
         el.openingCopy.textContent = "Every reply comes from the selected primary agent reading the released catalog — the exact session shape used for the measured score.";
       }
@@ -1223,6 +1294,7 @@
       config = data.config;
       budgetExhausted = false;
       lastIntentVersion = 1;
+      mobilePlanRevealed = false;
       el.input.disabled = false;
       el.input.placeholder = "Describe what you are looking for...";
       el.send.disabled = false;

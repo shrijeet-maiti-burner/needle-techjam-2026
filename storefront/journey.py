@@ -261,6 +261,21 @@ class DeterministicJourneyPlanner:
             if existing is not None:
                 plan.active_item_id = existing.item_id
                 continue
+            # A vague opening needs a retrieval surface before the shopper has
+            # named a product type. Once they do, promote that placeholder in
+            # place. Keeping it as a separate "Current item" creates a phantom
+            # plan node and makes the real item appear to complement nothing.
+            if (
+                previous is not None
+                and previous.category == "item"
+                and previous.label == "Current item"
+                and previous.selected_id is None
+            ):
+                previous.category = category.lower()
+                previous.label = category.strip().title()
+                plan.active_item_id = previous.item_id
+                created.append(previous.item_id)
+                continue
             # A new product type inside a continuing session is a separate line
             # item, not an implicit replacement.  Explicit restart language was
             # handled above, so linking it to the prior active item is the
