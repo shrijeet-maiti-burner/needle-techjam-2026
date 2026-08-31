@@ -7,12 +7,15 @@ against the belief state, not a leaderboard run.
 Base: `origin/main` at `4e36df6`. Every input below is exact and reproducible
 through `needle.state.StateStore` or `needle.state.extract_constraints`.
 
-Four findings were structural and are fixed on this branch with tests. The
-rest are recorded and deliberately not fixed, for the reasons given.
+Seven findings were structural and are fixed on this branch with tests. One more
+was implemented, measured and then **rejected on the measurement**, which is
+recorded in full below. The rest are recorded and deliberately not fixed, for
+the reasons given.
 
-F3 was found while measuring F4, not by a probe: chasing an in-message budget
-correction is what surfaced three public sessions extracting a price out of a
-size string.
+Two of the seven were found while measuring another, not by a probe. Chasing an
+in-message budget correction surfaced three public sessions extracting a price
+from a size string (F3), and building the rejected experiment below surfaced
+the merge-order defect (F7).
 
 ## Fixed
 
@@ -131,7 +134,116 @@ more than" is a budget idiom that the negation rule reads as an exclusion, and
 separating the two needs an idiom list, so that case is left exactly as it was
 rather than half-fixed.
 
-### What the fixes cost
+### F5 A retraction verb kept a false object
+
+```
+"Drop it in my basket if it's under $50."           -> override
+"Cancel that shipping upgrade, not my preference."  -> override
+"Drop that jacket into my cart."                    -> override
+"Skip that page and show me the next one."          -> override
+```
+
+A bare pronoun is only a reference to the conversation when it ends the clause.
+"Cancel that shipping upgrade" uses "that" as a determiner introducing a noun
+phrase; "Drop it in my basket" uses "it" as the object of a preposition.
+Requiring the pronoun to be clause final separates both from "ignore that."
+without needing to know what a noun is.
+
+The trailing degree adverbs ("too", "also", "entirely", "completely", "all",
+"as well") are the one word list in this module rather than a rule. They are
+there because "ignore that too" is ordinary and losing it costs a retraction.
+Every other `_PRIOR` branch is unambiguous and untouched, including "my earlier
+preference", which is what the released simulator sends. Both simulator
+templates are asserted in the tests.
+
+### F6 The negation was on the auxiliary, not on one chosen verb
+
+```
+"I don't like black."     color:black POSITIVE  -> NEGATIVE
+"I don't need leather."   material:leather POSITIVE -> NEGATIVE
+"I dont like black."      color:black POSITIVE  -> NEGATIVE
+"I never wear black."     color:black POSITIVE  -> NEGATIVE
+"anything except black"   color:black POSITIVE  -> NEGATIVE
+```
+
+`NEGATION_RE` carried `don'?t want`, hardcoding one verb. Matching the negated
+auxiliary covers every verb at once.
+
+The blocker recorded last pass was that this inverts idioms of indifference.
+The resolution is that they were in the wrong place: "I don't mind black" is
+neither a request for black nor a ban on it, it is the customer declining to
+constrain, which is exactly what `NO_PREFERENCE_RE` already means. Moving
+"don't mind", "don't care", "either is fine" and "not bothered" there makes the
+negation rule safe to generalise, and it is a better answer than an exemption
+list because those phrases now yield **no constraint at all** rather than a
+wrong one.
+
+Still missed on purpose: `"I hate black"` and `"black is out"`. Catching those
+means a list of opinion verbs rather than a rule.
+
+### F7 Disclosures merged in phrase-length order, not reading order
+
+Found while implementing the rejected experiment below, and kept because it is
+a defect on its own.
+
+`_find_values` walks the vocabulary longest phrase first, so that "stainless
+steel" beats "steel". That leaves results in an order unrelated to what the
+customer said, and a later positive replaces the earlier one, so **phrase
+length was deciding which value survives a correction**:
+
+```
+"I want linen, actually cotton."   kept cotton   (right, by luck)
+"I want cotton, actually linen."   kept linen    (right, by luck)
+```
+
+Both are right only because "cotton" happens to be longer. Swap in a pair
+where the corrected-to value is the shorter word and the correction inverts.
+Disclosures are now sorted by offset before merging.
+
+## Implemented, measured, rejected
+
+### Coordinated values on one attribute
+
+```
+"I want a black and white striped shirt."  -> color:white only
+```
+
+Positives supersede by attribute, so the second colour replaces the first. The
+rule is right for a correction and wrong for a conjunction, and punctuation
+separates the two: coordination joins, a terminator corrects. That is the same
+question `NEGATION_SCOPE_END_RE` already answers, so it was cheap to build, and
+it worked:
+
+```
+"I want a black and white striped shirt."  -> black POSITIVE, white POSITIVE
+"I want cotton, actually linen."           -> linen POSITIVE
+"A black and white shirt." then "Actually make it all red."  -> red POSITIVE
+```
+
+**It was still rejected.** Clean public score was unchanged, but three
+robustness slices moved:
+
+| slice | MRR main -> arm | MTTC main -> arm |
+|---|---|---|
+| `attribute_swap` | 0.871722 -> 0.869222 | 3.015 -> 3.010 |
+| `negation` | 0.981339 -> 0.976839 | 2.285 -> 2.270 |
+| `typo` | 0.959597 -> 0.955097 | 2.765 -> 2.755 |
+
+Hit rate and target recall are unchanged everywhere; the trade is a slightly
+earlier commit at a slightly worse rank. Accumulating a second positive raises
+`len(active_constraints())`, which is read by the slate-width gate, and the
+perturbed messages contain coordination that the clean disclosures do not.
+
+Bisected to confirm the attribution: with the coordination rule disabled and
+everything else on this branch left in place, the robustness report is
+byte-identical to `origin/main` across all sixteen slices. So the cost is this
+change alone, and F5, F6 and F7 are clean.
+
+The benefit was a more truthful belief state with no consumer today, against a
+measured cost in a panel we gate on. Reverted, and the machinery removed rather
+than left switched off.
+
+## What the fixes cost
 
 Nothing measurable, in either direction.
 
@@ -144,7 +256,7 @@ Nothing measurable, in either direction.
 | robustness `comparison` | | byte-identical |
 | robustness `gate_failures` | 6 pre-existing | identical, none added |
 | per-session `best_rank`, `first_hit_turn` | | identical on all 200 |
-| tests | 379 | 398 |
+| tests | 379 | 406 |
 
 That the robustness report is byte-identical is expected for F1 and F2, and
 worth stating plainly: **nothing in retrieval reads `excluded_values` today**.
@@ -164,37 +276,20 @@ that they win anything.
 
 ## Recorded, not fixed
 
-### F5 Verb-sense ambiguity still fires a false override
+### A comma-separated list of values still collapses to the last one
 
 ```
-"Drop it in my basket if it's under $50."      -> override
-"Cancel that shipping upgrade, not my preference." -> override
+"75% Polyester, 20% Rayon, 5% Spandex"  -> material:spandex only
+"Red, white and blue please."           -> color:blue only
 ```
 
-`drop` and `cancel` are retraction verbs here only by coincidence of sense.
-Distinguishing them needs a list of exempt objects, which is a phrase list, so
-it is out of scope for this pass. Lower severity than F2: neither reads as the
-customer reinforcing a requirement.
+Unchanged behaviour rather than a new limitation, and the same root as the
+rejected experiment above. Making a comma coordinate would keep every material
+in a composition string active at once, which raises the constraint count the
+slate-width gate reads on most public sessions. That is a larger change than
+the one already measured as costly, so it was not attempted.
 
-### F6 Negation surfaces that carry no negator the extractor knows
-
-```
-"I don't like black."     -> color:black POSITIVE
-"I don't need leather."   -> material:leather POSITIVE
-"I never wear black."     -> color:black POSITIVE
-"anything except black"   -> color:black POSITIVE
-"black is out"            -> color:black POSITIVE
-"I hate black."           -> color:black POSITIVE
-```
-
-`NEGATION_RE` carries `don'?t want`, which hardcodes one verb where the
-negation is actually on the auxiliary. Generalising to `(?:do|does|did)n't
-<verb>` is a grammar rule and would be in scope, but it inverts idioms that
-mean the opposite: `I don't mind black` and `I wouldn't say no to black` would
-both become exclusions. Correcting that needs an exemption list. Left alone
-rather than half-done under a freeze.
-
-### F7 Mixed-language requests reach the belief state empty
+### Mixed-language requests reach the belief state empty
 
 ```
 "Busco unas botas de cuero."                    -> no constraints
@@ -211,23 +306,11 @@ language.py`, its two test files and the `set_language` wiring did not survive
 the squash into #28, and nothing on main references them. That is a merge
 decision for the release owner, not a red-team fix.
 
-### F8 Coordinated values on one attribute collapse to the last one
-
-```
-"I want a black and white striped shirt."  -> color:white only
-```
-
-Positives supersede by attribute, so the second colour replaces the first.
-This is the designed rule and it is right for a correction; it is wrong for a
-genuine conjunction, and the two are not separable from the surface. Changing
-it would need multi-valued positive constraints, which is a data-model change
-and not a freeze-week edit.
-
 ## Reproduction
 
 ```bash
-python3 -m pytest tests/test_negation_scope.py \
-    tests/test_negated_override_trigger.py tests/test_budget_extraction.py
+python3 -m pytest tests/test_negation_scope.py tests/test_budget_extraction.py \
+    tests/test_negated_override_trigger.py tests/test_human_state_surfaces.py
 python3 scripts/evaluate.py --output results.json
 python3 scripts/run_robustness.py --agent starter.agent:Agent
 ```

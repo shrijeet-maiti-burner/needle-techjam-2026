@@ -20,9 +20,22 @@ from needle.semantic import fold_diacritics, repair_trigger_text, trigger_keywor
 # shown-candidate set, and discards belief, so this errs toward missing an
 # override rather than inventing one.
 _RETRACT = r"(?:ignore|disregard|forget|scratch|scrap|cancel|undo|drop)"
+# A bare pronoun is only a reference to the conversation when it ends the
+# clause. "Cancel that shipping upgrade" and "Drop it in my basket" use the same
+# words as a retraction and mean nothing of the kind: in the first "that" is a
+# determiner introducing a noun phrase, in the second "it" is the object of a
+# preposition. Requiring the pronoun to be clause final separates both from
+# "ignore that." without needing to know what a noun is.
+#
+# The trailing group is a closed class of degree adverbs, and is the one place
+# in this module that is a word list rather than a rule. It is here because
+# "ignore that too" is ordinary and losing it costs a retraction. Everything
+# else `_PRIOR` can match is already unambiguous and is left alone, including
+# "my earlier preference", which is what the released simulator sends.
+_PRONOUN_TAIL = r"(?:\s+(?:too|also|entirely|completely|all|as\s+well))?\s*(?=[.,;!?]|$)"
 _PRIOR = (
     r"(?:"
-    r"that|it|this"
+    rf"(?:that|it|this){_PRONOUN_TAIL}"
     r"|(?:the\s+)?last\s+(?:thing|one|bit|request|message)?"
     r"|what\s+i\s+(?:said|told\s+you|asked\s+for)"
     r"|my\s+(?:earlier\s+|previous\s+|prior\s+|old\s+|last\s+|initial\s+|first\s+)?"
@@ -93,9 +106,15 @@ OVERRIDE_POLICIES = frozenset(
 # Scoped to its own clause rather than the whole message, so a mixed turn
 # such as "no preference for color, but cotton is required" still yields the
 # material constraint. Only the declined clause is suppressed.
+# "I don't mind black" is not an exclusion of black, and it is not a request
+# for black either. It is the customer declining to constrain, which is what
+# this pattern already means, so the indifference verbs belong here rather than
+# as exceptions carved out of the negation rule below. Keeping them on this
+# side is what lets that rule generalise safely.
 NO_PREFERENCE_RE = re.compile(
     r"\b(?:no preference|don'?t have (?:a|an|any|an additional) preference|"
-    r"use your judgment|whatever you recommend|not fussed|no strong feelings)\b",
+    r"use your judgment|whatever you recommend|not fussed|no strong feelings|"
+    r"do(?:es)?n'?t (?:mind|care)|either (?:is fine|way)|not bothered)\b",
     re.IGNORECASE,
 )
 # A clause ends at the next separator or the end of the message.
@@ -140,8 +159,23 @@ def _declined_attributes(message: str, regions: list[tuple[int, int]]) -> set[st
 # Negation is only trusted immediately before the matched value. Anything
 # looser stays positive rather than silently creating an exclusion, because a
 # wrong hard exclusion can remove the target for the rest of the session.
+# `don'?t want` used to be the only contracted form here, which hardcoded one
+# verb where the negation is actually carried by the auxiliary: "I don't like
+# black" and "I don't need leather" both read as requests for those values.
+# Matching the negated auxiliary itself covers every verb at once.
+#
+# That generalisation is only safe because indifference is handled above. "I
+# don't mind black" reaches `_declined_regions` first and the clause is
+# suppressed, so it never becomes an exclusion.
+#
+# "never" and "except" are here on the same grammatical footing: one is a
+# negative adverb, the other a preposition of exclusion. Semantic exclusions
+# such as "I hate black" or "black is out" are deliberately absent, because
+# recognising those means a list of opinion verbs rather than a rule.
 NEGATION_RE = re.compile(
-    r"\b(?:no|not|without|non|avoid|skip|dislike|don'?t want|nothing)\b",
+    r"\b(?:no|not|without|non|avoid|skip|dislike|nothing|never|except"
+    r"|(?:do|does|did|ca|wo|sha|is|are|was|were|has|have|had"
+    r"|could|would|should|must)\s?n[’']?t)\b",
     re.IGNORECASE,
 )
 NEGATION_WINDOW = 24
@@ -153,9 +187,10 @@ NEGATION_WINDOW = 24
 #
 # Terminators and contrast end the scope; coordination does not. "and" is
 # deliberately absent: it continues the negated list rather than separating
-# from it, so "no black and navy" must keep both exclusions. This is why the
-# rule is not `CLAUSE_END_RE`, which answers a different question (where a
-# no-preference clause stops) and does treat "and" as a boundary.
+# from it, so
+# "no black and navy" must keep both exclusions. This is why the rule is not
+# `CLAUSE_END_RE`, which answers a different question (where a no-preference
+# clause stops) and does treat "and" as a boundary.
 NEGATION_SCOPE_END_RE = re.compile(r"[;,.]|\bbut\b", re.IGNORECASE)
 
 MATERIALS = (
@@ -358,7 +393,7 @@ def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
     def inside_declined(offset: int) -> bool:
         return any(start <= offset < end for start, end in regions)
 
-    found: list[tuple[str, str, Polarity]] = []
+    found: list[tuple[str, str, Polarity, int]] = []
     for attribute, vocabulary in ATTRIBUTE_VOCABULARY:
         if attribute in declined:
             continue
@@ -366,8 +401,15 @@ def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
             if inside_declined(offset):
                 continue
             polarity = Polarity.NEGATIVE if _is_negated(message, offset) else Polarity.POSITIVE
-            found.append((attribute, value.lower(), polarity))
+            found.append((attribute, value.lower(), polarity, offset))
 
+    # Reading order, not match order. `_find_values` walks the vocabulary
+    # longest phrase first so that "stainless steel" beats "steel", which
+    # leaves the results in an order unrelated to what the customer actually
+    # said. `_merge` compares offsets to decide whether a later value corrects
+    # an earlier one, and that question has no meaning on a list out of order:
+    # a reversed span matches nothing, so every inverted pair looked
+    # coordinated. "I want linen, actually cotton" kept both.
     if "budget" not in declined:
         # The last figure the customer leaves standing, not the first one they
         # said. "Under $50. Actually, up to $200." is a correction, and taking
@@ -378,15 +420,24 @@ def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
         # its own: there is one cap or there is none, and an excluded price is
         # not a constraint retrieval could use.
         amount: str | None = None
+        amount_at = 0
         for budget in BUDGET_RE.finditer(message):
             if inside_declined(budget.start()) or _is_negated(message, budget.start()):
                 continue
             stated = next((group for group in budget.groups() if group), None)
             if stated:
-                amount = stated
+                amount, amount_at = stated, budget.start()
         if amount:
-            found.append(("budget", amount, Polarity.POSITIVE))
-    return found
+            found.append(("budget", amount, Polarity.POSITIVE, amount_at))
+
+    # Reading order, not match order. `_find_values` walks the vocabulary
+    # longest phrase first, so that "stainless steel" beats "steel", which
+    # leaves the results in an order unrelated to what the customer said. A
+    # later positive on an attribute replaces the earlier one, so that order is
+    # what decides which value survives a correction, and it was deciding it by
+    # phrase length: "I want linen, actually cotton" kept linen.
+    found.sort(key=lambda entry: entry[3])
+    return [(attribute, value, polarity) for attribute, value, polarity, _ in found]
 
 
 def _override_match(message: str) -> re.Match[str] | None:
