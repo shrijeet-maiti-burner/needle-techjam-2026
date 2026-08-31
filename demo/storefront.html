@@ -8,20 +8,113 @@
     /* Shares the Needle Lens palette so the two surfaces read as one product.
        The lens is a diagnostics grid; this is a reading surface, so the scale
        is larger, the column is narrower and the accents are quieter. */
+    /* Two themes, one token set. Every colour below is a token, so a surface
+       is never painted by a literal that only works in one of them.
+
+       The palette is measured rather than chosen by eye. Small text is the
+       thing people actually read here, so `--dim`, which carries the panel
+       labels, the option counts and the breadcrumbs, clears 4.5:1 in both
+       themes. It used to sit at 3.65:1 in 9.5px uppercase, which is where
+       "hard to see" came from. Borders carry the panel structure and are lifted
+       far enough to be seen without becoming the loudest thing on screen.
+
+       Accent use is deliberate and narrow: lime marks the one action and the
+       one live item. Confidence scores, prices, timings and disclosed values
+       are ordinary text, because colouring data that is not actionable is what
+       made the surface glossy. */
     :root {
-      --ink: #f4f0e8;
-      --muted: #9faaa3;
-      --dim: #68736d;
-      --panel: #121816;
-      --panel-2: #171f1c;
-      --line: #29332f;
-      --line-soft: #1f2724;
+      color-scheme: light dark;
+      --radius: 12px;
+
+      /* light */
+      --ink: #121a17;
+      --muted: #4d5a54;
+      --dim: #5f6c66;
+      --bg: #f2f4f3;
+      --panel: #ffffff;
+      --panel-2: #f7f9f8;
+      --sunken: #eef1f0;
+      --line: #bcc5c1;
+      --line-soft: #dde2e0;
+
+      --lime: #c9ff64;           /* the fill: dark text sits on it */
+      --lime-line: #43700f;      /* the readable version, for text and edges */
+      --aqua: #0b7264;
+      --amber: #8a6000;
+      --red: #b3372f;
+      --on-accent: #10160d;
+
+      --fill-accent: rgba(67, 112, 15, .07);
+      --edge-accent: rgba(67, 112, 15, .28);
+      --edge-accent-strong: rgba(67, 112, 15, .55);
+      --fill-aqua: rgba(13, 127, 112, .06);
+      --edge-aqua: rgba(13, 127, 112, .26);
+      --edge-aqua-strong: rgba(13, 127, 112, .45);
+      --fill-amber: rgba(138, 96, 0, .07);
+      --edge-amber: rgba(138, 96, 0, .32);
+      --edge-red: rgba(179, 55, 47, .32);
+    }
+
+    /* Dark is the default where the system asks for it, and an explicit
+       choice in the header wins over the system in both directions. */
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+      --ink: #f2efe8;
+      --muted: #b3bdb7;
+      --dim: #8a958f;
+      --bg: #0a0e0d;
+      --panel: #171e1c;
+      --panel-2: #1e2624;
+      --sunken: #101615;
+      --line: #455350;
+      --line-soft: #2b3532;
+
       --lime: #c9ff64;
+      --lime-line: #c9ff64;
       --aqua: #55e8cf;
       --amber: #ffbf57;
-      --red: #ff7e76;
-      --bg: #080c0b;
-      --radius: 12px;
+      --red: #ff8f88;
+      --on-accent: #10160d;
+
+      --fill-accent: rgba(201, 255, 100, .08);
+      --edge-accent: rgba(201, 255, 100, .26);
+      --edge-accent-strong: rgba(201, 255, 100, .5);
+      --fill-aqua: rgba(85, 232, 207, .06);
+      --edge-aqua: rgba(85, 232, 207, .26);
+      --edge-aqua-strong: rgba(85, 232, 207, .42);
+      --fill-amber: rgba(255, 191, 87, .08);
+      --edge-amber: rgba(255, 191, 87, .34);
+      --edge-red: rgba(255, 143, 136, .34);
+      }
+    }
+
+    :root[data-theme="dark"] {
+      --ink: #f2efe8;
+      --muted: #b3bdb7;
+      --dim: #8a958f;
+      --bg: #0a0e0d;
+      --panel: #171e1c;
+      --panel-2: #1e2624;
+      --sunken: #101615;
+      --line: #455350;
+      --line-soft: #2b3532;
+
+      --lime: #c9ff64;
+      --lime-line: #c9ff64;
+      --aqua: #55e8cf;
+      --amber: #ffbf57;
+      --red: #ff8f88;
+      --on-accent: #10160d;
+
+      --fill-accent: rgba(201, 255, 100, .08);
+      --edge-accent: rgba(201, 255, 100, .26);
+      --edge-accent-strong: rgba(201, 255, 100, .5);
+      --fill-aqua: rgba(85, 232, 207, .06);
+      --edge-aqua: rgba(85, 232, 207, .26);
+      --edge-aqua-strong: rgba(85, 232, 207, .42);
+      --fill-amber: rgba(255, 191, 87, .08);
+      --edge-amber: rgba(255, 191, 87, .34);
+      --edge-red: rgba(255, 143, 136, .34);
     }
 
     * { box-sizing: border-box; }
@@ -31,10 +124,7 @@
     body {
       margin: 0;
       color: var(--ink);
-      background:
-        radial-gradient(circle at 80% -12%, rgba(85, 232, 207, .10), transparent 32rem),
-        radial-gradient(circle at -8% 20%, rgba(201, 255, 100, .06), transparent 30rem),
-        var(--bg);
+      background: var(--bg);
       font: 15px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       -webkit-font-smoothing: antialiased;
     }
@@ -75,7 +165,7 @@
       letter-spacing: -.035em;
       font-weight: 700;
     }
-    .brand h1 span { color: var(--lime); }
+    .brand h1 span { color: var(--lime-line); }
     .eyebrow {
       font-family: "SFMono-Regular", Consolas, monospace;
       font-size: 10px;
@@ -106,7 +196,7 @@
       font-size: 12.5px;
       color: var(--muted);
     }
-    .notice.warn { border-color: rgba(255, 191, 87, .45); background: rgba(255, 191, 87, .07); }
+    .notice.warn { border-color: var(--edge-amber); background: var(--fill-amber); }
     .notice.warn b { color: var(--amber); }
     .notice[hidden] { display: none; }
 
@@ -143,7 +233,7 @@
       white-space: normal;
       transition: border-color .14s, color .14s, transform .14s;
     }
-    .chip:hover { color: var(--lime); border-color: var(--lime); }
+    .chip:hover { color: var(--ink); border-color: var(--edge-accent-strong); }
     .chip:active { transform: translateY(1px); }
     .chip:disabled { color: var(--dim); border-color: var(--line); cursor: default; opacity: .72; }
     .chip:disabled:active { transform: none; }
@@ -155,8 +245,8 @@
       max-width: 86%;
       padding: 11px 15px;
       border-radius: 14px 5px 14px 14px;
-      background: rgba(201, 255, 100, .10);
-      border: 1px solid rgba(201, 255, 100, .22);
+      background: var(--fill-accent);
+      border: 1px solid var(--edge-accent);
       white-space: pre-wrap;
       overflow-wrap: anywhere;
     }
@@ -182,12 +272,12 @@
       text-transform: none;
       letter-spacing: .02em;
     }
-    .tag.bad { color: var(--red); border-color: rgba(255, 126, 118, .5); }
-    .tag.warn { color: var(--amber); border-color: rgba(255, 191, 87, .5); }
+    .tag.bad { color: var(--red); border-color: var(--edge-red); }
+    .tag.warn { color: var(--amber); border-color: var(--edge-amber); }
 
     .agent-message {
       padding-left: 13px;
-      border-left: 2px solid var(--lime);
+      border-left: 2px solid var(--line);
       color: var(--ink);
       overflow-wrap: anywhere;
     }
@@ -196,12 +286,12 @@
        The detailed engine trace stays in the API; the interface shows only
        facts a judge can interpret without knowing the retrieval internals. */
     details.receipt {
-      border: 1px solid rgba(85, 232, 207, .24);
+      border: 1px solid var(--edge-aqua);
       border-radius: 10px;
-      background: rgba(85, 232, 207, .045);
+      background: var(--fill-aqua);
       overflow: hidden;
     }
-    details.receipt[open] { border-color: rgba(85, 232, 207, .38); }
+    details.receipt[open] { border-color: var(--edge-aqua-strong); }
     details.receipt summary {
       display: flex;
       align-items: center;
@@ -222,7 +312,7 @@
       place-items: center;
       width: 17px;
       height: 17px;
-      border: 1px solid rgba(85, 232, 207, .34);
+      border: 1px solid var(--edge-aqua);
       border-radius: 5px;
       color: var(--aqua);
       flex: 0 0 auto;
@@ -232,7 +322,7 @@
       display: grid;
       gap: 10px;
       padding: 0 11px 11px;
-      border-top: 1px solid rgba(85, 232, 207, .13);
+      border-top: 1px solid var(--edge-aqua);
     }
     .receipt-grid {
       display: grid;
@@ -244,7 +334,7 @@
       min-width: 0;
       padding: 7px 8px;
       border-radius: 7px;
-      background: rgba(8, 12, 11, .48);
+      background: var(--sunken);
       border: 1px solid var(--line-soft);
     }
     .receipt-stat .r-label {
@@ -265,7 +355,7 @@
       font-size: 11.5px;
       overflow-wrap: anywhere;
     }
-    .receipt-note b { color: var(--lime); font-weight: 650; }
+    .receipt-note b { color: var(--ink); font-weight: 650; }
     .receipt-proof {
       color: var(--dim);
       font: 9.5px/1.4 "SFMono-Regular", Consolas, monospace;
@@ -292,10 +382,10 @@
       padding: 13px 14px;
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      background: linear-gradient(155deg, rgba(23, 31, 28, .95), rgba(16, 22, 20, .95));
+      background: var(--panel);
       min-width: 0;
     }
-    .card.spotlight { border-color: rgba(201, 255, 100, .34); background: linear-gradient(155deg, rgba(30, 40, 27, .95), rgba(16, 22, 20, .95)); }
+    .card.spotlight { border-color: var(--edge-accent-strong); background: var(--panel-2); }
 
     .card-top { display: flex; gap: 10px; align-items: flex-start; }
     .rank {
@@ -309,7 +399,7 @@
       font-size: 11px;
       color: var(--muted);
     }
-    .card.spotlight .rank { background: var(--lime); border-color: var(--lime); color: #10160d; font-weight: 700; }
+    .card.spotlight .rank { background: var(--ink); border-color: var(--ink); color: var(--panel); font-weight: 700; }
     .card-title {
       margin: 0;
       font-size: 14px;
@@ -329,7 +419,7 @@
       font-size: 12px;
       color: var(--muted);
     }
-    .price { color: var(--lime); font-weight: 650; font-variant-numeric: tabular-nums; }
+    .price { color: var(--ink); font-weight: 650; font-variant-numeric: tabular-nums; }
     .price.absent { color: var(--dim); font-weight: 400; }
     .stars { color: var(--amber); }
     .crumb {
@@ -345,27 +435,33 @@
       font-size: 10.5px;
       font-family: "SFMono-Regular", Consolas, monospace;
       color: var(--aqua);
-      background: rgba(85, 232, 207, .07);
-      border: 1px solid rgba(85, 232, 207, .26);
+      background: var(--fill-aqua);
+      border: 1px solid var(--edge-aqua);
       white-space: nowrap;
     }
     .ev.stale {
       color: var(--amber);
-      background: rgba(255, 191, 87, .07);
-      border-color: rgba(255, 191, 87, .34);
+      background: var(--fill-amber);
+      border-color: var(--edge-amber);
       border-style: dashed;
     }
     .ev .where { color: var(--dim); }
 
     .compatibility {
       padding: 8px 9px;
-      border: 1px solid rgba(201, 255, 100, .25);
+      border: 1px solid var(--line-soft);
       border-radius: 8px;
-      background: rgba(201, 255, 100, .045);
+      background: var(--panel-2);
       color: var(--muted);
-      font-size: 11px;
+      font-size: 11.5px;
     }
-    .compatibility-head { display: flex; justify-content: space-between; gap: 10px; color: var(--lime); }
+    .compatibility-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--ink);
+      font-weight: 600;
+    }
     .compatibility ul { margin: 5px 0 0; padding-left: 16px; }
     .compatibility .limit { color: var(--dim); }
 
@@ -411,7 +507,7 @@
       background: var(--panel);
       transition: border-color .15s;
     }
-    .composer:focus-within { border-color: rgba(201, 255, 100, .45); }
+    .composer:focus-within { border-color: var(--edge-accent-strong); }
     .composer textarea {
       flex: 1;
       min-width: 0;
@@ -433,7 +529,7 @@
       border-radius: 9px;
       border: 1px solid var(--lime);
       background: var(--lime);
-      color: #10160d;
+      color: var(--on-accent);
       font-weight: 700;
       cursor: pointer;
       transition: opacity .15s, transform .15s;
@@ -455,11 +551,210 @@
     .bchip .owner {
       color: var(--dim);
       font-family: "SFMono-Regular", Consolas, monospace;
-      font-size: 9.5px;
+      font-size: 11px;
       text-transform: uppercase;
       letter-spacing: .04em;
       padding-right: 2px;
     }
+
+    .theme-toggle {
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--muted);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 11px;
+      letter-spacing: .04em;
+      cursor: pointer;
+      transition: border-color .15s, color .15s;
+    }
+    .theme-toggle:hover { color: var(--ink); border-color: var(--edge-accent-strong); }
+
+    table.compare { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.compare th, table.compare td {
+      text-align: left;
+      padding: 6px 6px 6px 0;
+      border-bottom: 1px solid var(--line-soft);
+      vertical-align: top;
+    }
+    .compare-name { font-size: 11.5px; color: var(--ink); font-weight: 600; overflow-wrap: anywhere; }
+    .compare-drop {
+      margin-top: 3px;
+      padding: 0;
+      border: 0;
+      background: none;
+      color: var(--dim);
+      font-size: 10.5px;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .compare-drop:hover { color: var(--red); }
+    .compare-row-label { font-weight: 400; color: var(--ink); }
+    .compare-row-label .attr {
+      color: var(--dim);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+    }
+    .compare-not { color: var(--red); font-size: 10.5px; }
+    .compare-none { color: var(--dim); font-style: italic; }
+    .verdict { font-family: "SFMono-Regular", Consolas, monospace; font-size: 11px; }
+    .verdict.yes { color: var(--ink); }
+    .verdict.unknown { color: var(--dim); }
+    .verdict.bad { color: var(--red); }
+
+    .event { display: flex; gap: 9px; align-items: baseline; padding: 4px 0; }
+    .event + .event { border-top: 1px solid var(--line-soft); }
+    .event-turn {
+      flex: none;
+      width: 48px;
+      color: var(--dim);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .event-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .event-what { font-size: 12.5px; color: var(--ink); overflow-wrap: anywhere; }
+    .event-state {
+      font-size: 11px;
+      color: var(--dim);
+      font-family: "SFMono-Regular", Consolas, monospace;
+    }
+    .event.replaced .event-what { color: var(--muted); text-decoration: line-through; }
+    .event.ruled-out .event-what { color: var(--red); }
+
+    .languages { display: flex; flex-wrap: wrap; gap: 5px; }
+    .languages[hidden] { display: none; }
+    .lang {
+      padding: 3px 9px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--panel-2);
+      color: var(--muted);
+      font-size: 11.5px;
+      cursor: pointer;
+      transition: border-color .15s, color .15s;
+    }
+    .lang:hover { color: var(--ink); }
+    .lang.on { color: var(--ink); border-color: var(--edge-accent-strong); }
+
+    details.reasoning { margin: 8px 0 2px; }
+    details.reasoning summary {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11.5px;
+      color: var(--muted);
+      list-style: none;
+    }
+    details.reasoning summary::-webkit-details-marker { display: none; }
+    details.reasoning summary::before {
+      content: "";
+      width: 0; height: 0;
+      border-left: 4px solid currentColor;
+      border-top: 3.5px solid transparent;
+      border-bottom: 3.5px solid transparent;
+      transition: transform .15s;
+    }
+    details.reasoning[open] summary::before { transform: rotate(90deg); }
+    details.reasoning summary:hover { color: var(--ink); }
+    .reasoning-attr {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      padding: 1px 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+    }
+    .reasoning-body {
+      margin-top: 8px;
+      padding: 10px 11px;
+      border: 1px solid var(--line-soft);
+      border-radius: 9px;
+      background: var(--panel-2);
+    }
+    .reasoning-label {
+      margin: 9px 0 4px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--dim);
+    }
+    .reasoning-row {
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+      padding: 2px 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .reasoning-row.asked { color: var(--ink); font-weight: 600; }
+    .reasoning-name { flex: none; min-width: 86px; }
+    .reasoning-why { font-weight: 400; color: var(--muted); }
+    .reasoning-note { margin-top: 9px; font-size: 11px; color: var(--dim); }
+
+    details.reasoning { margin: 8px 0 2px; }
+    details.reasoning summary {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11.5px;
+      color: var(--muted);
+      list-style: none;
+    }
+    details.reasoning summary::-webkit-details-marker { display: none; }
+    details.reasoning summary::before {
+      content: "";
+      width: 0; height: 0;
+      border-left: 4px solid currentColor;
+      border-top: 3.5px solid transparent;
+      border-bottom: 3.5px solid transparent;
+      transition: transform .15s;
+    }
+    details.reasoning[open] summary::before { transform: rotate(90deg); }
+    details.reasoning summary:hover { color: var(--ink); }
+    .reasoning-attr {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+      padding: 1px 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+    }
+    .reasoning-body {
+      margin-top: 8px;
+      padding: 10px 11px;
+      border: 1px solid var(--line-soft);
+      border-radius: 9px;
+      background: var(--panel-2);
+    }
+    .reasoning-label {
+      margin: 9px 0 4px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 10.5px;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      color: var(--dim);
+    }
+    .reasoning-row {
+      display: flex;
+      gap: 10px;
+      align-items: baseline;
+      padding: 2px 0;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .reasoning-row.asked { color: var(--ink); font-weight: 600; }
+    .reasoning-name { flex: none; min-width: 86px; }
+    .reasoning-why { font-weight: 400; color: var(--muted); }
+    .reasoning-note { margin-top: 9px; font-size: 11px; color: var(--dim); }
 
     /* ---------- rail ---------- */
 
@@ -470,9 +765,9 @@
       display: none;
       width: min(780px, calc(100% - 8px));
       margin: 10px auto 0;
-      border: 1px solid rgba(201, 255, 100, .30);
+      border: 1px solid var(--edge-accent);
       border-radius: 10px;
-      background: rgba(18, 24, 22, .96);
+      background: var(--panel);
       overflow: hidden;
     }
     .mobile-journey[hidden] { display: none; }
@@ -511,7 +806,7 @@
     .panel {
       border: 1px solid var(--line);
       border-radius: var(--radius);
-      background: linear-gradient(155deg, rgba(23, 31, 28, .95), rgba(16, 22, 20, .95));
+      background: var(--panel);
       overflow: hidden;
     }
     .panel + .panel { margin-top: 12px; }
@@ -520,7 +815,7 @@
       padding: 11px 13px;
       border-bottom: 1px solid var(--line);
       font-family: "SFMono-Regular", Consolas, monospace;
-      font-size: 10px;
+      font-size: 11px;
       letter-spacing: .13em;
       text-transform: uppercase;
       color: var(--muted);
@@ -529,7 +824,7 @@
     .panel-body .none { color: var(--dim); font-size: 12.5px; font-style: italic; }
 
     .belief-group + .belief-group { margin-top: 13px; }
-    .belief-label { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+    .belief-label { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
     .bchip {
       display: inline-flex; gap: 5px; align-items: baseline;
       padding: 3px 8px; margin: 0 4px 4px 0;
@@ -540,8 +835,8 @@
       overflow-wrap: anywhere;
     }
     .bchip .attr { font-size: 10px; color: var(--dim); text-transform: uppercase; letter-spacing: .06em; }
-    .bchip.want { color: var(--lime); border-color: rgba(201, 255, 100, .3); }
-    .bchip.excl { color: var(--red); border-color: rgba(255, 126, 118, .3); }
+    .bchip.want { color: var(--ink); border-color: var(--line); }
+    .bchip.excl { color: var(--red); border-color: var(--edge-red); }
     .bchip.gone { color: var(--dim); text-decoration: line-through; }
 
     .journey-context { margin-bottom: 9px; color: var(--muted); font-size: 11.5px; }
@@ -550,9 +845,9 @@
       padding: 9px;
       border: 1px solid var(--line);
       border-radius: 9px;
-      background: rgba(8, 12, 11, .35);
+      background: var(--sunken);
     }
-    .journey-item.active { border-color: rgba(201, 255, 100, .48); }
+    .journey-item.active { border-color: var(--edge-accent-strong); }
     .journey-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .journey-title b { color: var(--ink); font-size: 12.5px; }
     .journey-active { color: var(--lime); font: 9px/1.3 "SFMono-Regular", Consolas, monospace; text-transform: uppercase; }
@@ -565,13 +860,13 @@
       color: var(--muted);
       font: 10px/1.35 "SFMono-Regular", Consolas, monospace;
     }
-    .journey-group.any { border-color: rgba(85, 232, 207, .32); color: var(--aqua); }
-    .journey-group.not { border-color: rgba(255, 126, 118, .32); color: var(--red); }
+    .journey-group.any { border-color: var(--edge-aqua); color: var(--aqua); }
+    .journey-group.not { border-color: var(--edge-red); color: var(--red); }
 
     .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
-    .stat .label { font-size: 10px; letter-spacing: .11em; text-transform: uppercase; color: var(--dim); }
+    .stat .label { font-size: 11px; letter-spacing: .11em; text-transform: uppercase; color: var(--dim); }
     .stat .value { margin-top: 2px; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
-    .stat .value.good { color: var(--lime); }
+    .stat .value.good { color: var(--ink); }
 
     button.ghost {
       width: 100%;
@@ -583,7 +878,7 @@
       color: var(--muted);
       transition: border-color .15s, color .15s;
     }
-    button.ghost:hover { color: var(--lime); border-color: var(--lime); }
+    button.ghost:hover { color: var(--ink); border-color: var(--line); }
 
     .kv { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 3px 0; }
     .kv span:first-child { color: var(--dim); }
@@ -605,6 +900,10 @@
           <span class="eyebrow">live agent</span>
         </div>
         <div class="header-facts">
+          <button type="button" id="theme-toggle" class="theme-toggle"
+                  aria-live="polite">follow system</button>
+          <div class="languages" id="languages" hidden
+               aria-label="Conversation language"></div>
           <div><b id="fact-products">—</b> products</div>
           <div><b id="fact-index">—</b> index</div>
           <div><b id="fact-turn">turn 0</b></div>
@@ -651,6 +950,16 @@
         <div class="panel-body" id="journey"></div>
       </div>
 
+      <div class="panel" id="compare-panel" hidden>
+        <div class="panel-head"><span>Compare</span><span>stated constraints</span></div>
+        <div class="panel-body" id="compare"></div>
+      </div>
+
+      <div class="panel" id="timeline-panel" hidden>
+        <div class="panel-head"><span>How it changed</span><span>supersession</span></div>
+        <div class="panel-body" id="timeline"></div>
+      </div>
+
       <div class="panel">
         <div class="panel-head"><span>What I have understood</span><span id="intent-version">v1</span></div>
         <div class="panel-body" id="beliefs"><div class="none">Nothing disclosed yet.</div></div>
@@ -681,6 +990,12 @@
     "use strict";
 
     const el = {
+      themeToggle: document.getElementById("theme-toggle"),
+      languages: document.getElementById("languages"),
+      timeline: document.getElementById("timeline"),
+      timelinePanel: document.getElementById("timeline-panel"),
+      compare: document.getElementById("compare"),
+      comparePanel: document.getElementById("compare-panel"),
       thread: document.getElementById("thread"),
       inner: document.getElementById("thread-inner"),
       opening: document.getElementById("opening"),
@@ -783,6 +1098,53 @@
       new ResizeObserver(() => {
         if (stuck) el.thread.scrollTop = el.thread.scrollHeight;
       }).observe(el.inner);
+    }
+
+    /* ---------- theme ----------
+
+       Three states, and the default is the honest one: follow the machine.
+       An explicit choice overrides it in both directions and is remembered for
+       this browser only. Storage can throw outright in a private window or
+       with site data blocked, so every read and write is guarded and the page
+       renders correctly having stored nothing. */
+
+    const THEME_KEY = "needle.storefront.theme";
+    const THEME_ORDER = ["system", "light", "dark"];
+    const THEME_LABEL = { system: "follow system", light: "light", dark: "dark" };
+    let theme = "system";
+
+    function readStoredTheme() {
+      try {
+        const stored = window.localStorage.getItem(THEME_KEY);
+        return THEME_ORDER.includes(stored) ? stored : "system";
+      } catch (error) {
+        return "system";
+      }
+    }
+
+    function applyTheme(next) {
+      theme = THEME_ORDER.includes(next) ? next : "system";
+      if (theme === "system") {
+        document.documentElement.removeAttribute("data-theme");
+      } else {
+        document.documentElement.setAttribute("data-theme", theme);
+      }
+      if (el.themeToggle) {
+        el.themeToggle.textContent = THEME_LABEL[theme];
+        el.themeToggle.title = "Theme: " + THEME_LABEL[theme] + ". Click to change.";
+      }
+      try {
+        window.localStorage.setItem(THEME_KEY, theme);
+      } catch (error) {
+        /* a remembered preference is a convenience, not a requirement */
+      }
+    }
+
+    applyTheme(readStoredTheme());
+    if (el.themeToggle) {
+      el.themeToggle.addEventListener("click", () => {
+        applyTheme(THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length]);
+      });
     }
 
     /* ---------- rendering ---------- */
@@ -893,6 +1255,14 @@
         more.appendChild(node("div", "asin mono", card.parent_asin));
         wrap.appendChild(more);
       }
+      const compare = node("button", "chip compare-toggle", compareHas(card.parent_asin) ? "In compare" : "Compare");
+      compare.type = "button";
+      compare.addEventListener("click", () => {
+        toggleCompare(card);
+        compare.textContent = compareHas(card.parent_asin) ? "In compare" : "Compare";
+      });
+      wrap.appendChild(compare);
+
       if (config && config.mode === "journey") {
         const select = node("button", "chip plan-select", "Use in plan");
         select.type = "button";
@@ -1074,6 +1444,9 @@
 
       if (turn.message) wrap.appendChild(node("div", "agent-message", turn.message));
 
+      const reasoning = renderQuestionReasoning(turn);
+      if (reasoning) wrap.appendChild(reasoning);
+
       const receipt = renderDecisionReceipt(turn.trace, turn.turn, turn.journey_trace);
       if (receipt) wrap.appendChild(receipt);
 
@@ -1143,6 +1516,168 @@
       destination.appendChild(items);
     }
 
+    /* Compare tray.
+
+       Up to three products held side by side against the constraints the
+       customer has actually stated, from the same belief state the rail shows.
+       A cell is only ticked on evidence the card carries: the term appears in
+       a named field of that product. Anything the catalog does not say is
+       "not stated" rather than a cross, because absent metadata is not a
+       failed constraint and pretending otherwise would be the one dishonest
+       thing a comparison can do. */
+    const COMPARE_LIMIT = 3;
+    const compared = [];
+    let latestBeliefs = { wanted: [], excluded: [] };
+
+    function compareHas(parentAsin) {
+      return compared.some((card) => card.parent_asin === parentAsin);
+    }
+
+    function toggleCompare(card) {
+      const at = compared.findIndex((held) => held.parent_asin === card.parent_asin);
+      if (at >= 0) {
+        compared.splice(at, 1);
+      } else {
+        compared.push(card);
+        while (compared.length > COMPARE_LIMIT) compared.shift();
+      }
+      renderCompare();
+    }
+
+    function cardSatisfies(card, value) {
+      const wanted = String(value || "").toLowerCase();
+      if (!wanted) return null;
+      const hits = Array.isArray(card.matched) ? card.matched : [];
+      const hit = hits.find((entry) => String(entry.term || "").toLowerCase() === wanted);
+      if (hit) return { state: "yes", where: hit.field };
+      const haystack = [
+        card.title, card.description, card.category_path,
+        ...(Array.isArray(card.features) ? card.features : []),
+      ].join(" ").toLowerCase();
+      if (haystack.includes(wanted)) return { state: "yes", where: "listing" };
+      return { state: "unknown", where: "" };
+    }
+
+    function renderCompare() {
+      clear(el.compare);
+      if (compared.length < 2) {
+        el.comparePanel.hidden = true;
+        return;
+      }
+      el.comparePanel.hidden = false;
+
+      const stated = [
+        ...(latestBeliefs.wanted || []).map((entry) => ({ ...entry, polarity: "wanted" })),
+        ...(latestBeliefs.excluded || []).map((entry) => ({ ...entry, polarity: "excluded" })),
+      ];
+
+      const table = node("table", "compare");
+      const head = node("tr");
+      head.appendChild(node("th", "", ""));
+      compared.forEach((card, index) => {
+        const cell = node("th", "");
+        cell.appendChild(node("div", "compare-name", card.title || card.parent_asin));
+        const drop = node("button", "compare-drop", "remove");
+        drop.type = "button";
+        drop.addEventListener("click", () => { compared.splice(index, 1); renderCompare(); });
+        cell.appendChild(drop);
+        head.appendChild(cell);
+      });
+      table.appendChild(head);
+
+      if (!stated.length) {
+        const row = node("tr");
+        const cell = node("td", "compare-none", "Nothing stated yet to compare against.");
+        cell.colSpan = compared.length + 1;
+        row.appendChild(cell);
+        table.appendChild(row);
+      }
+
+      stated.forEach((entry) => {
+        const row = node("tr");
+        const label = node("th", "compare-row-label");
+        label.appendChild(node("span", "attr", entry.attribute));
+        label.appendChild(node("span", "", " " + entry.value));
+        if (entry.polarity === "excluded") label.appendChild(node("span", "compare-not", " ruled out"));
+        row.appendChild(label);
+        compared.forEach((card) => {
+          const verdict = cardSatisfies(card, entry.value);
+          const cell = node("td", "");
+          if (!verdict || verdict.state === "unknown") {
+            cell.appendChild(node("span", "verdict unknown", "not stated"));
+          } else if (entry.polarity === "excluded") {
+            cell.appendChild(node("span", "verdict bad", "present"));
+            cell.title = "Found in this product's " + verdict.where;
+          } else {
+            cell.appendChild(node("span", "verdict yes", "yes"));
+            cell.title = "Found in this product's " + verdict.where;
+          }
+          row.appendChild(cell);
+        });
+        table.appendChild(row);
+      });
+
+      el.compare.appendChild(table);
+      el.compare.appendChild(node("div", "reasoning-note",
+        "A tick means the value appears in that product's listing. " +
+        "\u201cNot stated\u201d means the catalog is silent, which is not the same as a mismatch."));
+    }
+
+    /* Why this question, and what it beat.
+
+       The board ranks every catalog facet by how much of the slate an answer
+       would remove, discounted by the share of candidates that can answer at
+       all and by the cost of spending a turn. All of it was computed on every
+       turn and none of it was shown, which left "which style would help most"
+       looking like a guess rather than the top of a ranking. */
+    function percent(value) {
+      return Math.round((Number(value) || 0) * 100) + "%";
+    }
+
+    function renderQuestionReasoning(turn) {
+      const decision = turn.journey_trace && turn.journey_trace.question
+        ? turn.journey_trace.question
+        : (turn.trace && turn.trace.question_policy
+            ? turn.trace.question_policy.human_message_decision
+            : null);
+      if (!decision || !decision.asks || !decision.attribute) return null;
+
+      const box = node("details", "reasoning");
+      const head = node("summary", "", "Why this question");
+      head.appendChild(node("span", "reasoning-attr", human(decision.attribute)));
+      box.appendChild(head);
+
+      const body = node("div", "reasoning-body");
+      const asked = node("div", "reasoning-row asked");
+      asked.appendChild(node("span", "reasoning-name", human(decision.attribute)));
+      asked.appendChild(node("span", "reasoning-why",
+        decision.candidate_count + " candidates, about " +
+        Math.round(Number(decision.expected_remaining)) + " left after an answer; " +
+        "the options cover " + percent(decision.catalog_coverage) + " of them"));
+      body.appendChild(asked);
+
+      const alternatives = Array.isArray(decision.alternatives) ? decision.alternatives : [];
+      if (alternatives.length) {
+        body.appendChild(node("div", "reasoning-label", "Ranked below it"));
+        alternatives.forEach((other) => {
+          const row = node("div", "reasoning-row");
+          row.appendChild(node("span", "reasoning-name", human(other.attribute)));
+          const detail = "about " + Math.round(Number(other.expected_remaining)) +
+            " left, options cover " + percent(other.catalog_coverage) +
+            (Number(other.net_value) <= 0 ? "; not worth a turn" : "");
+          row.appendChild(node("span", "reasoning-why", detail));
+          body.appendChild(row);
+        });
+      }
+
+      body.appendChild(node("div", "reasoning-note",
+        "Ranked by expected candidates removed, weighted by how many can answer, " +
+        "less the cost of spending one of the remaining turns. The scored " +
+        "channel still asks the open question; this chooses what to put to a person."));
+      box.appendChild(body);
+      return box;
+    }
+
     function renderJourney(journey) {
       if (!journey || journey.mode !== "journey" || !Array.isArray(journey.items)) {
         el.journeyPanel.hidden = true;
@@ -1162,6 +1697,50 @@
       }
       renderJourneyInto(el.journey, journey);
       renderJourneyInto(el.mobileJourney, journey);
+    }
+
+    /* What replaced what, and when.
+
+       The rail shows the state the plan is in. This shows how it got there,
+       which is the part a correction actually exercises: a superseded value is
+       retired rather than deleted, so "actually not navy, make it black" is
+       recoverable evidence rather than a silent overwrite. Intent override is
+       15% of the scored scenario mix and the only visible sign of it was the
+       absence of the old value. */
+    function renderTimeline(journey) {
+      clear(el.timeline);
+      const items = journey && Array.isArray(journey.items) ? journey.items : [];
+      const events = [];
+      items.forEach((item) => {
+        (item.superseded || []).forEach((group) => {
+          (group.values || []).forEach((value) => events.push({
+            turn: group.turn, item: item.label, attribute: group.attribute,
+            value: value, state: "replaced",
+          }));
+        });
+        (item.constraints || []).forEach((group) => {
+          (group.values || []).forEach((value) => events.push({
+            turn: group.turn, item: item.label, attribute: group.attribute,
+            value: value, state: group.operator === "not" ? "ruled out" : "stated",
+          }));
+        });
+      });
+      const replaced = events.some((event) => event.state === "replaced");
+      if (!replaced) {
+        el.timelinePanel.hidden = true;
+        return;
+      }
+      el.timelinePanel.hidden = false;
+      events.sort((a, b) => (a.turn - b.turn) || a.attribute.localeCompare(b.attribute));
+      events.forEach((event) => {
+        const row = node("div", "event " + event.state.replace(" ", "-"));
+        row.appendChild(node("span", "event-turn", "turn " + event.turn));
+        const body = node("span", "event-body");
+        body.appendChild(node("span", "event-what", event.attribute + " " + event.value));
+        body.appendChild(node("span", "event-state", event.state + " · " + event.item));
+        row.appendChild(body);
+        el.timeline.appendChild(row);
+      });
     }
 
     function renderBeliefs(beliefs) {
@@ -1311,6 +1890,33 @@
       scrollToEnd();
     }
 
+    /* The agent answers in seven languages and a reviewer cannot find that out
+       from an English page. Starting a session in a chosen language exercises
+       the same code path detection would reach, so what is demonstrated is the
+       real behaviour and not a translated interface. */
+    let sessionLanguage = "";
+
+    function renderLanguages(languages) {
+      clear(el.languages);
+      if (!Array.isArray(languages) || languages.length < 2) {
+        el.languages.hidden = true;
+        return;
+      }
+      el.languages.hidden = false;
+      languages.forEach((entry) => {
+        const button = node("button", "lang" + (entry.code === (sessionLanguage || "en") ? " on" : ""), entry.label);
+        button.type = "button";
+        button.title = "Start a new conversation in " + entry.label;
+        button.addEventListener("click", async () => {
+          if (pending) return;
+          sessionLanguage = entry.code === "en" ? "" : entry.code;
+          clear(el.inner);
+          await newSession();
+        });
+        el.languages.appendChild(button);
+      });
+    }
+
     async function newSession() {
       const data = await api("/api/session", {});
       sessionId = data.session_id;
@@ -1322,8 +1928,16 @@
       el.input.placeholder = "Describe what you are looking for...";
       el.send.disabled = false;
       renderConfig(config);
+      renderLanguages(config.languages);
       renderSuggestions(config.suggestions);
       renderJourney(null);
+      // Everything derived from the old conversation goes with it. A compare
+      // tray holding products from a session that no longer exists would be
+      // measured against a belief state that is now empty.
+      compared.length = 0;
+      latestBeliefs = { wanted: [], excluded: [] };
+      renderCompare();
+      renderTimeline(null);
       renderBeliefs({ wanted: [], excluded: [], superseded: [], intent_version: 1 });
       el.intentVersion.style.color = "";
       el.statTurn.textContent = "0";
@@ -1346,7 +1960,10 @@
         const turn = await api("/api/message", { session_id: sessionId, message: text });
         thinking.replaceWith(renderTurn(turn));
         renderJourney(turn.journey || null);
+        latestBeliefs = turn.beliefs || { wanted: [], excluded: [] };
         renderBeliefs(turn.beliefs || {});
+        renderTimeline(turn.journey);
+        renderCompare();
         el.statTurn.textContent = String(turn.turn);
         el.factTurn.textContent = "turn " + turn.turn;
         el.statLatency.textContent = turn.latency_ms.toFixed(0) + " ms";
