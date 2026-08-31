@@ -50,10 +50,10 @@ SCORED_TURN_BUDGET = 10
 # the least recently used conversation is dropped, not the newest.
 MAX_LIVE_SESSIONS = 64
 
-# Optional agent keywords this service will pass if the installed Agent accepts
+# Optional agent keywords this service turns on when the installed Agent accepts
 # them. Each is default-off upstream, so absence is the normal case and never an
-# error. `explain` is PR #24 (grounded customer message); `trace_enabled` is
-# PR #25 (target-blind decision trace).
+# error. The interface renders both the grounded message and the compact
+# target-blind decision receipt; neither is an unused diagnostic here.
 OPTIONAL_AGENT_KWARGS: Mapping[str, object] = {"explain": True, "trace_enabled": True}
 
 
@@ -442,8 +442,8 @@ class StorefrontService:
         return list(dict.fromkeys(terms))[:40]
 
     def _trace(self, session_id: str) -> dict[str, object] | None:
-        """The lens trace for the turn just run, when the installed Agent emits one."""
-        if "trace_enabled" not in self.enabled_optional:
+        """The target-blind trace rendered for the turn just run, when enabled."""
+        if not self.agent_kwargs.get("trace_enabled"):
             return None
         try:
             reader = getattr(self.agent, "trace_for", None)
@@ -466,7 +466,7 @@ class StorefrontService:
                     return dict(recorded[-1])
                 if isinstance(recorded, Mapping):
                     return dict(recorded)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001 - a missing trace never costs the turn
             return None
         return None
 

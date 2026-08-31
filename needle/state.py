@@ -48,6 +48,28 @@ EXPLICIT_OVERRIDE_RE = re.compile(
 # A preference retraction specifically, which is what licenses keeping the
 # answers the customer already gave. Narrower than the trigger above: "start
 # over" is an override but says nothing about which belief is being dropped.
+# A retraction verb under a negated auxiliary is not a retraction. "Don't
+# forget that I need cotton" is the customer holding a requirement in place,
+# and reading it as an override does the exact opposite of what they asked:
+# `observe` bumps `intent_version`, supersedes every active constraint and
+# clears the message history, so the session is discarded at the moment the
+# customer was most explicit about keeping it.
+#
+# This is a rule about English auxiliaries rather than a list of phrases, and
+# it is the same primitive `_is_negated` applies to values: look at what
+# governs the match, not just at the match. The negator must sit within two
+# words of the trigger and inside the same clause, which is what the trailing
+# anchor enforces, because `\w+` cannot cross the punctuation that would end
+# the clause. So "I'm not sure, forget what I said" still overrides.
+NEGATED_TRIGGER_RE = re.compile(
+    r"(?:"
+    r"\bcannot\b"
+    r"|\b(?:do|does|did|ca|wo|sha|is|are|was|were|has|have|had"
+    r"|could|would|should|must|need|dare)\s?n[’']?t\b"
+    r"|\bnot\b|\bnever\b"
+    r")(?:\s+\w+){0,2}\s*$",
+    re.IGNORECASE,
+)
 PREFERENCE_OVERRIDE_RE = re.compile(
     r"(?:"
     rf"\b{_RETRACT}\s+(?:about\s+|all\s+of\s+)?(?:my\s+)?{_PRIOR}\b"
@@ -125,11 +147,13 @@ NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 NEGATION_WINDOW = 24
-# Negation cannot bleed across a contrastive clause.  This is structural rather
-# than a phrase-to-output rule: the same boundary applies to every catalog value
-# and fixes constructions such as "not black but blue" and "not black — blue".
+# Negation cannot bleed across a terminated or contrastive clause. This is
+# structural rather than a phrase-to-output rule: the same boundary applies to
+# every catalog value and fixes constructions such as "not black but blue",
+# "not black, blue", and "not black - blue". Coordination is deliberately not
+# a boundary, so "no black and navy" still excludes both values.
 NEGATION_RESET_RE = re.compile(
-    r"[;.!?\u2014\u2013]|\s-\s|\b(?:but|however|though|yet)\b",
+    r"[,;.!?\u2014\u2013]|\s-\s|\b(?:but|however|though|yet)\b",
     re.IGNORECASE,
 )
 
@@ -170,8 +194,34 @@ ATTRIBUTE_VOCABULARY: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("size", SIZES),
 )
 
+# A comparator in front of a number does not make it money. Catalog feature
+# text is full of measurements phrased exactly like a price cap, and the
+# simulator reads that text back to us verbatim:
+#
+#   "fits up to 8-inch wrist circumference"   -> budget 8
+#   "Fit bands up to 30mm wide"               -> budget 30
+#   "Size: <1>Big handbag:26*15*18cm"         -> budget 1
+#
+# All three are live public sessions. A false budget is not inert: it is an
+# active constraint, so it inflates the count the slate-width gate reads and it
+# reaches the customer as a stated preference they never gave.
+#
+# The discriminator is the character straight after the digits, not a list of
+# units. A unit is welded to its number ("8-inch", "30mm") and a stray "<1>"
+# closes its bracket, whereas money is followed by punctuation, whitespace or
+# nothing. So the comparator branch refuses to be followed immediately by a
+# letter, a hyphen or a closing angle bracket. "under 50 dollars" is unaffected,
+# because the space between them is what says the word is not a unit suffix.
+#
+# A digit joins that class purely to close a backtracking hole. Without it
+# "30mm" fails on "30", backs off to "3", finds "0" acceptable and reports a
+# budget of three. Refusing a trailing digit leaves the engine nowhere to
+# retreat to, so the match is abandoned as intended.
+#
+# The explicit currency branch keeps no such guard: "$50" is money whatever
+# follows it.
 BUDGET_RE = re.compile(
-    r"(?:under|below|less than|at most|up to|<=?)\s*\$?\s*(\d+(?:\.\d+)?)"
+    r"(?:under|below|less than|at most|up to|<=?)\s*\$?\s*(\d+(?:\.\d+)?)(?![-a-z0-9>])"
     r"|\$\s*(\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
@@ -227,6 +277,7 @@ def _find_values(message: str, vocabulary: tuple[str, ...]) -> list[tuple[str, i
 
 
 def _is_negated(message: str, offset: int) -> bool:
+    """Whether a nearby negator still governs the value at ``offset``."""
     prefix = message[max(0, offset - NEGATION_WINDOW):offset]
     resets = list(NEGATION_RESET_RE.finditer(prefix))
     window = prefix[resets[-1].end():] if resets else prefix
@@ -310,12 +361,37 @@ def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
             found.append((attribute, value.lower(), polarity))
 
     if "budget" not in declined:
-        budget = BUDGET_RE.search(message)
-        if budget and not inside_declined(budget.start()):
-            amount = next((group for group in budget.groups() if group), None)
-            if amount:
-                found.append(("budget", amount, Polarity.POSITIVE))
+        # The last figure the customer leaves standing, not the first one they
+        # said. "Under $50. Actually, up to $200." is a correction, and taking
+        # the opening match kept the number they had just replaced.
+        #
+        # A negated figure is skipped rather than allowed to win, so "Budget is
+        # $200, definitely not $50." keeps 200. Budget carries no polarity of
+        # its own: there is one cap or there is none, and an excluded price is
+        # not a constraint retrieval could use.
+        amount: str | None = None
+        for budget in BUDGET_RE.finditer(message):
+            if inside_declined(budget.start()) or _is_negated(message, budget.start()):
+                continue
+            stated = next((group for group in budget.groups() if group), None)
+            if stated:
+                amount = stated
+        if amount:
+            found.append(("budget", amount, Polarity.POSITIVE))
     return found
+
+
+def _override_match(message: str) -> re.Match[str] | None:
+    """The first retraction trigger that is not itself negated.
+
+    Scanning rather than taking the first hit matters: a message can hold a
+    negated trigger and a real one at once, and stopping at the negated one
+    would drop an override the customer did state.
+    """
+    for match in EXPLICIT_OVERRIDE_RE.finditer(message):
+        if not NEGATED_TRIGGER_RE.search(message[: match.start()]):
+            return match
+    return None
 
 
 def extract_subject_anchor(message: str) -> str | None:
@@ -364,11 +440,11 @@ class SessionState:
         # signature extraction see the same normalization the belief state did.
         user_message = fold_marks_in_place(user_message)
 
-        override_match = EXPLICIT_OVERRIDE_RE.search(user_message)
+        override_match = _override_match(user_message)
         preference_override = bool(PREFERENCE_OVERRIDE_RE.search(user_message))
         if not override_match:
             probe = repair_trigger_text(user_message, _TRIGGER_KEYWORDS)
-            override_match = EXPLICIT_OVERRIDE_RE.search(probe)
+            override_match = _override_match(probe)
             if override_match:
                 preference_override = bool(PREFERENCE_OVERRIDE_RE.search(probe))
         if override_match:
