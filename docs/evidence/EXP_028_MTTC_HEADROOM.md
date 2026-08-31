@@ -140,6 +140,61 @@ Five independent attacks on the same set, every one a public-set gain that
 inverts on held-out data. That is the signature of an artefact, not of an
 unexploited signal.
 
+## What a higher published score would have to be made of
+
+Worth stating in full, because "someone will post 0.99" is a reasonable worry
+and it is answerable with arithmetic rather than with reassurance.
+
+The evaluator floors MTTC by itself. `override_applied` gates the hit check, and
+it only flips one turn before the override message arrives, so an
+`intent_override` session cannot hit before turn 3 or 4 no matter what the agent
+does. Measured on the released set: **12 sessions floor at turn 3, 18 at turn
+4.** With every other session hitting at turn 1, the minimum possible total is
+`170 + 12*3 + 18*4 = 278` turns, MTTC 1.3900.
+
+| | MTTC | score | what it requires |
+|---|---:|---:|---|
+| absolute ceiling | 1.3900 | **0.992200** | already knowing the target |
+| protocol oracle | 1.7500 | **0.982500** | perfect play on disclosed evidence only |
+| us, shipped | 2.0250 | **0.978500** | |
+
+Nobody can exceed 0.992200. That is a property of the released evaluator, not an
+estimate.
+
+The interesting number is the second one. 0.982500 is the best score reachable
+by an agent that uses only what the customer has actually said, because by turn
+1 the target is one of a median 24 products that are identical on the disclosed
+evidence. **The band between 0.982500 and 0.992200 is not a skill gap. It is the
+leakage region**, and the only way into it is to already know which of those 24
+is the answer, which on the released set means having fitted the 200 published
+targets.
+
+So a published score in the high 0.98s or above is not evidence of a better
+method. It is evidence of fitting a set whose targets are drawn from the popular
+tail by a factor of about five and a half, and that fit is what the private run
+removes.
+
+## What predicts the private run instead
+
+| set | target `rating_number`, median | our score |
+|---|---:|---:|
+| public, released | 6846 | 0.978500 |
+| target-disjoint control, seed 13 | catalog-like | 0.954701 |
+| target-disjoint control, seed 29 | catalog-like | 0.944155 |
+| omitted-shape holdout, adversarial | **3** | 0.919400 |
+
+Catalog median is 12. The released targets are roughly 570 times more rated than
+a typical catalog product, which is the artefact stated as a number.
+
+We expect to score meaningfully below 0.978500 on a set we have not seen, and
+these three are the estimate. An agent whose public score comes from fitting the
+released targets has no equivalent number and a much larger fall, because the
+whole of its margin above 0.982500 is the part that does not transfer.
+
+This is reasoning about the benchmark's arithmetic, not intelligence about any
+other team. What it supports is a decision, not a prediction: do not trade
+holdout transfer for released-set score, at any exchange rate, this late.
+
 ## Conclusion
 
 0.978500 is at 99.6% of the protocol-conditioned oracle, and the remaining
