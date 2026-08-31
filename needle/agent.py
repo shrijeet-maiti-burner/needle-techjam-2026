@@ -375,18 +375,24 @@ class Agent:
                 ),
             )
 
+    # `int()` rejects an unusable value three different ways: `TypeError` for a
+    # type that cannot convert at all, `ValueError` for NaN and for a string
+    # that is not a number, and `OverflowError` for an infinity. Only the first
+    # two were caught, and infinity is the one a float carries.
+    _UNUSABLE = (TypeError, ValueError, OverflowError)
+
     @staticmethod
     def _safe_turn(turn: object) -> int:
         """Turn number for messaging only; unusable values keep the question on."""
         try:
             return int(turn)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
+        except Agent._UNUSABLE:
             return 1
 
     def _bounded_limit(self, top_k: object) -> int:
         try:
             requested = int(top_k)  # type: ignore[arg-type]
-        except (TypeError, ValueError):
+        except self._UNUSABLE:
             # The contract says ten; a harness passing something unusable
             # should still get a full, valid slate rather than nothing.
             requested = 10
