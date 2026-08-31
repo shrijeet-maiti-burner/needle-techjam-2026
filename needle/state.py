@@ -48,6 +48,28 @@ EXPLICIT_OVERRIDE_RE = re.compile(
 # A preference retraction specifically, which is what licenses keeping the
 # answers the customer already gave. Narrower than the trigger above: "start
 # over" is an override but says nothing about which belief is being dropped.
+# A retraction verb under a negated auxiliary is not a retraction. "Don't
+# forget that I need cotton" is the customer holding a requirement in place,
+# and reading it as an override does the exact opposite of what they asked:
+# `observe` bumps `intent_version`, supersedes every active constraint and
+# clears the message history, so the session is discarded at the moment the
+# customer was most explicit about keeping it.
+#
+# This is a rule about English auxiliaries rather than a list of phrases, and
+# it is the same primitive `_is_negated` applies to values: look at what
+# governs the match, not just at the match. The negator must sit within two
+# words of the trigger and inside the same clause, which is what the trailing
+# anchor enforces, because `\w+` cannot cross the punctuation that would end
+# the clause. So "I'm not sure, forget what I said" still overrides.
+NEGATED_TRIGGER_RE = re.compile(
+    r"(?:"
+    r"\bcannot\b"
+    r"|\b(?:do|does|did|ca|wo|sha|is|are|was|were|has|have|had"
+    r"|could|would|should|must|need|dare)\s?n[’']?t\b"
+    r"|\bnot\b|\bnever\b"
+    r")(?:\s+\w+){0,2}\s*$",
+    re.IGNORECASE,
+)
 PREFERENCE_OVERRIDE_RE = re.compile(
     r"(?:"
     rf"\b{_RETRACT}\s+(?:about\s+|all\s+of\s+)?(?:my\s+)?{_PRIOR}\b"
@@ -321,6 +343,19 @@ def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
     return found
 
 
+def _override_match(message: str) -> re.Match[str] | None:
+    """The first retraction trigger that is not itself negated.
+
+    Scanning rather than taking the first hit matters: a message can hold a
+    negated trigger and a real one at once, and stopping at the negated one
+    would drop an override the customer did state.
+    """
+    for match in EXPLICIT_OVERRIDE_RE.finditer(message):
+        if not NEGATED_TRIGGER_RE.search(message[: match.start()]):
+            return match
+    return None
+
+
 def extract_subject_anchor(message: str) -> str | None:
     """Return a sentence-bounded shopping subject.
 
@@ -367,11 +402,11 @@ class SessionState:
         # signature extraction see the same normalization the belief state did.
         user_message = fold_marks_in_place(user_message)
 
-        override_match = EXPLICIT_OVERRIDE_RE.search(user_message)
+        override_match = _override_match(user_message)
         preference_override = bool(PREFERENCE_OVERRIDE_RE.search(user_message))
         if not override_match:
             probe = repair_trigger_text(user_message, _TRIGGER_KEYWORDS)
-            override_match = EXPLICIT_OVERRIDE_RE.search(probe)
+            override_match = _override_match(probe)
             if override_match:
                 preference_override = bool(PREFERENCE_OVERRIDE_RE.search(probe))
         if override_match:
