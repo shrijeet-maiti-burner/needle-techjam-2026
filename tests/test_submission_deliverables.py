@@ -30,7 +30,6 @@ NOT_SHIPPED = {
     "docs/submission_rules.md",
     # interface work is out of scope in the specification; the transcript is
     # the required artefact and it is embedded in the report itself
-    "scripts/needle_storefront.py",
     "scripts/build_signature_index.py",
     "scripts/build_submission_bundle.py",
     "scripts/run_experiment.py",
@@ -121,6 +120,69 @@ class TheRequiredDeliverablesArePresent(unittest.TestCase):
                 self.assertIn(marker, transcript)
         self.assertIn("scripts/demo_session.py", self.shipped,
                       "the transcript must also be reproducible from the archive")
+
+
+class TheStorefrontShips(unittest.TestCase):
+    """Not required by the specification, which puts interface work out of
+    scope, but a reviewer who would rather type at the agent than read a
+    transcript should not have to clone the repository to do it."""
+
+    def test_the_interface_and_its_server_are_present(self) -> None:
+        shipped = _tracked_under(_shipping_paths())
+        for name in ("scripts/needle_storefront.py", "demo/storefront.html",
+                     "storefront/service.py", "docs/STOREFRONT.md"):
+            with self.subTest(path=name):
+                self.assertIn(name, shipped)
+
+    def test_nothing_scored_imports_it(self) -> None:
+        """The archive carries one policy. A demo quietly running a different
+        one would be worse than no demo, so the dependency runs one way only.
+
+        Checked on the import graph rather than on the word, which appears in
+        prose in both directions.
+        """
+        import ast
+
+        for module in ("needle/agent.py", "needle/catalog.py", "needle/questions.py",
+                       "starter/agent.py", "submission/agent.py"):
+            with self.subTest(module=module):
+                tree = ast.parse((ROOT / module).read_text(encoding="utf-8"), filename=module)
+                imported: list[str] = []
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.Import):
+                        imported += [alias.name for alias in node.names]
+                    elif isinstance(node, ast.ImportFrom) and node.module:
+                        imported.append(node.module)
+                offenders = [name for name in imported if name.split(".")[0] == "storefront"]
+                self.assertEqual(offenders, [], f"{module} imports the demo layer")
+
+
+class TheArchiveRunsOnWhatItClaims(unittest.TestCase):
+    """The reproducibility rules make the version floor a promise, not a note.
+
+    "exact Python version requirement if non-default" is a required part of the
+    package, and an unreproducible bundle may be treated as invalid. A grep for
+    newer syntax is not a check; parsing every shipped file against the declared
+    grammar is.
+    """
+
+    def test_every_shipped_module_parses_under_the_declared_floor(self) -> None:
+        import ast
+
+        shipped = sorted(
+            name for name in _tracked_under(_shipping_paths()) if name.endswith(".py")
+        )
+        self.assertTrue(shipped, "no python files were found to check")
+        for name in shipped:
+            with self.subTest(module=name):
+                source = (ROOT / name).read_text(encoding="utf-8")
+                try:
+                    ast.parse(source, filename=name, feature_version=(3, 10))
+                except SyntaxError as error:  # pragma: no cover - the failure is the point
+                    self.fail(f"{name} needs newer than Python 3.10: {error}")
+
+    def test_the_declared_floor_matches_the_run_notes(self) -> None:
+        self.assertIn("Python: 3.10 or later", RUN_NOTES.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
