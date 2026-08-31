@@ -41,6 +41,26 @@ and were rerun from this exact working tree. Their TechnicalScores were
 respectively, with zero contract violations. They reuse the released simulator,
 so they test target disjointness rather than estimating private performance.
 
+## Superseded by the release-integrity pass
+
+Everything below is the record of the run made at `1c5b005`, and it is left
+exactly as measured. Four things in it no longer describe the release:
+
+- the index is schema **9**, not 8. Schema 8 assets are refused, because they
+  carry the belief state's parse of the catalog with nothing recording which
+  parser produced it;
+- the archive carries **25** tracked files, not 22. `scripts/demo_session.py`,
+  `docs/OWNERSHIP.md` and `docs/SUBMISSION_DISCLOSURES.md` were cited by the
+  report and not shipped, which left a required deliverable, the demonstrated
+  multi-turn session, absent from the deliverable package;
+- the archive SHA-256 and byte size below identify that build only. Two builds
+  of identical content differ byte for byte, so the asset's catalog and parser
+  bindings are the contract now, not a file hash;
+- the three skipped tests are no longer skipped, and the suite is larger.
+
+The numbers that did not move: TechnicalScore 0.978500, HR@10 1.0000, MRR
+0.996667, MTTC 2.025, and a byte-identical robustness report.
+
 ## Tests and clean bundle
 
 - `python -m unittest discover -s tests -v`: 429 ran, 426 passed and three
