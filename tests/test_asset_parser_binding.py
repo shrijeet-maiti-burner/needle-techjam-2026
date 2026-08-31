@@ -143,9 +143,11 @@ class TheAssetIsBoundToTheParser(unittest.TestCase):
             .execute("SELECT parent_asin, payload FROM clarification_facets")
         )
         keep = state.NEGATION_RE
-        state.NEGATION_RE = state.re.compile(
-            r"\b(?:no|not|nothing|(?:do|does|did|ca|wo)\s?n['’]?t)\b", state.re.IGNORECASE
-        )
+        # Simulate the narrow legacy parser that missed auxiliary negation.
+        # The current parser excludes black in "don't like black"; this one
+        # treats it as a positive facet, proving that accepting a stale asset
+        # would change the options the agent can ask about.
+        state.NEGATION_RE = state.re.compile(r"\b(?:no|not|nothing)\b", state.re.IGNORECASE)
         try:
             rebuilt = self.asset.with_name("rebuilt.sqlite3")
             build_signature_index(self.catalog, rebuilt)
@@ -155,8 +157,8 @@ class TheAssetIsBoundToTheParser(unittest.TestCase):
             )
         finally:
             state.NEGATION_RE = keep
-        self.assertIn("black", before["A1"])
-        self.assertNotIn("black", after["A1"])
+        self.assertNotIn("black", before["A1"])
+        self.assertIn("black", after["A1"])
 
 
 if __name__ == "__main__":
