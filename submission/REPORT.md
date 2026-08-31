@@ -163,7 +163,7 @@ directly.
 |---|---|---|
 | belief state, override policy, question policy | Athul Krishna Boban | versioned constraint state with correction, negation and supersession (#1); `retract_stated` override policy (#6); contradiction invalidation (#9); retraction-rule override trigger (#10); submission packaging and run-safety (#8); EXP-006/013 closures and the popularity transfer review (#12) |
 | retrieval, ranking, integration | Shrijeet Maiti | reproducible experiment harness (#2); catalog validation and sparse controls, measured primary and rollback paths (#5); transfer-gated primary selection (#11) |
-| robustness, lexical normalization | Aryaman Anand | offline lexical normalizer and robustness fixtures (#3); EXP-010 perturbation library (#4); session-level robustness driver, slice runner and comparison report (#7); query/corpus tokenizer symmetry and resource safety (#13) |
+| robustness, lexical normalization, conversational interface | Aryaman Anand | offline lexical normalizer and robustness fixtures (#3); EXP-010 perturbation library (#4); session-level robustness driver, slice runner and comparison report (#7); query/corpus tokenizer symmetry, SQLite handle release and the never-failing turn guard (#13); override-trigger tolerance to surface corruption (#15); vocabulary-derived typo recovery, measured and retained default-off as a negative result (#16); the conversational storefront interface and its concurrent smoke test (#27) |
 | evaluation baseline and reruns | Yazhiniyan | <!-- CONFIRM BEFORE SUBMISSION: no merged pull requests are attributable to this owner in the repository history. Replace this line with the actual contribution or remove the row. --> |
 
 Every experiment in `docs/evidence/` names an independent rerun owner, and the
