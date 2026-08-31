@@ -636,9 +636,19 @@ class StorefrontService:
         language: str,
     ) -> str:
         label = str(getattr(item, "label", "this item")).lower()
+        # An item the customer has not named yet carries the placeholder label
+        # "Current item", which is a fine heading in the plan rail and a bad
+        # noun in a sentence: "I updated the current item line item" is the
+        # first thing the wedding journey says. Every sentence below therefore
+        # has a phrasing that does not need a product word.
+        unnamed = str(getattr(item, "category", "")) == "item" or label in {
+            "current item",
+            "this item",
+        }
         if not reranked.products:
+            missing = "nothing" if unnamed else f"no {label}"
             return (
-                f"I kept every stated requirement, but the catalog has no {label} "
+                f"I kept every stated requirement, but the catalog has {missing} "
                 "that satisfies all of them. Which requirement may I relax?"
             )
         if language != DEFAULT_LANGUAGE:
@@ -660,20 +670,28 @@ class StorefrontService:
                 prefix = say["start"].format(category=label)
         elif anchor_id:
             prefix = (
-                f"I kept the earlier item in your plan and ranked these {label} "
+                f"I kept the earlier item in your plan and ranked "
+                f"{'the candidates' if unnamed else f'the {label} candidates'} "
                 f"against {'your selected product' if anchor_confirmed else 'its current top proposal'}. "
                 "Compatibility is confidence-labelled "
                 "where the metadata is incomplete."
             )
         elif action is JourneyAction.EXPLORE:
             prefix = (
-                f"I kept your {label} intent and diversified the slate across the "
-                "catalog facets still available."
+                f"I kept your {'current' if unnamed else label} intent and "
+                "diversified the slate across the catalog facets still available."
             )
         elif action is JourneyAction.CREATE and len(plan.items) > 1:
-            prefix = f"I added {label} as a separate line item without discarding the rest of your plan."
+            prefix = (
+                f"I added {'another' if unnamed else label} line item "
+                "without discarding the rest of your plan."
+            )
         else:
-            prefix = f"I updated the {label} line item from the constraints I could verify in the catalog."
+            prefix = (
+                "I updated your plan"
+                if unnamed
+                else f"I updated the {label} line item"
+            ) + " from the constraints I could verify in the catalog."
         suffix = question_message.strip()
         return f"{prefix} {suffix}".strip()
 

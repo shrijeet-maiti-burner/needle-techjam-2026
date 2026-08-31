@@ -461,10 +461,32 @@
       font-size: 11px;
     }
 
+    .bchip .owner {
+      color: var(--dim);
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      padding-right: 2px;
+    }
+
     /* ---------- rail ---------- */
 
-    .rail { display: none; min-height: 0; overflow-y: auto; padding-bottom: 18px; }
-    @media (min-width: 1080px) { .rail { display: block; } }
+    .rail { display: block; min-height: 0; padding-bottom: 18px; }
+    @media (min-width: 1080px) { .rail { overflow-y: auto; } }
+
+    /* Below the two-column breakpoint the rail used to be hidden outright,
+       which removed the shopping plan, the belief rail and the configuration
+       panel from every phone. That is the whole demonstration on the smaller
+       of the two screens a reviewer might open. Stack it under the composer
+       and let the page scroll as one column instead of nesting a scrolling
+       thread inside a viewport-height shell. */
+    @media (max-width: 1079px) {
+      html, body { height: auto; }
+      .shell { height: auto; min-height: 100%; }
+      .thread { flex: none; overflow-y: visible; }
+      .rail { margin-top: 4px; }
+    }
 
     .panel {
       border: 1px solid var(--line);
@@ -716,21 +738,36 @@
     const STUCK_THRESHOLD = 80;
     let stuck = true;
 
+    /* Below the rail breakpoint the whole page scrolls as one column and the
+       thread is not a scroll container, so assigning its scrollTop would
+       silently do nothing and every new turn would arrive off screen. Ask
+       which element is actually scrolling instead of assuming. */
+    function scroller() {
+      return el.thread.scrollHeight > el.thread.clientHeight + 1
+        ? el.thread
+        : document.scrollingElement || document.documentElement;
+    }
+
     function atBottom() {
-      return el.thread.scrollHeight - el.thread.clientHeight - el.thread.scrollTop
-        <= STUCK_THRESHOLD;
+      const box = scroller();
+      return box.scrollHeight - box.clientHeight - box.scrollTop <= STUCK_THRESHOLD;
     }
 
     function scrollToEnd() {
       stuck = true;
-      el.thread.scrollTop = el.thread.scrollHeight;
+      const box = scroller();
+      box.scrollTop = box.scrollHeight;
     }
 
     el.thread.addEventListener("scroll", () => { stuck = atBottom(); }, { passive: true });
+    window.addEventListener("scroll", () => { stuck = atBottom(); }, { passive: true });
 
     if (typeof ResizeObserver === "function") {
       new ResizeObserver(() => {
-        if (stuck) el.thread.scrollTop = el.thread.scrollHeight;
+        if (stuck) {
+          const box = scroller();
+          box.scrollTop = box.scrollHeight;
+        }
       }).observe(el.inner);
     }
 
@@ -1088,6 +1125,11 @@
         ["Dropped after a change of mind", beliefs.superseded, "gone"],
       ];
       let any = false;
+      const owners = new Set();
+      groups.forEach(([, entries]) => {
+        if (Array.isArray(entries)) entries.forEach((e) => e.item && owners.add(e.item));
+      });
+      const showOwners = owners.size > 1;
       groups.forEach(([label, entries, kind]) => {
         if (!Array.isArray(entries) || !entries.length) return;
         any = true;
@@ -1095,9 +1137,18 @@
         group.appendChild(node("div", "belief-label", label));
         entries.forEach((entry) => {
           const chip = node("span", "bchip " + kind);
+          // In a multi-item plan the same attribute belongs to different items,
+          // so an unlabelled "color navy" beside an active shoes item reads as
+          // the shoes being navy. Name the owner whenever the plan has more
+          // than one, and mark shared journey context as shared.
+          if (entry.item && showOwners) {
+            chip.appendChild(node("span", "owner", entry.item));
+          }
           chip.appendChild(node("span", "attr", entry.attribute));
           chip.appendChild(node("span", "", entry.value));
-          chip.title = "disclosed on turn " + entry.turn;
+          chip.title =
+            (entry.item ? entry.item + " \u00b7 " : "") +
+            "disclosed on turn " + entry.turn;
           group.appendChild(chip);
         });
         el.beliefs.appendChild(group);
