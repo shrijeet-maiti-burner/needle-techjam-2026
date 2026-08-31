@@ -420,6 +420,9 @@ class StorefrontService:
             self._owned(set_language, item.agent_session_id, plan.language)
         item.local_turn += 1
         retrieval_text = query_for(plan, item)
+        structured_numeric_intent = bool(item.numeric_filters or item.ranking)
+        search_limit = 500 if structured_numeric_intent else 120
+        merge_limit = 50_000 if structured_numeric_intent else 500
 
         started = time.perf_counter()
         response = self._owned(
@@ -451,6 +454,14 @@ class StorefrontService:
                 )
                 relation_terms = [term for term in relation_terms if term]
         ranked_sources: list[Sequence[str]] = [base_ids]
+        if structured_numeric_intent and item.category != "item":
+            ranked_sources.append(
+                self.view.category_candidates(
+                    item.category,
+                    audience=item.audience,
+                    limit=50_000,
+                )
+            )
         for query in alternative_queries(plan, item):
             category_seeds = (
                 self.view.common_categories(6)
@@ -468,7 +479,7 @@ class StorefrontService:
                 candidates = self._owned(
                     lambda q=relation_query: agent.catalog.search(
                         q,
-                        120,
+                        search_limit,
                         messages=(q,),
                         excluded_ids=(),
                     )
@@ -476,7 +487,7 @@ class StorefrontService:
                 ranked_sources.append(
                     [candidate.parent_asin for candidate in candidates]
                 )
-        candidate_ids = self._reciprocal_rank_merge(ranked_sources, limit=500)
+        candidate_ids = self._reciprocal_rank_merge(ranked_sources, limit=merge_limit)
 
         reranked = rerank_products(
             self.view,
@@ -546,6 +557,7 @@ class StorefrontService:
             "filtered_candidates": len(reranked.filtered_ids),
             "released_candidates": len(identifiers),
             "rerank_reason": reranked.reason,
+            "ranking": dict(reranked.ranking) if reranked.ranking is not None else None,
             "anchor_id": anchor_id,
             "anchor_status": (
                 "confirmed"
@@ -565,6 +577,8 @@ class StorefrontService:
             ask_attribute=(
                 str(question_decision.get("attribute"))
                 if question_decision.get("asks")
+                else None
+                if question_decision.get("source") == "explicit shopper ranking"
                 else response.get("ask_attribute")
             ),
             cards=cards,
@@ -674,6 +688,11 @@ class StorefrontService:
                 f"{'your selected item' if anchor_confirmed else 'the current top match'} "
                 "using the compatibility evidence available in the catalog."
             )
+        elif getattr(item, "ranking", None) is not None:
+            prefix = (
+                f"I ranked these {label if not unnamed else 'catalog matches'} by "
+                f"{getattr(item, 'ranking').label()} using the values the catalog states."
+            )
         elif action is JourneyAction.EXPLORE:
             prefix = (
                 f"I found {len(reranked.products)} varied "
@@ -711,6 +730,20 @@ class StorefrontService:
         real options contain the anchor's own value is preferred: that makes
         the question about the relationship without encoding outfit pairs.
         """
+
+        ranking = getattr(item, "ranking", None)
+        if ranking is not None and getattr(item, "category", "item") != "item" and candidate_ids:
+            return "", {
+                "asks": False,
+                "attribute": None,
+                "candidate_count": len(candidate_ids),
+                "expected_remaining": len(candidate_ids),
+                "expected_candidate_reduction": 0.0,
+                "options": (),
+                "source": "explicit shopper ranking",
+                "relationship_aware": False,
+                "catalog_coverage": 1.0,
+            }
 
         facets = {
             identifier: product_clarification_facets(self.view.raw(identifier) or {})

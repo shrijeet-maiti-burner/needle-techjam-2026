@@ -26,7 +26,7 @@ DEFAULT_INDEX = ROOT / ".artifacts" / "indexes" / "catalog-signatures.sqlite3"
 def _category_ok(category: str, card: Mapping[str, object]) -> bool:
     wanted = set(query_terms(category, limit=12))
     path = " ".join(str(value) for value in _flatten_values(card.get("categories")))
-    return bool(wanted.intersection(query_terms(path, limit=80)))
+    return wanted.issubset(query_terms(path, limit=80))
 
 
 def run(catalog: Path, index: Path | None) -> list[str]:
@@ -94,7 +94,56 @@ def run(catalog: Path, index: Path | None) -> list[str]:
         if not vague.cards or not vague.journey.get("exploration"):
             failures.append("first-turn vagueness did not produce catalog exploration")
 
-        for turn in (first, second, shoes, black, corrected, compared, vague):
+        # Structured catalog properties are filters or orderings, never query
+        # keywords. Compare them over the complete catalog-derived category,
+        # not merely over the ten products the measured agent first returned.
+        conversation = service.start("redteam-numeric")
+        cheapest = service.send(
+            conversation.session_id,
+            "the cheapest running shoes for men under $100",
+        )
+        prices = [card.get("price") for card in cheapest.cards]
+        if not prices or any(
+            not isinstance(price, (int, float)) or price > 100
+            for price in prices
+        ):
+            failures.append("upper price filter admitted missing or out-of-range price")
+        if prices != sorted(prices):
+            failures.append("cheapest request was not ordered by listed catalog price")
+        if any(not _category_ok("running shoes", card) for card in cheapest.cards):
+            failures.append("numeric running-shoe request admitted a partial category match")
+        if cheapest.ask_attribute is not None:
+            failures.append("explicit cheapest request was followed by an unrelated question")
+
+        conversation = service.start("redteam-rating")
+        rated = service.send(
+            conversation.session_id,
+            "the best rated running shoes for men",
+        )
+        ranking = rated.journey_trace.get("ranking") or {}
+        if ranking.get("field") != "average_rating":
+            failures.append("best-rated request did not record a rating decision")
+        if ranking.get("method") != "bayesian average weighted by catalog review count":
+            failures.append("best-rated request used an undisclosed or raw-star ordering")
+        if not rated.cards or rated.ask_attribute is not None:
+            failures.append("best-rated request did not return a complete direct answer")
+
+        conversation = service.start("redteam-price-range")
+        bounded = service.send(
+            conversation.session_id,
+            "running shoes for men between $50 and $100",
+        )
+        if not bounded.cards or any(
+            not isinstance(card.get("price"), (int, float))
+            or not 50 <= float(card["price"]) <= 100
+            for card in bounded.cards
+        ):
+            failures.append("bounded price request violated its stated interval")
+
+        for turn in (
+            first, second, shoes, black, corrected, compared, vague,
+            cheapest, rated, bounded,
+        ):
             if turn.degraded:
                 failures.append(f"turn {turn.turn} silently degraded")
             if not turn.journey_trace:
@@ -117,7 +166,7 @@ def main() -> int:
         for failure in failures:
             print(f"  - {failure}")
         return 1
-    print("PASS: multi-item, ambiguity, correction, selection, integrity and evidence gates")
+    print("PASS: multi-item, ambiguity, correction, numeric ranking, integrity and evidence gates")
     return 0
 
 

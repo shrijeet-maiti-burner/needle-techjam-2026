@@ -39,22 +39,27 @@ python scripts/needle_storefront.py --warm --benchmark-mode
 - an expandable decision receipt taken from the same target-blind trace as Needle Lens: the candidate funnel, ambiguity status, retrieval path, released slate size, and the catalog-derived expected value of the question;
 - whether the run deviates from `PRIMARY_AGENT_KWARGS`, and whether the bundled signature index was accepted or rejected.
 - in product mode, a typed plan with separate line items, shared occasion context, `all`/`either`/`avoid` groups, wearer state and a user-confirmed product anchor;
+- typed catalog-property intent: lower, upper and bounded filters for price, star rating and review count; and explicit lowest-price, highest-price, least/most-reviewed or confidence-adjusted lowest/best-rated ordering;
 - per related product, the compatibility signals that catalog text supports, their confidence and the missing evidence limiting the claim;
-- a separate journey receipt with candidate-source, merge, filter, relation-anchor and clarification-board evidence.
+- a separate journey receipt with candidate-source, merge, filter, relation-anchor, numeric-ranking method and clarification-board evidence.
 
 ## Boundaries
 
-**Frozen candidate generator, labelled product policy.** Both modes construct the agent from `PRIMARY_AGENT_KWARGS`. Product mode then unions candidates for each explicit alternative, enforces hard category/audience/constraint boundaries, and reranks with inspectable journey evidence. This is visible in the interface and trace; it is not the official `.978500` policy. Benchmark mode performs none of that overlay work. An operator override is displayed as a deviation in either mode.
+**Frozen candidate generator, labelled product policy.** Both modes construct the agent from `PRIMARY_AGENT_KWARGS`. Product mode then unions candidates for each explicit alternative, enforces hard category/audience/constraint boundaries, and reranks with inspectable journey evidence. An explicit numeric filter or ordering additionally opens the complete catalog-derived category pool so `cheapest` and `best rated` do not merely reshuffle the first ten candidates. This is visible in the interface and trace; it is not the official `.978500` policy. Benchmark mode performs none of that overlay work. An operator override is displayed as a deviation in either mode.
 
-**Nothing here reaches the bundle.** `storefront/` is not in `build_submission_bundle.SHIPPING_PATHS`, the same as `robustness/`. It imports from `needle`; `needle` does not import from it.
+**The storefront ships but cannot reach scoring.** `storefront/`, its launcher and the single-file interface are allowlisted into the submission archive as an optional judge-facing demonstration. The official entry point does not import them; an import-graph test fails if that boundary reverses. `robustness/` remains development-only.
 
 **Degradation is reported.** `Agent.respond` cannot raise by design, so a failure appears only as a slightly worse answer. `respond_failures` is read after every turn and a degraded turn is labelled in the transcript.
 
-**The decision receipt is not reconstructed in JavaScript.** The service reads `Agent.trace_for(session_id)` after the turn succeeds and sends that exact trace beside the response. The interface selects a bounded set of fields to render; it does not recompute candidate counts, question utility, evidence, or a second confidence score.
+**The decision receipt is not reconstructed in JavaScript.** The service reads `Agent.trace_for(session_id)` after the turn succeeds and sends that exact trace beside the response. The interface selects a bounded set of fields to render; it does not recompute candidate counts, question utility or compatibility evidence. For an explicit numeric ranking, the product layer additionally reports the catalog field, direction, eligible-value count and method it actually used.
 
 **Compatibility is evidence-bounded.** There is no table saying that a named product pair goes together. The service compares catalog-derived style, wearer, occasion and color evidence using a general color-space calculation. A missing field lowers confidence and appears as a limitation. An unconfirmed top proposal may seed exploration, but the interface calls it a proposal; clicking **Use in plan** makes it a confirmed relation anchor.
 
 **Ambiguity is preserved.** `blue or white` becomes an `either` group and each branch receives a retrieval query. A new category creates a new line item rather than resetting the old one. Wearer values come from the catalog taxonomy; when the slate spans audiences and the shopper did not specify one, the next question asks instead of guessing.
+
+**Catalog properties have typed semantics.** `title`, `features`, `description`, `details`, `categories` and `store` are searchable text. Category and audience come from the catalog taxonomy. `price`, `average_rating` and `rating_number` are not injected as prose: they become numeric filters or explicit orderings. Each numeric field supports lower bounds, upper bounds and bounded ranges. `best rated` uses an empirical-Bayes average with the category pool's review-weighted mean and median review count as its disclosed prior, preventing a single five-star review from automatically winning. A missing numeric value fails a hard filter and sorts after stated values for an ordering. Internal identifiers remain identity keys rather than recommendation features.
+
+Supported numeric forms are deliberately bounded: comparator or range language tied to price, stars or review counts, plus the explicit superlatives named above. The parser rejects measurement and quantity-shaped values such as `up to 30mm` or `up to 3 pairs`; it does not claim general quantitative reasoning over arbitrary dimensions buried in free-form details.
 
 **Multilingual scope stays bounded.** Product mode persists one of the seven supported reply languages for the session and uses the same fixed phrase tables as the agent. Its partial shopping-noun lexicon maps a recognized noun back through the active catalog taxonomy; an unknown noun declines rather than guesses. Free-form preferences and catalog values are not machine-translated, so this is multilingual routing and questioning, not a claim of open-domain translation.
 
@@ -62,7 +67,7 @@ python scripts/needle_storefront.py --warm --benchmark-mode
 
 ## Behaviours worth knowing before you demo
 
-**A stale chip is not a bug.** Under `override_policy="retract_stated"` an override supersedes every active constraint but deliberately keeps the answers the customer gave to our questions (`needle/state.py`). So the belief panel can report a value as dropped while the text retrieval reads still contains it. Those chips are marked stale rather than hidden. On the released override sessions the retained answers stay compatible with the new intent and the policy measures 100% — see `docs/evidence/EXP_006_SHAPES.md`. In free text they need not be compatible: "ignore my earlier preference, I need a leather belt" keeps an earlier "soft cotton" and can return a cotton product. This is a known consequence of a measured decision, not a defect to patch around in the interface.
+**Override semantics are isolated by mode.** Benchmark mode preserves the measured `override_policy="retract_stated"`: an override supersedes stated constraints but retains clarification answers, and stale chips remain visible for audit. Product mode cannot assume those retained answers are compatible with an arbitrary human correction. A preference retraction therefore rotates only the active line item's agent session and clears its live query, selection and question caches while retaining the superseded audit trail, product identity and other journey items.
 
 **A single-product slate is expected early.** `adaptive_slate` with `early_slate_size=1` holds the wider slate back until turn `full_slate_turn` or `full_slate_constraints` disclosures. The interface renders a one-product slate as a spotlight and says why, rather than looking broken.
 
@@ -83,15 +88,16 @@ Run the product-level adversarial gate against the real catalog separately:
 python scripts/journey_redteam.py
 ```
 
-It covers multi-item preservation, catalog-derived audience clarification, alternative constraints, explicit selection, relation evidence, correction scope, comparison-state immutability, vague exploration, category integrity, degradation and the ten-card contract. It does not emit or imply an official score.
+It covers multi-item preservation, catalog-derived audience clarification, alternative constraints, explicit selection, relation evidence, correction scope, comparison-state immutability, vague exploration, complete-category numeric filtering and ranking, category integrity, degradation and the ten-card contract. It does not emit or imply an official score.
 
 The gate fails on a degraded turn, empty slate, malformed response, missing
 target-blind trace, bad error status, accepted eleventh turn, or p95 latency
-above the supplied ceiling. The freeze run completed 36 traced turns in 6.62s
-at p50 140.6ms, p95 430.0ms, and max 820.3ms; error paths and turn budget passed.
+above the supplied ceiling. The final benchmark-mode run completed 36 traced
+turns in 3.08s at p50 63.4ms, p95 191.9ms, and max 386.4ms; error paths and
+turn budget passed.
 
 ## Interface notes
 
-Single HTML file, no build step, no package, no network, no font or asset fetch. Everything user- or catalog-supplied is written through `textContent`; no path builds markup from either. The server binds the loopback interface only and is not written to be exposed to a network.
+Single HTML file, no frontend build step, package, network, font or asset fetch. Everything user- or catalog-supplied is written through `textContent`; no path builds markup from either. The server binds the loopback interface only and is not written to be exposed to a network.
 
-The release-candidate interface was rendered in headless Chrome at 1440x1000 and a 390x844 mobile viewport. Both dimensions reported `scrollWidth == clientWidth`; the live two-turn correction flow displayed two decision receipts, active `blue`, excluded `black`, and no degraded turn. This is browser evidence for the tested Chromium build, not a blanket cross-browser claim.
+The base interface at commit `cac5a30` was rendered in headless Chrome at 1440x1000 and a 390x844 mobile viewport. Both dimensions reported `scrollWidth == clientWidth`; the live two-turn correction flow displayed two decision receipts, active `blue`, excluded `black`, and no degraded turn. The later numeric receipt and plan chips passed the same static no-injection artifact gate, but still require a final rendered desktop/mobile pass. This is browser evidence for the tested Chromium build, not a blanket cross-browser claim.

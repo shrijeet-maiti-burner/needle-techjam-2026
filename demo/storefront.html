@@ -990,6 +990,21 @@
       });
       body.appendChild(grid);
 
+      const ranking = journeyTrace && journeyTrace.ranking;
+      if (ranking && typeof ranking === "object") {
+        const rankNote = node("div", "receipt-note");
+        rankNote.appendChild(node("b", "", "Ranking applied: "));
+        rankNote.appendChild(node(
+          "span",
+          "",
+          human(ranking.label || ranking.field || "catalog preference") +
+            " over " + numberFormat.format(Number(ranking.eligible_with_value || 0)) +
+            " eligible products with a stated value" +
+            (ranking.method ? " · " + human(ranking.method) : "") + "."
+        ));
+        body.appendChild(rankNote);
+      }
+
       if (question.asks) {
         const options = Array.isArray(question.options)
           ? question.options
@@ -1137,6 +1152,40 @@
             operator + " " + human(group.attribute) + ": " + values
           ));
         });
+        (Array.isArray(item.numeric_filters) ? item.numeric_filters : []).forEach((filter) => {
+          const name = filter.field === "average_rating"
+            ? "rating"
+            : (filter.field === "rating_number" ? "reviews" : "price");
+          const unit = filter.field === "price" ? "$" : "";
+          const suffix = filter.field === "average_rating" ? " stars" : "";
+          let value = "";
+          if (filter.minimum != null && filter.maximum != null) {
+            value = unit + filter.minimum + " to " + unit + filter.maximum + suffix;
+          } else if (filter.minimum != null) {
+            value = (filter.minimum_inclusive === false ? "more than " : "at least ") +
+              unit + filter.minimum + suffix;
+          } else if (filter.maximum != null) {
+            value = (filter.maximum_inclusive === false ? "under " : "up to ") +
+              unit + filter.maximum + suffix;
+          }
+          groups.appendChild(node("span", "journey-group all", name + ": " + value));
+        });
+        if (item.ranking && item.ranking.field) {
+          const rankingLabels = {
+            "price:false": "lowest listed price",
+            "price:true": "highest listed price",
+            "average_rating:false": "lowest confidence-adjusted rating",
+            "average_rating:true": "best confidence-adjusted rating",
+            "rating_number:false": "fewest reviews",
+            "rating_number:true": "most reviewed",
+          };
+          const key = item.ranking.field + ":" + Boolean(item.ranking.descending);
+          groups.appendChild(node(
+            "span",
+            "journey-group any",
+            "rank: " + (rankingLabels[key] || human(item.ranking.field))
+          ));
+        }
         if (groups.childNodes.length) box.appendChild(groups);
         items.appendChild(box);
       });

@@ -269,8 +269,12 @@ in a worse rank than waiting one turn would have earned.
 
 A local storefront (`scripts/needle_storefront.py --warm`) and its target-blind
 decision receipt ship in this archive as an optional judge-facing demonstration.
-They do not alter the `starter.agent:Agent` scoring entry point; the transcript
-above remains the required evaluator-shaped artefact.
+Its labelled journey layer supports multiple linked items, catalog-evidenced
+compatibility and typed price, rating and review-count preferences. Explicit
+numeric orderings use the complete catalog-derived category pool; `best rated`
+uses a disclosed review-count-adjusted average rather than raw stars. None of
+this alters the `starter.agent:Agent` scoring entry point; the transcript above
+remains the required evaluator-shaped artefact.
 
 ## Team contributions
 

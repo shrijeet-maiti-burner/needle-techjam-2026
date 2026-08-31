@@ -34,7 +34,7 @@ Do not merge a public-score gain that fails the registered robustness or contrac
 ## Required checks
 
 ```bash
-python -m compileall -q needle starter submission scripts tests robustness
+python -m compileall -q needle starter submission scripts tests robustness storefront
 python -m unittest discover -s tests -v
 git diff --check
 ```

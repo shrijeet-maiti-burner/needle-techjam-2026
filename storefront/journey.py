@@ -22,6 +22,13 @@ from typing import Callable, Iterable, Mapping, Sequence
 from needle.catalog import query_terms
 from needle.state import PREFERENCE_OVERRIDE_RE, Polarity, _override_match, extract_constraints
 
+from storefront.preferences import (
+    NumericFilter,
+    RankingPreference,
+    parse_numeric_intent,
+    searchable_text,
+)
+
 
 class ConstraintOperator(str, Enum):
     """How the values in a constraint group combine."""
@@ -70,6 +77,10 @@ class LineItem:
     agent_session_id: str
     constraints: list[ConstraintGroup] = field(default_factory=list)
     superseded: list[ConstraintGroup] = field(default_factory=list)
+    numeric_filters: list[NumericFilter] = field(default_factory=list)
+    superseded_numeric: list[NumericFilter] = field(default_factory=list)
+    ranking: RankingPreference | None = None
+    superseded_rankings: list[RankingPreference] = field(default_factory=list)
     relation: str | None = None
     related_item_id: str | None = None
     local_turn: int = 0
@@ -104,6 +115,10 @@ class LineItem:
             "active": active,
             "constraints": [group.as_dict() for group in self.constraints],
             "superseded": [group.as_dict() for group in self.superseded],
+            "numeric_filters": [constraint.as_dict() for constraint in self.numeric_filters],
+            "superseded_numeric": [constraint.as_dict() for constraint in self.superseded_numeric],
+            "ranking": self.ranking.as_dict() if self.ranking is not None else None,
+            "superseded_rankings": [ranking.as_dict() for ranking in self.superseded_rankings],
             "relation": self.relation,
             "related_item_id": self.related_item_id,
             "selected_id": self.selected_id,
@@ -249,6 +264,27 @@ class DeterministicJourneyPlanner:
                 active = plan.active_item
                 active.superseded.extend(active.constraints)
                 active.constraints = []
+                active.superseded_numeric.extend(active.numeric_filters)
+                active.numeric_filters = []
+                if active.ranking is not None:
+                    active.superseded_rankings.append(active.ranking)
+                    active.ranking = None
+                # The measured agent deliberately retains clarification
+                # answers under ``retract_stated``. That is useful for the
+                # official simulator but can leak a retracted free-form value
+                # into a real shopping journey. Rotate only this line item's
+                # agent session, retaining its product identity and audit
+                # trail while giving the new preference a clean retrieval
+                # history and clarification board.
+                active.agent_session_id = (
+                    f"{plan.session_id}:{active.item_id}:intent-{int(turn)}"
+                )
+                active.local_turn = 0
+                active.messages = []
+                active.asked_facets = []
+                active.offered_values = {}
+                active.last_ids = []
+                active.selected_id = None
             else:
                 plan.items.clear()
                 plan.active_item_id = None
@@ -369,6 +405,7 @@ class DeterministicJourneyPlanner:
         # operands; treating them as new preferences corrupts the plan.
         if not comparison:
             self._apply_constraints(plan, active, text, int(turn))
+            self._apply_numeric_intent(active, text, int(turn))
 
         plan.exploration = exploration
         plan.comparison = comparison
@@ -406,6 +443,11 @@ class DeterministicJourneyPlanner:
                 if value not in plan.global_context:
                     plan.global_context.append(value)
                     plan.context_turns.setdefault(value, int(turn))
+                continue
+            # Price is numeric evidence, not a prose value.  The structured
+            # preference parser below handles upper/lower/range semantics and
+            # keeps it out of ordinary token matching.
+            if attribute == "budget":
                 continue
             by_attribute.setdefault((attribute, polarity), []).append(value)
         for value, pattern in _CONTEXT_EQUIVALENTS.items():
@@ -453,6 +495,39 @@ class DeterministicJourneyPlanner:
                 for existing in item.constraints
             ):
                 item.constraints.append(group)
+
+    @staticmethod
+    def _apply_numeric_intent(item: LineItem, message: str, turn: int) -> None:
+        intent = parse_numeric_intent(message, turn)
+        if not intent.active:
+            return
+
+        for field in intent.clear_fields:
+            kept: list[NumericFilter] = []
+            for constraint in item.numeric_filters:
+                if constraint.field == field:
+                    item.superseded_numeric.append(constraint)
+                else:
+                    kept.append(constraint)
+            item.numeric_filters = kept
+            if item.ranking is not None and item.ranking.field == field:
+                item.superseded_rankings.append(item.ranking)
+                item.ranking = None
+
+        for constraint in intent.filters:
+            kept = []
+            for existing in item.numeric_filters:
+                if existing.field == constraint.field:
+                    item.superseded_numeric.append(existing)
+                else:
+                    kept.append(existing)
+            kept.append(constraint)
+            item.numeric_filters = kept
+
+        if intent.ranking is not None:
+            if item.ranking is not None and item.ranking != intent.ranking:
+                item.superseded_rankings.append(item.ranking)
+            item.ranking = intent.ranking
 
     @staticmethod
     def _supersede_attribute(item: LineItem, attribute: str) -> None:
@@ -546,6 +621,50 @@ def journey_beliefs(plan: ShoppingPlan) -> dict[str, object]:
         for group in item.superseded:
             for value in group.values:
                 superseded.append(entry(group, value, item.label))
+        for constraint in item.numeric_filters:
+            wanted.append(
+                {
+                    "attribute": "numeric",
+                    "value": constraint.label(),
+                    "turn": constraint.turn,
+                    "operator": "all",
+                    "strength": "hard",
+                    "item": item.label,
+                }
+            )
+        if item.ranking is not None:
+            wanted.append(
+                {
+                    "attribute": "rank",
+                    "value": item.ranking.label(),
+                    "turn": item.ranking.turn,
+                    "operator": "all",
+                    "strength": "soft",
+                    "item": item.label,
+                }
+            )
+        for constraint in item.superseded_numeric:
+            superseded.append(
+                {
+                    "attribute": "numeric",
+                    "value": constraint.label(),
+                    "turn": constraint.turn,
+                    "operator": "all",
+                    "strength": "hard",
+                    "item": item.label,
+                }
+            )
+        for ranking in item.superseded_rankings:
+            superseded.append(
+                {
+                    "attribute": "rank",
+                    "value": ranking.label(),
+                    "turn": ranking.turn,
+                    "operator": "all",
+                    "strength": "soft",
+                    "item": item.label,
+                }
+            )
 
     return {
         "wanted": wanted,
@@ -564,7 +683,8 @@ def query_for(plan: ShoppingPlan, item: LineItem) -> str:
     # Retain bounded free-text evidence such as "garden" or "daytime" that is
     # useful to sparse retrieval but is not one of the scorer's compact facets.
     # This is the shopper's language, not a generated expansion.
-    terms.extend(query_terms(" ".join(item.messages[-2:]), limit=30))
+    recent = " ".join(searchable_text(message) for message in item.messages[-2:])
+    terms.extend(query_terms(recent, limit=30))
     return " ".join(dict.fromkeys(term for term in terms if term)).strip()
 
 

@@ -212,6 +212,34 @@ class JourneyPlannerTest(unittest.TestCase):
         self.assertEqual(self.plan.active_item.category, "suit")
         self.assertEqual(self.plan.active_item.constraints[0].values, ("white",))
 
+    def test_preference_retraction_rotates_only_the_active_product_session(self) -> None:
+        self.planner.observe(self.plan, "I need a blue suit", 1)
+        item = self.plan.active_item
+        assert item is not None
+        original_session = item.agent_session_id
+        item.local_turn = 3
+        item.asked_facets.append("style")
+        item.offered_values["style"] = ["formal", "casual"]
+        item.last_ids = ["SUIT_BLUE"]
+        item.selected_id = "SUIT_BLUE"
+
+        self.planner.observe(
+            self.plan,
+            "ignore my earlier preference; make it white",
+            2,
+        )
+
+        self.assertEqual(len(self.plan.items), 1)
+        self.assertNotEqual(item.agent_session_id, original_session)
+        self.assertEqual(item.local_turn, 0)
+        self.assertEqual(item.messages, ["ignore my earlier preference; make it white"])
+        self.assertEqual(item.asked_facets, [])
+        self.assertEqual(item.offered_values, {})
+        self.assertEqual(item.last_ids, [])
+        self.assertIsNone(item.selected_id)
+        self.assertTrue(any("blue" in group.values for group in item.superseded))
+        self.assertTrue(any("white" in group.values for group in item.constraints))
+
     def test_concrete_category_promotes_the_vague_placeholder(self) -> None:
         self.planner.observe(self.plan, "I need something for a wedding", 1)
         placeholder_id = self.plan.active_item_id

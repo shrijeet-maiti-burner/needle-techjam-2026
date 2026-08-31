@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import colorsys
 import math
+import re
+import statistics
 from dataclasses import asdict, dataclass
 from typing import Iterable, Mapping, Sequence
 
@@ -23,6 +25,7 @@ from storefront.journey import (
     LineItem,
     ShoppingPlan,
 )
+from storefront.preferences import PRICE, RATING, REVIEWS
 
 
 _COLOR_RGB: Mapping[str, tuple[int, int, int]] = {
@@ -79,6 +82,7 @@ class RerankResult:
     filtered_ids: tuple[str, ...]
     relaxed: bool
     reason: str
+    ranking: Mapping[str, object] | None = None
 
 
 def _record_text(product: Mapping[str, object]) -> str:
@@ -126,7 +130,12 @@ def _category_matches(category: str, product: Mapping[str, object]) -> bool:
         for value in path[2:]
         for token in query_terms(str(value), limit=40)
     }
-    return not wanted or bool(wanted.intersection(category_tokens))
+    # A catalog-derived phrase such as "running shoes" names one product type.
+    # Accepting either token admitted running socks and non-running shoes into
+    # the same slate.  Every stated category token must therefore occur in the
+    # product's category path; singular normalization above keeps this strict
+    # without making it spelling-fragile.
+    return not wanted or wanted.issubset(category_tokens)
 
 
 def _category_quality(category: str, product: Mapping[str, object]) -> float:
@@ -142,6 +151,8 @@ def _category_quality(category: str, product: Mapping[str, object]) -> float:
         {_stem(token) for token in query_terms(str(value), limit=40)}
         for value in path
     ]
+    if wanted == nodes[-1]:
+        return 1.12
     if wanted.intersection(nodes[-1]):
         return 1.0
     if len(nodes) > 1 and wanted.intersection(nodes[-2]):
@@ -150,6 +161,14 @@ def _category_quality(category: str, product: Mapping[str, object]) -> float:
 
 
 def _audience(product: Mapping[str, object]) -> str:
+    # The catalog taxonomy is the declared source of audience truth. Titles
+    # occasionally disagree with their filed department, so use title text
+    # only when the taxonomy has no recognized audience node.
+    path = list(_flatten_values(product.get("categories")))
+    if len(path) > 1:
+        taxonomy = fold_marks(str(path[1])).strip().lower()
+        if taxonomy in {"men", "women", "boys", "girls"}:
+            return taxonomy
     title_terms = set(query_terms(str(product.get("title") or ""), limit=80))
     stated = [
         audience
@@ -158,8 +177,7 @@ def _audience(product: Mapping[str, object]) -> str:
     ]
     if len(stated) == 1:
         return stated[0]
-    path = list(_flatten_values(product.get("categories")))
-    return fold_marks(str(path[1])).strip().lower() if len(path) > 1 else ""
+    return ""
 
 
 def _group_matches(group: ConstraintGroup, product: Mapping[str, object], tokens: frozenset[str]) -> int:
@@ -183,6 +201,46 @@ def _hard_violation(item: LineItem, product: Mapping[str, object], tokens: froze
         if group.operator is ConstraintOperator.ANY and not matches:
             return True
         if group.operator is ConstraintOperator.ALL and matches < len(group.values):
+            return True
+    return False
+
+
+def _numeric_value(product: Mapping[str, object], field: str) -> float | None:
+    raw = product.get(field)
+    if field == PRICE and isinstance(raw, str):
+        found = re.search(r"\d+(?:,\d{3})*(?:\.\d+)?", raw)
+        raw = found.group(0).replace(",", "") if found is not None else None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(value):
+        return None
+    if field == PRICE:
+        return value if value > 0 else None
+    if field == RATING:
+        return value if 0 < value <= 5 else None
+    if field == REVIEWS:
+        return value if value >= 0 else None
+    return None
+
+
+def _numeric_violation(item: LineItem, product: Mapping[str, object]) -> bool:
+    """Unknown numeric facts cannot truthfully satisfy a hard numeric filter."""
+
+    for constraint in item.numeric_filters:
+        value = _numeric_value(product, constraint.field)
+        if value is None:
+            return True
+        if constraint.minimum is not None and (
+            value < constraint.minimum
+            or (not constraint.minimum_inclusive and value == constraint.minimum)
+        ):
+            return True
+        if constraint.maximum is not None and (
+            value > constraint.maximum
+            or (not constraint.maximum_inclusive and value == constraint.maximum)
+        ):
             return True
     return False
 
@@ -333,18 +391,22 @@ def rerank_products(
     anchor = view.raw(anchor_id) if anchor_id else None
     anchor_audience = _audience(anchor) if anchor is not None else ""
     rows: list[RankedProduct] = []
+    products: dict[str, Mapping[str, object]] = {}
     filtered: list[str] = []
     seen: set[str] = set()
+    catalog_products = view.raw_many(candidate_ids)
     for rank, identifier in enumerate(candidate_ids, start=1):
         if not identifier or identifier in seen:
             continue
         seen.add(identifier)
-        product = view.raw(identifier)
+        product = catalog_products.get(identifier)
         if product is None:
             continue
         product_tokens = _tokens(product)
         category_ok = _category_matches(item.category, product)
-        violation = _hard_violation(item, product, product_tokens)
+        violation = _hard_violation(
+            item, product, product_tokens
+        ) or _numeric_violation(item, product)
         candidate_audience = _audience(product)
         explicit_audience_mismatch = (
             bool(item.audience)
@@ -363,8 +425,10 @@ def rerank_products(
             filtered.append(identifier)
             continue
 
-        matched = 0
-        total = 0
+        products[identifier] = product
+
+        matched = len(item.numeric_filters)
+        total = len(item.numeric_filters)
         score = 0.55 / math.log2(rank + 1.0)
         score += 0.90 * _category_quality(item.category, product)
         context_delta, _ = _context_fit(product, plan.global_context)
@@ -409,10 +473,91 @@ def rerank_products(
         return RerankResult((), tuple(filtered), False, "no candidate satisfies every hard requirement")
 
     rows.sort(key=lambda row: (-row.score, row.parent_asin))
-    if explore and len(rows) > 1:
+    ranking_evidence: dict[str, object] | None = None
+    if item.ranking is not None:
+        preference = item.ranking
+        values: dict[str, float | None] = {}
+        method = "catalog field"
+        if preference.field == RATING:
+            observed = [
+                (
+                    _numeric_value(products[row.parent_asin], RATING),
+                    _numeric_value(products[row.parent_asin], REVIEWS),
+                )
+                for row in rows
+            ]
+            supported = [
+                (rating, reviews)
+                for rating, reviews in observed
+                if rating is not None and reviews is not None
+            ]
+            if supported:
+                total_weight = sum(max(1.0, reviews) for _, reviews in supported)
+                prior_mean = (
+                    sum(rating * max(1.0, reviews) for rating, reviews in supported)
+                    / total_weight
+                )
+                prior_weight = float(
+                    statistics.median(max(1.0, reviews) for _, reviews in supported)
+                )
+            else:
+                prior_mean, prior_weight = 0.0, 1.0
+            for row in rows:
+                rating = _numeric_value(products[row.parent_asin], RATING)
+                reviews = _numeric_value(products[row.parent_asin], REVIEWS)
+                values[row.parent_asin] = (
+                    (rating * reviews + prior_mean * prior_weight) / (reviews + prior_weight)
+                    if rating is not None and reviews is not None
+                    else None
+                )
+            method = "bayesian average weighted by catalog review count"
+            ranking_evidence = {
+                "field": preference.field,
+                "label": preference.label(),
+                "direction": "descending" if preference.descending else "ascending",
+                "method": method,
+                "prior_mean": round(prior_mean, 4),
+                "prior_weight": round(prior_weight, 2),
+                "eligible_with_value": sum(value is not None for value in values.values()),
+            }
+        else:
+            values = {
+                row.parent_asin: _numeric_value(products[row.parent_asin], preference.field)
+                for row in rows
+            }
+            ranking_evidence = {
+                "field": preference.field,
+                "label": preference.label(),
+                "direction": "descending" if preference.descending else "ascending",
+                "method": method,
+                "eligible_with_value": sum(value is not None for value in values.values()),
+            }
+
+        def preference_order(row: RankedProduct) -> tuple[float, bool, float, float, str]:
+            value = values.get(row.parent_asin)
+            ordered = (
+                -value if preference.descending and value is not None
+                else value if value is not None
+                else 0.0
+            )
+            # Explicit ordering applies within the right product type.  A
+            # highly-rated accessory that mentions the category must not beat
+            # a product filed at that category's leaf.
+            quality = _category_quality(item.category, products[row.parent_asin])
+            return (-quality, value is None, ordered, -row.score, row.parent_asin)
+
+        rows.sort(key=preference_order)
+        reason = f"hard constraints enforced; ranked by {preference.label()}"
+    elif explore and len(rows) > 1:
         rows = _diversify(view, rows)
         reason = "hard constraints enforced; slate diversified by catalog facets"
-    return RerankResult(tuple(rows[: max(0, int(limit))]), tuple(filtered), relaxed, reason)
+    return RerankResult(
+        tuple(rows[: max(0, int(limit))]),
+        tuple(filtered),
+        relaxed,
+        reason,
+        ranking_evidence,
+    )
 
 
 def _diversify(view: CatalogView, rows: Sequence[RankedProduct]) -> list[RankedProduct]:

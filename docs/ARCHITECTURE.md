@@ -28,7 +28,9 @@ Beside that path, and reaching none of it: `needle/questions.py` ranks the
 catalog facet worth asking a person about, `needle/explain.py` writes the
 customer-facing sentence from the state that produced the turn,
 `needle/language.py` answers in the language the customer wrote in, and
-`storefront/` is the multi-item journey interface. The scored
+`storefront/` is the multi-item journey interface. It adds typed catalog-property
+filters and explicit numeric ordering over a catalog-derived category pool;
+those operations are confined to the labelled product surface. The scored
 `ask_attribute` and the scored ranking are untouched by all four.
 
 ## Stable interfaces
