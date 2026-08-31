@@ -197,7 +197,8 @@ staged one: the customer messages come from the official `local_evaluator`'s own
 `initial_message`, `customer_reply` and override injection, and the hit test is
 the evaluator's, so what is printed is what the scorer saw.
 
-Reproduce it from this bundle with:
+Reproduce it from this bundle after setting `TECHJAM_KIT_ROOT` to the extracted
+official participant-kit root:
 
 ```
 python3 scripts/demo_session.py --scenario intent_override

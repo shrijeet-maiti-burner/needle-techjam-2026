@@ -19,6 +19,11 @@ signature index location. Without an override, the starter automatically uses
 development path `.artifacts/indexes/catalog-signatures.sqlite3`. If neither is
 present, the agent rebuilds the equivalent index in process.
 
+`TECHJAM_KIT_ROOT` (helper scripts only). Set this to the extracted official
+participant-kit root when running `scripts/demo_session.py` or another shipped
+reproduction helper from outside the development repository. It is not read by
+the scored agent and is not required by the official evaluator.
+
 ## Running in the official harness
 
 The official evaluator imports `starter.agent.Agent`, so the submitted agent is
