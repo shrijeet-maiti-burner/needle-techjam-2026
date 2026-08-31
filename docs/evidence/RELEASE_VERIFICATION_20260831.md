@@ -8,7 +8,8 @@ point: every figure below was measured from a clean, committed tree by someone
 with no prior knowledge of the implementation, on hardware and an interpreter
 that were not used to produce the published values.
 
-Every published release measurement to date was taken from a dirty tree.
+Before this independent pass, every published release measurement had been
+taken from a dirty tree.
 `docs/evidence/FINAL_RELEASE_20260831.md` states this and its command carries
 `--allow-dirty`. This pass drops that flag.
 
@@ -315,7 +316,8 @@ the builder's default is `needle-submission.zip`. `submission/README.md`
 
 **5. `MANIFEST.json` carries no per-file digests.** It checksums the asset and
 asserts `tracked_file_count`. A judge holding the archive cannot verify any
-individual shipped file against it. `SHA256SUMS-final.txt` now supplies this.
+individual shipped file against it. The per-file digest block in **The frozen
+archive** above supplies that historical build's content record.
 
 **6. The report cites the uncompressed asset rather than the delivered
 archive.** Against the allow-list phrase "lightweight local assets", what a
