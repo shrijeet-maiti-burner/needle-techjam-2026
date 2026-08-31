@@ -195,8 +195,34 @@ ATTRIBUTE_VOCABULARY: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("size", SIZES),
 )
 
+# A comparator in front of a number does not make it money. Catalog feature
+# text is full of measurements phrased exactly like a price cap, and the
+# simulator reads that text back to us verbatim:
+#
+#   "fits up to 8-inch wrist circumference"   -> budget 8
+#   "Fit bands up to 30mm wide"               -> budget 30
+#   "Size: <1>Big handbag:26*15*18cm"         -> budget 1
+#
+# All three are live public sessions. A false budget is not inert: it is an
+# active constraint, so it inflates the count the slate-width gate reads and it
+# reaches the customer as a stated preference they never gave.
+#
+# The discriminator is the character straight after the digits, not a list of
+# units. A unit is welded to its number ("8-inch", "30mm") and a stray "<1>"
+# closes its bracket, whereas money is followed by punctuation, whitespace or
+# nothing. So the comparator branch refuses to be followed immediately by a
+# letter, a hyphen or a closing angle bracket. "under 50 dollars" is unaffected,
+# because the space between them is what says the word is not a unit suffix.
+#
+# A digit joins that class purely to close a backtracking hole. Without it
+# "30mm" fails on "30", backs off to "3", finds "0" acceptable and reports a
+# budget of three. Refusing a trailing digit leaves the engine nowhere to
+# retreat to, so the match is abandoned as intended.
+#
+# The explicit currency branch keeps no such guard: "$50" is money whatever
+# follows it.
 BUDGET_RE = re.compile(
-    r"(?:under|below|less than|at most|up to|<=?)\s*\$?\s*(\d+(?:\.\d+)?)"
+    r"(?:under|below|less than|at most|up to|<=?)\s*\$?\s*(\d+(?:\.\d+)?)(?![-a-z0-9>])"
     r"|\$\s*(\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )
@@ -343,11 +369,23 @@ def extract_constraints(message: str) -> list[tuple[str, str, Polarity]]:
             found.append((attribute, value.lower(), polarity))
 
     if "budget" not in declined:
-        budget = BUDGET_RE.search(message)
-        if budget and not inside_declined(budget.start()):
-            amount = next((group for group in budget.groups() if group), None)
-            if amount:
-                found.append(("budget", amount, Polarity.POSITIVE))
+        # The last figure the customer leaves standing, not the first one they
+        # said. "Under $50. Actually, up to $200." is a correction, and taking
+        # the opening match kept the number they had just replaced.
+        #
+        # A negated figure is skipped rather than allowed to win, so "Budget is
+        # $200, definitely not $50." keeps 200. Budget carries no polarity of
+        # its own: there is one cap or there is none, and an excluded price is
+        # not a constraint retrieval could use.
+        amount: str | None = None
+        for budget in BUDGET_RE.finditer(message):
+            if inside_declined(budget.start()) or _is_negated(message, budget.start()):
+                continue
+            stated = next((group for group in budget.groups() if group), None)
+            if stated:
+                amount = stated
+        if amount:
+            found.append(("budget", amount, Polarity.POSITIVE))
     return found
 
 
