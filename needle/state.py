@@ -156,6 +156,25 @@ NEGATION_RESET_RE = re.compile(
     r"[,;.!?\u2014\u2013]|\s-\s|\b(?:but|however|though|yet)\b",
     re.IGNORECASE,
 )
+# These constructions contain a syntactic negator without rejecting the value.
+# They are grammatical operators, not product vocabulary: the same suppression
+# applies to every attribute extracted below. Removing only the operator leaves
+# any real exclusion later in the window (for example, "do not mind avoiding
+# wool") available to the ordinary negation rule.
+NON_EXCLUDING_NEGATION_RE = re.compile(
+    r"\bnot\s+(?:only|sure|certain|opposed\s+to|against)\b"
+    r"|\b(?:do|does|did|would|could|should)\s+not\s+"
+    r"(?:mind|dislike|hate|object\s+to)\b",
+    re.IGNORECASE,
+)
+# Contrastive ``but`` normally resets negation scope. In an exception
+# construction it is itself the exclusion operator, so detect that bounded
+# grammatical form before applying the general reset rule. ``nothing but`` is
+# intentionally absent: it is inclusive ("only X"), not a rejection of X.
+EXCEPTION_NEGATION_RE = re.compile(
+    r"\b(?:anything|everything|all)\s+but(?:\s+(?:a|an|the))?\s*$",
+    re.IGNORECASE,
+)
 
 MATERIALS = (
     "cotton", "polyester", "nylon", "leather", "wool", "spandex", "silk",
@@ -279,12 +298,11 @@ def _find_values(message: str, vocabulary: tuple[str, ...]) -> list[tuple[str, i
 def _is_negated(message: str, offset: int) -> bool:
     """Whether a nearby negator still governs the value at ``offset``."""
     prefix = message[max(0, offset - NEGATION_WINDOW):offset]
+    if EXCEPTION_NEGATION_RE.search(prefix):
+        return True
     resets = list(NEGATION_RESET_RE.finditer(prefix))
     window = prefix[resets[-1].end():] if resets else prefix
-    # "not only black" is additive emphasis, not rejection.  Removing the
-    # paired discourse marker before the ordinary negation test is safer than
-    # teaching the state machine a product-specific exception.
-    window = re.sub(r"\bnot\s+only\b", "", window, flags=re.IGNORECASE)
+    window = NON_EXCLUDING_NEGATION_RE.sub("", window)
     return bool(NEGATION_RE.search(window))
 
 
