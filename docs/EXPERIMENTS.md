@@ -37,7 +37,7 @@ independent rerun owner:
 | EXP-014 | Shrijeet | does ambiguity-cluster later-rank coverage beat relevance-only and fixed slate controls? | rank-one relevance preserved where applicable | H24 |
 | EXP-008/010/011 | Aryaman + Yazhiniyan | does an optional semantic path improve robustness within offline resource limits? | no-op and lexical-only controls | H40 |
 
-Public TechnicalScore is one technical input, not the architecture selection rule. Robustness, contract safety, resources, reproducibility, and judge-facing evidence remain independent gates.
+Public TechnicalScore is one technical input, not the architecture selection rule. Robustness, contract safety, resources, reproducibility, and demonstrated product behavior remain independent gates.
 
 ## Completed records
 
@@ -56,4 +56,4 @@ Public TechnicalScore is one technical input, not the architecture selection rul
 - [EXP-028 MTTC headroom, 31 August](evidence/EXP_028_MTTC_HEADROOM.md): the remaining released-set score is localized to turn-one rank among evidence-equivalent products; public-only leakage arms are rejected rather than shipped.
 - [Final merged release evidence, 31 August](evidence/FINAL_RELEASE_20260831.md): official, catalog-disjoint, robustness, human-state, interface and concurrency results are consolidated with unresolved gates intact.
 - [Independent release verification, 31 August](evidence/RELEASE_VERIFICATION_20260831.md): a clean committed tree and extracted archive reproduce the released score, asset binding, Python floor and resource claims independently.
-- [Final product surface and archive, 31 August to 1 September](evidence/FINAL_PRODUCT_SURFACE_20260831.md): typed catalog properties, correction-safe retrieval, rating-language coverage, judge-facing interface evidence and the current verified archive are recorded together without relabelling product behavior as benchmark score.
+- [Final product surface and archive, 31 August to 1 September](evidence/FINAL_PRODUCT_SURFACE_20260831.md): typed catalog properties, correction-safe retrieval, rating-language coverage, rendered interface evidence and the current verified archive are recorded together without relabelling product behavior as benchmark score.

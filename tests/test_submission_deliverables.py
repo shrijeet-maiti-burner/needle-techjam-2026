@@ -1,7 +1,7 @@
 """Everything the report points at has to be inside the archive.
 
-`submission/REPORT.md` is the judge-facing document and the one they are
-guaranteed to open. The competition specification lists four final deliverables,
+`submission/REPORT.md` is the primary technical document and the one evaluators
+are guaranteed to open. The competition specification lists four final deliverables,
 two of which the report is responsible for carrying: "a short report covering
 architecture, models, cost, limitations, and team contributions" and "one
 demonstrated multi-turn session".
