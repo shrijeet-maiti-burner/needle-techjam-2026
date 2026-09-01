@@ -74,5 +74,5 @@ rather than the repository:
   from the evaluator's side;
 - the pytest row is a development tool and nothing more: no file in the
   repository imports it, and the final `python -m unittest discover -s tests`
-  run completed 588 tests with 585 passes and three expected pre-archive asset
+  run completed 589 tests with 586 passes and three expected pre-archive asset
   skips, which is the runner used by CI and the archive instructions.
