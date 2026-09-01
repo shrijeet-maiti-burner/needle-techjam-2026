@@ -41,8 +41,9 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
     # The organizer kit also contains starter/agent.py. Running from its root
-    # can therefore evaluate the weak starter by accident. Put this extracted
-    # bundle first, then execute the organizer's evaluator file byte-for-byte.
+    # can therefore evaluate the kit's reference implementation by accident.
+    # Put this extracted bundle first, then execute the organizer's evaluator
+    # file byte-for-byte.
     # The evaluator receives its ordinary CLI arguments and writes its ordinary
     # results.json; no organizer file is copied or modified.
     sys.path.insert(0, str(BUNDLE_ROOT))
