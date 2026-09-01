@@ -1,8 +1,8 @@
-# Architecture, model choice, cost, and limitations
+# Needle technical report
 
-Required by the participant kit's `docs/submission_rules.md` ("a short report describing method, model
-choice, and limitations" and "a disclosure of latency, token usage, and
-estimated model cost").
+This report documents the submitted architecture, retrieval and conversation
+method, model choice, measured cost and resources, known limitations, a
+reproducible multi-turn session, and each team member's contribution.
 
 ## Architecture and method
 
@@ -86,9 +86,9 @@ network, and cost risk from official scoring entirely.
 
 ## Cost, token usage, latency, and network disclosure
 
-The separate [submission disclosure inventory](../docs/SUBMISSION_DISCLOSURES.md)
-tracks the required development tools, APIs, libraries and frameworks, and
-datasets and assets for the final Devpost description.
+The complete [submission disclosure inventory](../docs/SUBMISSION_DISCLOSURES.md)
+records the development tools, APIs, libraries and frameworks, datasets, and
+assets used to build and run Needle.
 
 | item | value |
 |---|---|
@@ -120,8 +120,8 @@ from the extracted archive rather than from the repository.
 Construction happens once per evaluation run, not per session or per turn, so
 the figures above are one-off. Both paths are reported because the specification
 reserves the right to run the submission under CPU, memory, timeout and network
-restrictions, and to treat a timeout as a miss. The worst case is the second
-row: if the bundled index is refused for any reason the agent rebuilds an
+restrictions, and to treat a timeout as a miss. In the fallback construction
+path, if the bundled index is refused for any reason the agent rebuilds an
 equivalent one, which costs 27.9 s once and 79 MB more, and then scores
 identically, which the last row records. That rebuild is held in a SQLite
 `:memory:` database and writes nothing, so it survives a read-only filesystem
@@ -145,8 +145,8 @@ These are stated plainly because they bear on how the result should be read.
 are deterministically materialised from the target catalog row. Three separate
 200-target proxies exclude every released ground-truth target and match public
 rating, price-presence, broad-category, profile, and scenario marginals. They
-score 0.979075, 0.965625, and 0.959900 when rerun from the release-candidate
-tree. They still reuse the released simulator, so they are evidence against
+score 0.979075, 0.965625, and 0.959900 when rerun through the selected agent.
+They still reuse the released simulator, so they are evidence against
 direct target memorising, not private-score estimates.
 
 **Sensitivity to message wording is measured and real.** The exact surface has
@@ -155,7 +155,7 @@ order removes two of 158 changed targets. Single-edit typo removes none but
 reduces MRR to 0.988958. The meaning-changing negation, attribute-swap, and
 constraint-drop edits also fail the registered zero-removal gate against the
 original target. The exact rates and ranking metrics are retained in the dated
-final evidence record. The gates were not weakened.
+final evidence record, and those gates remain failed.
 
 **Override handling still depends on a structural trigger.** Accent folding and
 independent paraphrases pass, and later question answers now survive a scoped
@@ -191,11 +191,10 @@ only be paid early.
 
 ## Demonstrated session
 
-Required deliverable, printed in full below so it is readable from the archive
-alone rather than only by running something. It is a real transcript, not a
-staged one: the customer messages come from the official `local_evaluator`'s own
-`initial_message`, `customer_reply` and override injection, and the hit test is
-the evaluator's, so what is printed is what the scorer saw.
+The transcript is printed in full so it remains readable from the archive
+without running additional software. It is not staged: the customer messages
+come from the official `local_evaluator`'s `initial_message`, `customer_reply`,
+and override injection, and the hit test is the evaluator's own.
 
 Reproduce it from this bundle after setting `TECHJAM_KIT_ROOT` to the extracted
 official participant-kit root:
@@ -260,7 +259,7 @@ turn 4
 ------------------------------------------------------------------------------
 ```
 
-The override transcript is the one worth reading. It shows the two turns the
+The override transcript highlights the two turns the
 evaluator refuses to score before the new intent arrives, which is why that
 slice carries the highest turns-to-conversion by construction rather than
 through any ranking weakness. It also shows the emission policy: one product per
@@ -269,7 +268,7 @@ session's rank at the first turn the target appears, so a premature slate locks
 in a worse rank than waiting one turn would have earned.
 
 A local storefront (`scripts/needle_storefront.py --warm`) and its target-blind
-decision receipt ship in this archive as an optional judge-facing demonstration.
+decision receipt ship in this archive as an optional interactive demonstration.
 Its labelled journey layer supports multiple linked items, catalog-evidenced
 compatibility and typed price, rating and review-count preferences. Explicit
 numeric orderings use the complete catalog-derived category pool; natural
@@ -278,23 +277,21 @@ review-count-adjusted average as `best rated`, while a stated rating floor is a
 hard filter. The interface also exposes ranked question alternatives,
 correction history, an evidence-bounded comparison tray, seven reply languages
 and measured accessible themes. None of this alters the `starter.agent:Agent`
-scoring entry point; the transcript above remains the required evaluator-shaped
-artefact.
+scoring entry point; the transcript above remains the evaluator-shaped
+reproduction record.
 
 ## Team contributions
 
-Ownership boundaries are recorded in [docs/OWNERSHIP.md](../docs/OWNERSHIP.md)
-and were enforced through review: each area has one owner, and cross-owner
-changes were raised on the other owner's pull request rather than committed
-directly.
+The detailed ownership record is in
+[docs/OWNERSHIP.md](../docs/OWNERSHIP.md).
 
-| area | owner | delivered |
+| Contributor | Area | Delivered |
 |---|---|---|
-| belief state, override policy, question policy | Athul Krishna Boban | versioned constraint state with correction, negation and supersession (#1); `retract_stated` override policy (#6); contradiction invalidation (#9); retraction-rule override trigger (#10); submission packaging and run-safety (#8); EXP-006/013 closures and the popularity transfer review (#12); correction-query retirement, language selector, accessible themes, comparison, correction timeline and question alternatives (#51 content integrated through #50) |
-| retrieval, ranking, integration | Shrijeet Maiti | reproducible experiment harness (#2); catalog validation and sparse controls, measured primary and rollback paths (#5); transfer-gated primary selection (#11); complete-category typed price/rating/review filtering, confidence-adjusted rating language, final integration and release verification (#50) |
-| robustness, lexical normalization, conversational interface | Aryaman Anand | offline lexical normalizer and robustness fixtures (#3); EXP-010 perturbation library (#4); session-level robustness driver, slice runner and comparison report (#7); query/corpus tokenizer symmetry, SQLite handle release and the never-failing turn guard (#13); override-trigger tolerance to surface corruption (#15); vocabulary-derived typo recovery, measured and retained default-off as a negative result (#16); the conversational storefront interface (#27); concurrent traced storefront smoke gate (#35) |
-| evaluation baseline, adversarial language QA and release verification | Yazhiniyan | independently reviewed negation scope and supplied idiomatic counterexamples (`would not mind`, `anything but`, contrastive preference and uncertainty phrasing) used to harden and re-test the final state parser; reproduced the released TechnicalScore 0.978500 from a clean committed tree without `--allow-dirty`, and again from the extracted archive under the unmodified official evaluator |
+| Athul Krishna Boban | conversation state, override behavior, question policy, packaging | versioned constraints; clause-scoped negation, contradiction and retraction handling; intent-override policy; question-policy experiments; correction-safe query retirement; clean-bundle packaging and release checks |
+| Shrijeet Maiti | retrieval, ranking, integration, release | reproducible experiment harness; catalog validation; signature and SQLite FTS5 retrieval; bounded category and popularity priors; adaptive slate and seen-item policy; typed price/rating/review behavior; primary/rollback integration and final release verification |
+| Aryaman Anand | robustness, lexical normalization, conversational interface | perturbation library and session-level robustness reports; tokenizer symmetry and typo-recovery experiments; never-failing turn guard; target-blind storefront; concurrent HTTP and interface-isolation checks |
+| Yazhiniyan | baseline evaluation, adversarial language QA, independent reproduction | official baseline verification; idiomatic negation and correction counterexamples; clean-tree and extracted-archive reproductions on CPython 3.10 and 3.12; resource and release verification |
 
-Every experiment in the source repository's `docs/evidence/` names an
-independent rerun owner, and the
-headline arms were reproduced by a second person before being cited.
+Headline evaluator results were reproduced by a second contributor before
+being cited. Negative and withdrawn experiments remain in the repository with
+their controls, measurements, decisions, and rollback paths.

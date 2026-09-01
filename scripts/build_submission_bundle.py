@@ -19,9 +19,9 @@ DEFAULT_KIT = ROOT / ".artifacts" / "participant-kit" / "techjam-conversational-
 DEFAULT_ASSET = ROOT / ".artifacts" / "indexes" / "catalog-signatures.sqlite3"
 DEFAULT_OUTPUT = ROOT / ".artifacts" / "releases" / "needle-submission.zip"
 # Everything `submission/REPORT.md` cites has to be reachable from inside the
-# archive. The report is the judge-facing document and it is the only one they
-# are guaranteed to open; a required deliverable that it points at and the zip
-# does not contain is a missing deliverable, not a broken link.
+# archive. The report is the primary technical document and it is the only one
+# evaluators are guaranteed to open. A required deliverable that it points at
+# and the zip does not contain is a missing deliverable, not a broken link.
 #
 # `scripts/demo_session.py` is here because the specification requires "one
 # demonstrated multi-turn session". `docs/OWNERSHIP.md` and
