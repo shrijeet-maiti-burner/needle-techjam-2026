@@ -55,11 +55,11 @@ python scripts/needle_storefront.py --warm --benchmark-mode
 - an evidence-bounded comparison tray for up to three products, using `not stated` rather than inventing a mismatch when metadata is absent;
 - direct selection of any of the seven supported reply languages, and system/light/dark themes whose measured text contrast clears 4.5:1.
 
-## Boundaries
+## Architecture and scope
 
 **Frozen candidate generator, labelled product policy.** Both modes construct the agent from `PRIMARY_AGENT_KWARGS`. Product mode then unions candidates for each explicit alternative, enforces hard category/audience/constraint boundaries, and reranks with inspectable journey evidence. An explicit numeric filter or ordering additionally opens the complete catalog-derived category pool so `cheapest` and `best rated` do not merely reshuffle the first ten candidates. This is visible in the interface and trace; it is not the official `.978500` policy. Benchmark mode performs none of that overlay work. An operator override is displayed as a deviation in either mode.
 
-**The storefront ships but cannot reach scoring.** `storefront/`, its launcher and the single-file interface are allowlisted into the submission archive as an optional judge-facing demonstration. The official entry point does not import them; an import-graph test fails if that boundary reverses. `robustness/` remains development-only.
+**Separation from scoring.** `storefront/`, its launcher and the single-file interface are included in the submission archive as an optional interactive demonstration. The official entry point does not import them; an import-graph test fails if that boundary reverses. `robustness/` remains development-only.
 
 **Degradation is reported.** `Agent.respond` cannot raise by design, so a failure appears only as a slightly worse answer. `respond_failures` is read after every turn and a degraded turn is labelled in the transcript.
 
@@ -77,7 +77,7 @@ Supported numeric forms are deliberately bounded: comparator or range language t
 
 **Matched terms are not a rank explanation.** A chip states that a value the customer disclosed appears in that product's text, compared after the same fold and tokenization retrieval uses. It is deliberately not a claim about why the product ranked where it did: BM25 field weights, the popularity prior and disclosure promotion decide that together, and the target-blind trace records that decision.
 
-## Behaviours worth knowing before you demo
+## Expected behavior
 
 **Override semantics are isolated by mode.** Benchmark mode preserves the measured `override_policy="retract_stated"`: an override supersedes stated constraints but retains clarification answers, and stale chips remain visible for audit. Product mode cannot assume those retained answers are compatible with an arbitrary human correction. A preference retraction therefore rotates only the active line item's agent session and clears its live query, selection and question caches while retaining the superseded audit trail, product identity and other journey items.
 
@@ -85,7 +85,7 @@ Supported numeric forms are deliberately bounded: comparator or range language t
 
 **Natural corrections are clause scoped.** A comma, spaced hyphen, en/em dash, semicolon, sentence boundary, or contrastive conjunction ends the preceding negation scope. Thus `no black - make it blue` records `black` as excluded and `blue` as active. This rule is shared by every catalog-derived attribute value; it is not a color-specific demo phrase.
 
-## Development gates
+## Validation
 
 Before the archive was built, repository-only adversarial tests covered
 multi-item preservation, catalog-derived audience clarification, alternative
@@ -106,4 +106,4 @@ error paths and turn budget passed.
 
 Single HTML file, no frontend build step, package, network, font or asset fetch. Everything user- or catalog-supplied is written through `textContent`; no path builds markup from either. The server binds the loopback interface only and is not written to be exposed to a network.
 
-The interface was rendered and exercised in Chrome on desktop and a narrow mobile viewport. The final interface branch passed 21 browser checks, including session reset, language switching and compare-state isolation. Both theme palettes were measured at 4.5:1 or better for interface text down to 10.5px, and the user completed the final visual confirmation after the numeric receipt and plan controls landed. Static tests additionally prohibit unsafe HTML sinks and literal surface colors. This is evidence for the tested Chromium build, not a blanket cross-browser claim; a fresh browser connection was unavailable during the final repository audit, so that audit did not claim a second independent render.
+The interface was rendered and exercised in Chrome on desktop and a narrow mobile viewport. It passed 21 browser checks, including session reset, language switching and compare-state isolation. Both theme palettes measured at least 4.5:1 contrast for interface text down to 10.5px. Static tests additionally prohibit unsafe HTML sinks and literal surface colors. These results apply to the tested Chromium build; a second cross-browser render was not performed.

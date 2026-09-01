@@ -1,81 +1,172 @@
 # Needle
 
-Needle is an ambiguity-aware conversational shopping agent for TikTok TechJam 2026 Track 4. It is built to find one hidden product from a frozen 50,000-item catalog through at most ten turns, where only an exact `parent_asin` match counts.
+Needle is a conversational product-retrieval system built for TikTok TechJam
+2026 Track 4. The task is strict: identify one hidden product in a frozen
+50,000-item catalog within ten turns, and count a hit only when the exact
+`parent_asin` is returned.
 
-The working thesis is **ask better, remember correctly, rank deliberately**:
+Needle keeps a versioned record of what the shopper wants, distinguishes active
+preferences from corrections and exclusions, retrieves only catalog-backed
+products, and exposes the evidence behind each turn. Its scored path is
+deterministic, offline, and implemented entirely with the Python standard
+library—no model call, embedding service, vector database, credential, or
+network connection is required.
 
-- represent the active intent separately from superseded preferences;
-- ask the question that is most likely to reduce decision-relevant ambiguity;
-- keep rank one relevance-first while testing whether later positions should cover distinct candidate clusters;
-- preserve a deterministic, offline exact-and-sparse path even if optional semantic methods are added.
+## What Needle does
 
-This is a hypothesis, not a result. Architecture decisions are accepted only after controlled official-evaluator and robustness experiments.
+- preserves intent across a conversation without carrying retracted
+  preferences forward;
+- handles clause-scoped negation, corrections, alternatives, and explicit
+  intent changes;
+- combines bounded catalog signatures with fielded SQLite FTS5 retrieval and a
+  small catalog-popularity prior;
+- asks catalog-grounded questions on the human-facing surface and reports why
+  each question was selected;
+- supports multi-item shopping plans, typed price/rating/review preferences,
+  evidence-bounded comparisons, and catalog-grounded compatibility signals;
+- returns a target-blind decision trace without allowing explanation or
+  interface code to change the scored ranking;
+- validates every response against the official contract and rebuilds its
+  catalog-bound index safely if the bundled asset is unavailable or mismatched.
 
-## Current status
+## Verified public evaluation
 
-The scored path is complete and frozen. The selected primary and the pure-sparse rollback are encoded in `needle/presets.py`, and the submission archive is reproduced from a clean extraction rather than from this tree. The primary measures TechnicalScore 0.978500 on the 200 released sessions, with HR@10 1.000, MRR 0.996667, MTTC 2.025, and zero contract violations. Three 200-target, distribution-matched catalog-disjoint panels rerun from this exact tree score 0.979075, 0.965625, and 0.959900. A full registered robustness run is reported with its unresolved target-removal gates rather than being converted into a blanket robustness claim. Every response of the official run validates against the participant kit's own `agent_api_contract.json`: 405 responses, zero violations. Refusing the bundled index rebuilds an equivalent one in memory and scores identically. These are development measurements, not a private-score estimate or winning claim.
+The selected preset was run on the unmodified public evaluator and all 200
+released sessions:
 
-## Quick start
+| metric | result |
+|---|---:|
+| HR@10 | 1.000000 |
+| MRR | 0.996667 |
+| MTTC | 2.025 |
+| TechnicalScore | 0.978500 |
+| contract violations | 0 / 405 responses |
+| prompt and completion tokens | 0 / 0 |
 
-Python 3.10 or later is required. The baseline path uses only the standard library.
+Three separate 200-target proxy panels exclude every released target while
+matching the released set's catalog and scenario marginals. They score
+0.979075, 0.965625, and 0.959900 from the same code. These are development
+measurements, not estimates of private evaluation performance. The complete
+selection evidence and unresolved robustness failures are recorded in
+[`docs/evidence/`](docs/evidence/) and summarized in the
+[`technical report`](submission/REPORT.md).
+
+The release suite contains 589 tests: 586 pass in a source checkout and three
+asset-dependent checks skip until the untracked release asset is present. The
+same archive was also reproduced from a clean extraction on CPython 3.10 and
+3.12.
+
+## Try the conversational storefront
+
+Python 3.10 or later is required. No package installation is needed.
 
 ```bash
 python scripts/bootstrap.py
 python scripts/build_signature_index.py
-python -m unittest discover -s tests -v
-python scripts/evaluate.py --output results/primary.json
-python scripts/run_experiment.py --experiment-id PRIMARY-CHECK --agent starter.agent:Agent --network-state disabled
-```
-
-`bootstrap.py` downloads the official participant kit, verifies its pinned SHA-256 digest, and extracts it under the ignored `.artifacts/` directory. `build_signature_index.py` creates the ignored catalog-bound development asset. `evaluate.py` runs the measured `starter.agent.Agent` preset against the unmodified official evaluator and public data.
-
-`run_experiment.py` is the decision-grade path: it refuses dirty trees by default and writes an ignored, immutable directory containing the raw result, artifact/config fingerprints, strict-contract report, scenario metrics, latency, environment, and checksums.
-
-## See the decision, not just the answer
-
-Needle Lens replays released public sessions and exposes the same agent call's target-blind belief ledger, interpretation lattice, candidate funnel, ambiguity certificate, ranking evidence, and question decision:
-
-```bash
-python scripts/needle_lens.py
-```
-
-The console is dependency-free and offline. Its human-shopping question board is explicitly a diagnostic shadow; it cannot affect the measured official-simulator policy or the recommendation slate. See [`docs/NEEDLE_LENS.md`](docs/NEEDLE_LENS.md) for the faithfulness boundary.
-
-## Repository map
-
-```text
-needle/                 production components and integration facade
-starter/agent.py        strict official entry-point adapter
-submission/             final-bundle entry point and run notes
-scripts/                artifact bootstrap and official evaluator launcher
-storefront/             conversational interface service (ships, unscored)
-demo/                   local interfaces, no build step
-tests/                  dependency-free contract and behavior checks
-docs/                   architecture, ownership, evidence, and disclosures
-```
-
-## Conversational interface
-
-```bash
 python scripts/needle_storefront.py --warm
 ```
 
-Serves a local shopping interface on `http://127.0.0.1:8770`. The frozen primary agent generates candidates; an explicitly labelled product layer adds multi-item plans, alternative constraints, user-confirmed anchors, catalog-grounded compatibility evidence, typed price/rating/review preferences and value-of-information questions. It also exposes the ranked question alternatives, correction history, evidence-bounded product comparison, seven reply languages, and accessible light/dark themes. Text fields remain searchable, while explicit numeric filters and orderings are evaluated over the complete catalog-derived category pool. Use `--benchmark-mode` to disable that layer and reproduce the one-target scored session shape. The journey layer is product evidence, not part of the reported `.978500` measurement. See [docs/STOREFRONT.md](docs/STOREFRONT.md).
+Open `http://127.0.0.1:8770`.
 
-## Non-negotiable rules
+The default storefront adds a clearly separated product layer over the frozen
+candidate generator. It supports linked shopping journeys, explicit
+alternatives, user-confirmed anchors, numeric catalog-property filtering,
+review-confidence-aware rating order, seven reply languages, and an expandable
+decision receipt. Run it with `--benchmark-mode` to remove that layer and use
+the one-target session shape measured by the official evaluator. Details and
+scope boundaries are in [`docs/STOREFRONT.md`](docs/STOREFRONT.md).
 
-- do not modify the official evaluator or labels when reporting public metrics;
-- do not commit datasets, downloaded kits, models, generated indexes, raw results, credentials, or secrets;
-- emit no more than ten unique schema-conforming recommendation objects;
-- keep `main` runnable and use short-lived, owner-scoped pull requests;
-- report negative and inconclusive experiments, not only favorable runs;
-- never describe an unmeasured hypothesis as a score or winning result.
+## Reproduce the official result
 
-## Pinned official source
+```bash
+python scripts/bootstrap.py
+python scripts/build_signature_index.py
+python scripts/evaluate.py --output results/primary.json
+```
 
-- repository: [`TechJam2026/techjam-conversational-search`](https://github.com/TechJam2026/techjam-conversational-search)
+For the full contract and behavior suite:
+
+```bash
+python -m unittest discover -s tests
+```
+
+`bootstrap.py` downloads the official participant kit, verifies its pinned
+SHA-256, and extracts it beneath the ignored `.artifacts/` directory.
+`build_signature_index.py` derives the catalog-bound development index.
+`evaluate.py` executes `starter.agent:Agent` through the organizer's evaluator
+without changing evaluator code or labels.
+
+## Architecture
+
+```text
+official evaluator
+      |
+starter.agent.Agent                 strict entry point, one frozen preset
+      |
+versioned belief state              corrections, negation, intent revision
+      |
+catalog signatures                  bounded exact evidence
+      |
+fielded SQLite FTS5                 sparse fallback
+      |
+category and popularity priors      soft, catalog-derived reranking
+      |
+adaptive slate + seen exclusion     ordered, unique catalog products
+      |
+strict response                     message, question, recommendations, usage
+
+human storefront                    separate product policy and decision trace
+```
+
+The scored import graph cannot reach the storefront. Tests enforce that
+boundary, so product demonstrations, explanations, language rendering, and
+shopping-plan logic cannot silently alter the measured agent. The detailed
+architecture and model-choice rationale are in
+[`submission/REPORT.md`](submission/REPORT.md) and
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+## Honest boundaries
+
+- public intent cards are generated from catalog metadata; transfer to a
+  differently written private simulator is not established;
+- measured paraphrase and word-order perturbations still remove a small number
+  of targets, while meaning-changing perturbations fail stricter robustness
+  gates more often;
+- unrecognized retraction language can leave an earlier intent active because
+  no semantic model is present;
+- negative constraints are recorded and softly demoted rather than used as
+  absolute filters when catalog metadata may be incomplete;
+- multilingual support covers routing and reply templates in seven languages,
+  not open-domain translation of arbitrary preferences.
+
+The report provides the measured rates, rejected alternatives, latency, memory,
+cost, and fallback behavior rather than converting these limits into broader
+claims.
+
+## Repository guide
+
+```text
+needle/                 scored retrieval, state, questions, and explanations
+starter/agent.py        official evaluator entry-point adapter
+storefront/             unscored conversational product layer
+demo/                   dependency-free local interfaces
+scripts/                bootstrap, evaluation, experiments, and release tools
+tests/                  contract, behavior, robustness, and packaging checks
+submission/             archive entry point, runbook, report, and asset binding
+docs/                   architecture, evidence, ownership, and disclosures
+```
+
+## Reproducibility and provenance
+
+- official source: [`TechJam2026/techjam-conversational-search`](https://github.com/TechJam2026/techjam-conversational-search)
 - source commit: `34078351e1c3615e5505a2e829600b56a542e462`
 - participant-kit zip SHA-256: `b3d7e283b835343b42c4919ea2ca90f2fb5a2aa2b10537f14dcf42f03e5b38ae`
 - catalog source: [Amazon Reviews 2023](https://amazon-reviews-2023.github.io/)
+- team contributions: [`docs/OWNERSHIP.md`](docs/OWNERSHIP.md)
+- tools, APIs, libraries, datasets, and assets:
+  [`docs/SUBMISSION_DISCLOSURES.md`](docs/SUBMISSION_DISCLOSURES.md)
 
-Needle is the submitted project name. Repository naming is not part of the technical claim.
+Datasets, participant-kit files, raw evaluator results, generated development
+indexes, credentials, and secrets are excluded from version control. The
+submission archive carries only the catalog-bound generated index required for
+fast startup, together with the code needed to validate or rebuild it.

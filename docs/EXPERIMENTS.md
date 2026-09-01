@@ -2,6 +2,10 @@
 
 No result is decision-grade unless another owner can reproduce it from the recorded code, configuration, official artifact pins, environment, and command.
 
+The gate table below is the preregistered build plan and is retained as
+historical context. The selected release and supersession rules are indexed in
+[`docs/evidence/README.md`](evidence/README.md).
+
 ## Record template
 
 ```text

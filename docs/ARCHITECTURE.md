@@ -1,8 +1,8 @@
 # Architecture
 
-This is the working document. The judge-facing description is
-[`submission/REPORT.md`](../submission/REPORT.md), which ships in the archive;
-this one carries the detail that report has no room for.
+This document records the detailed source architecture. The condensed technical
+report is [`submission/REPORT.md`](../submission/REPORT.md), which also ships in
+the submission archive.
 
 ## Decision boundary
 
@@ -46,7 +46,7 @@ evaluator-specific control rather than a claim that real customers should only
 receive generic questions. The original FTS weights are retained because both
 measured alternatives failed their gates.
 
-## Current measured candidate
+## Selected architecture
 
 The development and submission adapters use the immutable primary preset:
 
@@ -82,7 +82,7 @@ a different failure surface and disagrees with released-set tuning of
 `popularity_strength` (docs/evidence/EXP_006_SHAPES.md). These proxies are
 development diagnostics, not private-score estimates.
 
-## Closed decisions and post-submission extensions
+## Closed decisions and possible extensions
 
 1. EXP-013 is closed: question specificity was measured across ten arms and every alternative to repeated `other` lost (docs/evidence/EXP_013.md). Later-rank cluster coverage remains post-submission research, only behind the selected deterministic path.
 2. Robustness work targets general normalization and retrieval invariants; more released-template phrase patches are not acceptable evidence.
