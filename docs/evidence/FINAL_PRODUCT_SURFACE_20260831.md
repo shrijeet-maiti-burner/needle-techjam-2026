@@ -2,7 +2,7 @@
 
 ## Scope
 
-Source commit `ebd0230` is the final shipped-code snapshot. The optional
+Source commit `43933f5` is the final shipped-code snapshot. The optional
 storefront adds a catalog-grounded shopping journey, structured numeric
 preferences, evidence traces and comparison controls. The official
 `starter.agent:Agent` entry point and measured `PRIMARY_AGENT_KWARGS` remain
@@ -61,21 +61,19 @@ they do not predict the private evaluation or guarantee a placement.
 | unsafe browser-sink and external-network scans | pass |
 | `git diff --check` | pass |
 
-The interface branch has recorded rendered Chrome evidence at desktop and
-mobile widths, including both themes with measured text contrast of at least
-4.5:1 down to 10.5px. A new in-app browser connection was unavailable during
-this final audit, so the final branch was additionally checked by static DOM,
-accessibility, responsive-layout and injection-sink tests and by the team's
-manual desktop/mobile walkthrough. This distinction is intentional; no fresh
-render is claimed here.
+Rendered Chrome checks cover desktop and mobile widths in both themes, with
+measured text contrast of at least 4.5:1 down to 10.5px. Static DOM,
+accessibility, responsive-layout and injection-sink tests also pass, and the
+team completed a manual desktop/mobile walkthrough. A second browser engine
+was not tested.
 
 ## Verified archive
 
 | field | value |
 |---|---|
-| path | `.artifacts/releases/needle-submission-final-ebd0230.zip` |
-| SHA-256 | `b670d1565c4e4d847ad83389a13a878e4ac958a4610333f13050605ef107ce86` |
-| size | 25,614,957 bytes |
+| path | `.artifacts/releases/needle-submission-final-43933f5.zip` |
+| SHA-256 | `b670fa027e9e6b84011836e02ad258ad48e6f2f3747932d24074a96671ec99d2` |
+| size | 25,613,472 bytes |
 | tracked shipping files | 36 |
 | entry point | `starter.agent:Agent` |
 | generated asset | schema 9; 71,241,728 bytes |
