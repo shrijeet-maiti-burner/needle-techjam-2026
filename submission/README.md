@@ -30,7 +30,8 @@ python scripts/run_official.py --kit-root "/absolute/path/to/techjam-conversatio
 
 Replace the quoted path with the extracted participant-kit root. The helper
 checks the three required organizer files, places this bundle first on Python's
-import path so `starter.agent:Agent` cannot resolve to the kit's weak starter,
+import path so `starter.agent:Agent` cannot resolve to the participant kit's
+reference starter,
 and executes the organizer's `evaluator/local_evaluator.py` unchanged. It does
 not copy, edit or wrap evaluator logic. The evaluator writes its ordinary
 `results.json` to the requested output path.

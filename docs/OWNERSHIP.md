@@ -1,47 +1,24 @@
-# Ownership boundaries
+# Team contributions and ownership
 
-One owner per area, enforced through review rather than convention: a change
-inside someone else's area was raised on their pull request instead of being
-committed directly, and several were declined that way.
+The team divided responsibility by subsystem so implementation, evaluation,
+and review remained independently attributable. Cross-subsystem changes were
+reviewed by the contributor responsible for the affected area.
 
-This replaces the H0 kickoff plan that stood here. That document listed first
-branches and an hour-six gate, which was the right thing to write on day one and
-the wrong thing to still be reading at submission: the branches it named are
-gone and it described intentions rather than what held. What follows is the
-record.
-
-| Owner | Area | Must not change |
+| Contributor | Primary area | Delivered |
 |---|---|---|
-| Athul Krishna Boban (`athul1810`) | belief state, override policy, question policy, submission packaging | retrieval ranking, response serialization |
-| Shrijeet Maiti (`shrijeet-maiti-burner`) | retrieval, ranking, emission, integration, release | another owner's area without review |
-| Aryaman Anand (`AryamanAnand19`) | robustness catalogue, lexical normalization, conversational interface | state mutation, mandatory model dependency |
-| Yazhiniyan (`Yazhiniyan99`) | evaluation baseline and independent reruns | evaluator, public labels, production ranking |
+| Athul Krishna Boban (`athul1810`) | conversation state, override behavior, question policy, packaging | versioned constraints; clause-scoped negation, contradiction and retraction handling; intent-override policy; question-policy experiments; correction-safe query retirement; release packaging and clean-bundle checks |
+| Shrijeet Maiti (`shrijeet-maiti-burner`) | retrieval, ranking, integration, release | reproducible experiment harness; catalog validation; signature and SQLite FTS5 retrieval; bounded category and popularity priors; adaptive slate and seen-item policy; typed price/rating/review behavior; primary/rollback integration and release verification |
+| Aryaman Anand (`AryamanAnand19`) | robustness, lexical normalization, conversational interface | perturbation library and session-level robustness reporting; tokenizer symmetry and typo-recovery experiments; never-failing turn guard; target-blind interface; concurrent HTTP checks and interface isolation tests |
+| Yazhiniyan (`Yazhiniyan99`) | baseline evaluation, adversarial language QA, independent reproduction | official baseline verification; negation and correction counterexamples; clean-tree and extracted-archive reproductions on CPython 3.10 and 3.12; resource and release checks |
 
-## How the boundary was actually held
+## Review and evidence
 
-Three examples, because the claim is only worth as much as its evidence.
-
-**Measured in one area, landed by another.** EXP-019 measured the emission gate
-and full-span signatures at +0.069513 on the public set. Both changes sit in
-retrieval and response serialization, so the record and its harness were handed
-over rather than merged by the owner who measured them; the patch landed in #19
-under the retrieval owner.
-
-**Declined rather than absorbed.** A `resolve_coarse_category` helper written
-for the multilingual path duplicated `CatalogIndex.resolve_category`, which is
-retrieval's and already stronger. It was dropped instead of shipped alongside.
-
-**Flagged rather than assumed.** The signature asset stores the belief state's
-parse of the catalog, so binding it to that parser touches `needle/catalog.py`.
-The fingerprint lives in `needle/state.py`, which owns its own parsing identity,
-and catalog.py only stores and compares it; the crossing was called out on the
-pull request rather than settled quietly.
-
-## Evidence discipline
-
-Every record in `docs/evidence/` names an independent rerun owner, and the
-headline arms were reproduced by a second person before being cited. Negative
-and withdrawn results stay in the record with the reason, including a
-popularity arm that gained on the released set and lost on the held-out one, a
-propensity model that did not transfer, and a conjunction rule that was built,
-measured, and reverted on the measurement.
+- headline evaluator results were reproduced by a second contributor before
+  being cited;
+- the evaluation owner did not modify evaluator code, public labels, or
+  production ranking;
+- every retained experiment record identifies its code, controls, metrics,
+  limitations, decision, and rollback;
+- the source repository retains negative and withdrawn results under
+  `docs/evidence/`, including public-only improvements that failed
+  catalog-disjoint transfer checks.
