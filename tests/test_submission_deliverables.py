@@ -16,13 +16,16 @@ here rather than reviewed by eye.
 from __future__ import annotations
 
 import re
+import runpy
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / "submission" / "REPORT.md"
 RUN_NOTES = ROOT / "submission" / "README.md"
+BUNDLER = ROOT / "scripts" / "build_submission_bundle.py"
 
 # Paths the report may name without shipping them, each for a stated reason.
 NOT_SHIPPED = {
@@ -99,6 +102,13 @@ class TheRequiredDeliverablesArePresent(unittest.TestCase):
 
     def test_setup_and_reproduction_instructions(self) -> None:
         self.assertIn("submission/README.md", self.shipped)
+        self.assertIn("scripts/run_official.py", self.shipped)
+        run_notes = RUN_NOTES.read_text(encoding="utf-8")
+        self.assertIn(
+            'python scripts/run_official.py --kit-root ',
+            run_notes,
+        )
+        self.assertIn("--output results.json", run_notes)
 
     def test_a_working_agent_on_the_required_interface(self) -> None:
         self.assertIn("submission/agent.py", self.shipped)
@@ -132,6 +142,63 @@ class TheRequiredDeliverablesArePresent(unittest.TestCase):
         self.assertIn("scripts/demo_session.py", self.shipped,
                       "the transcript must also be reproducible from the archive")
         self.assertIn("TECHJAM_KIT_ROOT", transcript)
+
+
+class TheArchiveOpensOnArchiveInstructions(unittest.TestCase):
+    """The source README names development files omitted from the archive.
+
+    The bundler must replace it with the self-contained run notes instead of
+    asking a reviewer to run files that were deliberately not shipped.
+    """
+
+    def test_the_root_readme_is_the_bundle_runbook(self) -> None:
+        namespace = runpy.run_path(str(BUNDLER))
+        with tempfile.TemporaryDirectory() as raw_destination:
+            destination = Path(raw_destination)
+            namespace["copy_tracked"](destination)
+            root_readme = (destination / "README.md").read_text(encoding="utf-8")
+            self.assertEqual(root_readme, RUN_NOTES.read_text(encoding="utf-8"))
+
+            source_only_commands = (
+                "scripts/bootstrap.py",
+                "scripts/build_signature_index.py",
+                "scripts/evaluate.py",
+                "scripts/run_experiment.py",
+                "scripts/needle_lens.py",
+                "scripts/storefront_smoke.py",
+                "scripts/journey_redteam.py",
+            )
+            runnable_documents = (
+                destination / "README.md",
+                destination / "submission" / "README.md",
+                destination / "docs" / "STOREFRONT.md",
+            )
+            for document in runnable_documents:
+                text = document.read_text(encoding="utf-8")
+                for source_only_command in source_only_commands:
+                    with self.subTest(document=document.name, command=source_only_command):
+                        self.assertNotIn(source_only_command, text)
+
+            link_pattern = re.compile(r"!?\[[^\]]*\]\(([^)\r\n]+)\)")
+            for document in destination.rglob("*.md"):
+                text = document.read_text(encoding="utf-8")
+                for raw_target in link_pattern.findall(text):
+                    target = raw_target.strip()
+                    if target.startswith("<") and ">" in target:
+                        target = target[1:target.index(">")]
+                    else:
+                        target = re.split(r"\s+[\"']", target, maxsplit=1)[0]
+                    if target.startswith(("http://", "https://", "mailto:", "#")):
+                        continue
+                    local_target = target.split("#", 1)[0]
+                    if not local_target:
+                        continue
+                    resolved = (document.parent / local_target).resolve()
+                    with self.subTest(document=document.name, target=target):
+                        self.assertTrue(
+                            resolved.exists(),
+                            f"{document.relative_to(destination)} links to missing {target}",
+                        )
 
 
 class TheDisclosedAssetIsTheShippedAsset(unittest.TestCase):
@@ -181,6 +248,17 @@ class TheStorefrontShips(unittest.TestCase):
                      "storefront/service.py", "docs/STOREFRONT.md"):
             with self.subTest(path=name):
                 self.assertIn(name, shipped)
+
+        launcher = runpy.run_path(str(ROOT / "scripts" / "needle_storefront.py"))
+        with tempfile.TemporaryDirectory() as raw_root:
+            bundle_root = Path(raw_root)
+            bundled_asset = (
+                bundle_root / "submission" / "assets" /
+                "catalog-signatures.sqlite3"
+            )
+            bundled_asset.parent.mkdir(parents=True)
+            bundled_asset.write_bytes(b"archive asset")
+            self.assertEqual(launcher["default_asset"](bundle_root), bundled_asset)
 
     def test_nothing_scored_imports_it(self) -> None:
         """The archive carries one policy. A demo quietly running a different

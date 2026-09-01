@@ -2,16 +2,25 @@
 
 The storefront is a local conversational interface with two explicit modes. The default product mode uses the selected primary agent as a candidate generator and adds catalog-grounded state for multi-item journeys. `--benchmark-mode` uses the exact one-target session shape measured by the official evaluator. A person can therefore test behaviour the 200 released sessions never produce without presenting that product overlay as a benchmark result.
 
-It is the interactive counterpart to [Needle Lens](NEEDLE_LENS.md). The lens replays a released public sample through the official simulator and certifies what the agent decided. The storefront has no simulator, no ground truth and no script: the input is a person.
+It complements the target-blind trace certificate recorded by the scored agent. The storefront has no simulator, no ground truth and no scripted customer: the input is a person.
 
 ## Run it
 
-Bootstrap the participant kit and build the catalog asset first, then start the server:
+The submission archive already contains the verified signature asset. Point the
+storefront at the extracted participant kit, then start the server.
+
+PowerShell:
+
+```powershell
+$env:TECHJAM_KIT_ROOT = "C:\absolute\path\to\techjam-conversational-search"
+python scripts/needle_storefront.py --warm
+```
+
+macOS or Linux:
 
 ```bash
-python scripts/bootstrap.py
-python scripts/build_signature_index.py
-python scripts/needle_storefront.py --warm
+TECHJAM_KIT_ROOT="/absolute/path/to/techjam-conversational-search" \
+  python scripts/needle_storefront.py --warm
 ```
 
 Open `http://127.0.0.1:8770`. `--warm` builds the agent before serving instead of on the first message; without it the first turn pays the construction cost.
@@ -36,7 +45,7 @@ python scripts/needle_storefront.py --warm --benchmark-mode
 - per card: title, store, price where the catalog carries one, rating, category path, and the disclosed values that appear in that product's text, labelled with the field they appear in;
 - a belief panel with active constraints, ruled-out values, and values dropped at a change of mind, plus the intent version;
 - per turn: number, latency, and the attribute named in the human question; after turn ten the composer locks rather than exercising the agent's degraded-response fallback;
-- an expandable decision receipt taken from the same target-blind trace as Needle Lens: the candidate funnel, ambiguity status, retrieval path, released slate size, and the catalog-derived expected value of the question;
+- an expandable decision receipt taken from the scored agent's target-blind trace: the candidate funnel, ambiguity status, retrieval path, released slate size, and the catalog-derived expected value of the question;
 - whether the run deviates from `PRIMARY_AGENT_KWARGS`, and whether the bundled signature index was accepted or rejected.
 - in product mode, a typed plan with separate line items, shared occasion context, `all`/`either`/`avoid` groups, wearer state and a user-confirmed product anchor;
 - typed catalog-property intent: lower, upper and bounded filters for price, star rating and review count; and explicit lowest-price, highest-price, least/most-reviewed or confidence-adjusted lowest/best-rated ordering;
@@ -66,7 +75,7 @@ Supported numeric forms are deliberately bounded: comparator or range language t
 
 **Multilingual scope stays bounded.** Product mode persists one of the seven supported reply languages for the session and uses the same fixed phrase tables as the agent. Its partial shopping-noun lexicon maps a recognized noun back through the active catalog taxonomy; an unknown noun declines rather than guesses. Free-form preferences and catalog values are not machine-translated, so this is multilingual routing and questioning, not a claim of open-domain translation.
 
-**Matched terms are not a rank explanation.** A chip states that a value the customer disclosed appears in that product's text, compared after the same fold and tokenization retrieval uses. It is deliberately not a claim about why the product ranked where it did — BM25 field weights, the popularity prior and disclosure promotion decide that together, and the lens is where that is certified.
+**Matched terms are not a rank explanation.** A chip states that a value the customer disclosed appears in that product's text, compared after the same fold and tokenization retrieval uses. It is deliberately not a claim about why the product ranked where it did: BM25 field weights, the popularity prior and disclosure promotion decide that together, and the target-blind trace records that decision.
 
 ## Behaviours worth knowing before you demo
 
@@ -76,28 +85,22 @@ Supported numeric forms are deliberately bounded: comparator or range language t
 
 **Natural corrections are clause scoped.** A comma, spaced hyphen, en/em dash, semicolon, sentence boundary, or contrastive conjunction ends the preceding negation scope. Thus `no black - make it blue` records `black` as excluded and `blue` as active. This rule is shared by every catalog-derived attribute value; it is not a color-specific demo phrase.
 
-## Concurrent smoke gate
+## Development gates
 
-With a warm `--benchmark-mode` storefront running, exercise the exact scored
-HTTP boundary rather than only the service object:
+Before the archive was built, repository-only adversarial tests covered
+multi-item preservation, catalog-derived audience clarification, alternative
+constraints, explicit selection, relation evidence, correction scope,
+comparison-state immutability, vague exploration, complete-category numeric
+filtering and ranking, natural rating language, explicit rating floors,
+category integrity, degradation and the ten-card contract. They do not emit or
+imply an official score and are intentionally omitted from the minimal
+submission archive.
 
-```bash
-python scripts/storefront_smoke.py --clients 12 --max-p95-ms 750
-```
-
-Run the product-level adversarial gate against the real catalog separately:
-
-```bash
-python scripts/journey_redteam.py
-```
-
-It covers multi-item preservation, catalog-derived audience clarification, alternative constraints, explicit selection, relation evidence, correction scope, comparison-state immutability, vague exploration, complete-category numeric filtering and ranking, natural rating language, explicit rating floors, category integrity, degradation and the ten-card contract. It does not emit or imply an official score.
-
-The gate fails on a degraded turn, empty slate, malformed response, missing
-target-blind trace, bad error status, accepted eleventh turn, or p95 latency
-above the supplied ceiling. The final benchmark-mode run completed 36 traced
-turns in 2.99s at p50 65.9ms, p95 185.6ms, and max 372.9ms; error paths and
-turn budget passed.
+The concurrent HTTP gate fails on a degraded turn, empty slate, malformed
+response, missing target-blind trace, bad error status, accepted eleventh turn,
+or p95 latency above its configured ceiling. The final benchmark-mode run
+completed 36 traced turns in 2.99s at p50 65.9ms, p95 185.6ms, and max 372.9ms;
+error paths and turn budget passed.
 
 ## Interface notes
 

@@ -1,121 +1,101 @@
-# Submission run notes
+# Needle submission bundle
 
-Status: selected development primary; source-only and asset-bundled official rehearsals passed.
+This file is the entry point for the extracted submission archive. All paths
+below are relative to the archive root. The public repository contains
+additional experiment, build and test tooling that is intentionally absent
+from this minimal bundle.
 
-## Environment
+## Requirements
 
-- Python: 3.10 or later; verified on CPython 3.10.5, the interpreter the release was built and reproduced under
-- mandatory runtime dependencies: Python standard library only (see `requirements.txt`)
-- network required for scoring: no
-- credentials required: no
-- official entry point: `starter.agent.Agent`
-- equivalent release adapter: `submission.agent.Agent`
+- Python: 3.10 or later; the release was built and independently reproduced on
+  CPython 3.10 and 3.12;
+- the extracted official TechJam participant kit, including
+  `evaluator/local_evaluator.py`, `data/catalog.jsonl` and
+  `data/public_set.jsonl`;
+- no package installation beyond the Python standard library;
+- no network access, credentials, model download or environment variable for
+  the scored agent.
 
-### Environment variables
+The official entry point is `starter.agent:Agent`. The equivalent release
+adapter is `submission.agent:Agent`.
 
-`NEEDLE_SIGNATURE_INDEX` (optional). Read by `starter/agent.py` to override the
-signature index location. Without an override, the starter automatically uses
-`submission/assets/catalog-signatures.sqlite3` when present, otherwise the
-development path `.artifacts/indexes/catalog-signatures.sqlite3`. If neither is
-present, the agent rebuilds the equivalent index in process.
+## Run the unmodified official evaluator
 
-`TECHJAM_KIT_ROOT` (helper scripts only). Set this to the extracted official
-participant-kit root when running `scripts/demo_session.py` or another shipped
-reproduction helper from outside the development repository. It is not read by
-the scored agent and is not required by the official evaluator.
-
-## Running in the official harness
-
-The official evaluator imports `starter.agent.Agent`, so the submitted agent is
-exposed through `starter/agent.py`, which re-exports the same configuration as
-`submission/agent.py`. From the participant kit root, with this repository's
-modules importable:
-
-```
-python -m evaluator.local_evaluator \
-  --catalog data/catalog.jsonl \
-  --dataset data/public_set.jsonl \
-  --output results.json
-```
-
-There is no `scripts/evaluate.py` in the participant kit. An earlier revision of
-this file documented one, which would have made the bundle unreproducible under
-the submission rules.
-
-For the instrumented internal run that also records provenance and the contract
-report, from this repository root:
-
-```
-python scripts/run_experiment.py \
-  --experiment-id RUN-001 \
-  --agent starter.agent:Agent \
-  --network-state disabled
-```
-
-Note the capitalisation: the exported symbol is `Agent`, not `agent`.
-
-## Bundled asset
-
-- optional asset: `submission/assets/catalog-signatures.sqlite3`
-
-The versioned signature index is a startup optimisation, not a requirement. It
-is bound to a specific catalog by SHA-256. If it is absent, unreadable, or was
-built against any other catalog, the agent records the reason in
-`CatalogIndex.signature_index_fallback` and rebuilds the equivalent index in
-process. The asset is bound to two things, and both are checked at load. It is bound to
-the catalog by SHA-256, and it is bound to the parser that produced it, because
-it stores this repository's own parse of every product: `build_signature_index`
-writes `product_clarification_facets` for all 50,000, and that calls
-`needle.state.extract_constraints`. A change to the negation or vocabulary rules
-therefore makes the stored facets wrong while leaving the catalog binding and
-the schema intact, so `facet_parser_sha256` records which rules produced them
-and a mismatch retires the asset the same way a wrong catalog does.
-
-Current asset, schema 9, 71,241,728 bytes:
-
-| | |
-|---|---|
-| `catalog_sha256` | `da979b05a68af864cb0dcf9ee6a81c010c7e66a57978ad286c7a2e005fc69a67` |
-| `facet_parser_sha256` | `6a56e3549d6da62b017546a5393ce59acfa49ebaae1049b967e0917998437bca` |
-| product signature rows | 897,046 |
-| distinct category-bound card keys | 177,768 |
-| popularity-ordered card rows | 296,951 |
-| clarification facet rows | 50,000 |
-
-The file's own SHA-256 is deliberately not the reproducibility contract. Two
-builds of identical content can differ byte for byte, so the table above is what
-a rebuild is checked against, and the metadata above is what the loader checks.
-An earlier revision of this file pinned a file hash that no longer reproduced,
-which under the submission rules is the kind of thing that gets a bundle treated
-as unreproducible.
-
-Construction with the bundled index takes 2.895s and peaks at 208.8MB; the
-in-process rebuild takes 27.870s and peaks at 287.7MB on the measured release machine.
-Both reproduce TechnicalScore 0.978500, and construction happens once per
-evaluation run rather than per session. A stale index is never trusted.
-
-Rebuild it for a given catalog with:
-
-```
-python scripts/build_signature_index.py
-```
-
-## Packaging
-
-The final bundle includes only required source, helper modules, dependency
-instructions, report, and the catalog-bound signature asset. The participant
-kit, datasets, evaluator, raw outputs, bytecode caches, secrets, and
-development-only files are excluded. `scripts/build_submission_bundle.py`
-copies only the allowlisted tracked paths, adds the ignored generated asset,
-runs the extracted entry point against the unmodified official evaluator, and
-then writes the zip and manifest. The verified archive must write zero stderr
-and reproduce TechnicalScore 0.978500. Its external SHA-256 and byte size are
-recorded in the final evidence record because embedding an archive hash inside
-the archive would be self-referential. Rebuild the asset from the exact scoring
-catalog and rerun the bundle command immediately before upload.
+Extract this zip and the official participant kit into separate directories.
+From this bundle's root, run one command on Windows, macOS or Linux:
 
 ```text
-python scripts/build_submission_bundle.py \
-  --asset .artifacts/indexes/catalog-signatures.sqlite3 \
-  --output .artifacts/releases/needle-submission.zip
+python scripts/run_official.py --kit-root "/absolute/path/to/techjam-conversational-search" --output results.json
 ```
+
+Replace the quoted path with the extracted participant-kit root. The helper
+checks the three required organizer files, places this bundle first on Python's
+import path so `starter.agent:Agent` cannot resolve to the kit's weak starter,
+and executes the organizer's `evaluator/local_evaluator.py` unchanged. It does
+not copy, edit or wrap evaluator logic. The evaluator writes its ordinary
+`results.json` to the requested output path.
+
+The verified public rehearsal contains 200 sessions and reports:
+
+| metric | value |
+|---|---:|
+| HR@10 | 1.000000 |
+| MRR | 0.996667 |
+| MTTC | 2.025 |
+| TechnicalScore | 0.978500 |
+| prompt/completion tokens | 0 / 0 |
+
+These are public-development measurements, not a private-score prediction.
+
+## Run the demonstrated multi-turn session
+
+The report contains a readable transcript. To reproduce it from the extracted
+bundle, set the participant-kit path and run the shipped helper.
+
+PowerShell:
+
+```powershell
+$env:TECHJAM_KIT_ROOT = "C:\absolute\path\to\techjam-conversational-search"
+python scripts/demo_session.py --scenario intent_override --show 1
+```
+
+macOS or Linux:
+
+```bash
+TECHJAM_KIT_ROOT="/absolute/path/to/techjam-conversational-search" \
+  python scripts/demo_session.py --scenario intent_override --show 1
+```
+
+## Run the optional storefront
+
+After setting `TECHJAM_KIT_ROOT` as above:
+
+```text
+python scripts/needle_storefront.py --warm
+```
+
+Open `http://127.0.0.1:8770`. The storefront is an unscored demonstration
+layer; `starter.agent:Agent` remains the measured submission.
+
+## Bundled asset and fallback
+
+`submission/assets/catalog-signatures.sqlite3` is a catalog-bound startup
+optimisation. `MANIFEST.json` records its SHA-256, schema, catalog binding and
+facet-parser binding. The loader validates every binding before use. If the
+asset is absent, corrupt or mismatched, the agent rebuilds an equivalent index
+in process instead of failing or trusting stale data.
+
+The bundle contains no participant-kit files, evaluator, competition dataset,
+raw results, bytecode cache, credential or secret. It requires no external
+service. The method, model choice, measured resources, limitations and team
+contributions are in `submission/REPORT.md`; development-tool and data-source
+disclosures are in `docs/SUBMISSION_DISCLOSURES.md`.
+
+## Environment variables
+
+- `TECHJAM_KIT_ROOT` is used only by the optional demo and storefront helpers.
+  `scripts/run_official.py` takes the kit path explicitly with `--kit-root`.
+- `NEEDLE_SIGNATURE_INDEX` optionally overrides the signature-index path. It
+  is unnecessary for this archive because the verified asset is bundled.
+
+No other environment variable is read by the submitted agent.
