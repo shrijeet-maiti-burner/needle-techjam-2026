@@ -2,7 +2,7 @@
 
 ## Scope
 
-Source commit `5c8ff75` is the final shipped-code snapshot. The optional
+Source commit `ebd0230` is the final shipped-code snapshot. The optional
 storefront adds a catalog-grounded shopping journey, structured numeric
 preferences, evidence traces and comparison controls. The official
 `starter.agent:Agent` entry point and measured `PRIMARY_AGENT_KWARGS` remain
@@ -47,7 +47,7 @@ they do not predict the private evaluation or guarantee a placement.
 | gate | result |
 |---|---|
 | `python -m compileall -q needle starter submission scripts tests robustness storefront` | pass |
-| `python -m unittest discover -s tests -v` | 588 run; 585 pass; three expected asset-dependent checks skipped |
+| `python -m unittest discover -s tests` | 589 run; 586 pass; three expected asset-dependent checks skipped |
 | focused preference and journey suites | 70 tests pass |
 | `python scripts/journey_redteam.py` | pass on the real 50,000-product catalog, including rating language, numeric ranking, correction and category integrity |
 | `python scripts/storefront_smoke.py --clients 12 --max-p95-ms 750` | 36 turns in 2.99s; p50 65.9ms; p95 185.6ms; max 372.9ms; error and turn-budget paths pass |
@@ -55,6 +55,8 @@ they do not predict the private evaluation or guarantee a placement.
 | `python scripts/bundle_rehearsal.py` | ten turns; every slate non-empty and catalog-valid |
 | clean extracted archive, official evaluator | exact reproduction of the public metrics above |
 | clean extracted archive, `scripts/demo_session.py` | intent-override scenario completes with the participant kit supplied only through `TECHJAM_KIT_ROOT` |
+| clean extracted archive, `scripts/needle_storefront.py --warm` | HTTP interface and configuration endpoints return 200; bundled signature index accepted with no fallback; construction 4.56s |
+| archive-local runbook, link, secret, unfinished-marker and network-import scans | pass |
 | tracked Markdown local-link, fence, heading and strict UTF-8 scans | pass |
 | unsafe browser-sink and external-network scans | pass |
 | `git diff --check` | pass |
@@ -71,10 +73,10 @@ render is claimed here.
 
 | field | value |
 |---|---|
-| path | `.artifacts/releases/needle-submission-final-5c8ff75.zip` |
-| SHA-256 | `22b8cfc516f0079f09addbf10107a0b1193ebb6c256c4223594d2236bdd2a101` |
-| size | 25,615,527 bytes |
-| tracked shipping files | 35 |
+| path | `.artifacts/releases/needle-submission-final-ebd0230.zip` |
+| SHA-256 | `b670d1565c4e4d847ad83389a13a878e4ac958a4610333f13050605ef107ce86` |
+| size | 25,614,957 bytes |
+| tracked shipping files | 36 |
 | entry point | `starter.agent:Agent` |
 | generated asset | schema 9; 71,241,728 bytes |
 | asset SHA-256 | `f98fdce51ec6603724ab84b274e2223bf6c32a375e7a4e87e3a0330df1fa2ec5` |
@@ -82,10 +84,12 @@ render is claimed here.
 | asset parser binding | `6a56e3549d6da62b017546a5393ce59acfa49ebaae1049b967e0917998437bca` |
 
 The archive contains `storefront/preferences.py`, `demo/storefront.html`,
-`submission/REPORT.md`, `submission/README.md` and `MANIFEST.json`. The builder
-evaluated the extracted entry point against the official public harness before
-writing the archive. A second clean extraction outside the repository
-reproduced both the evaluator result and the documented demo command.
+`submission/REPORT.md`, `scripts/run_official.py`, the self-contained archive
+runbook at both `README.md` and `submission/README.md`, and `MANIFEST.json`.
+The builder evaluated the extracted entry point against the official public
+harness before writing the archive. A second clean extraction outside the
+repository reproduced the evaluator result, the documented demo command, and
+the optional storefront using the bundled index.
 
 ## Submission handoff
 
