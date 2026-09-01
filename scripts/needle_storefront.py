@@ -1,15 +1,11 @@
 """Serve the conversational storefront against the selected primary agent.
 
-The Needle Lens replays released public samples to certify what the agent
-decided. This serves the other half: a person types whatever they like and the
-same agent answers, so behaviour the 200 released sessions never produce can be
-seen before a judge finds it.
-
-    python scripts/bootstrap.py
-    python scripts/build_signature_index.py
-    python scripts/needle_storefront.py
-
-Then open http://127.0.0.1:8770.
+The official evaluator measures released sessions. This serves the human-input
+surface: a person types whatever they like and the same candidate generator
+answers, so behaviour those sessions never produce can be inspected directly.
+Set ``TECHJAM_KIT_ROOT`` to the extracted participant-kit root, run
+``python scripts/needle_storefront.py --warm``, then open
+http://127.0.0.1:8770.
 
 The candidate generator is built from `PRIMARY_AGENT_KWARGS`. The default
 interface adds the explicitly-labelled product journey layer; pass
@@ -38,7 +34,17 @@ KIT = Path(
         ROOT / ".artifacts" / "participant-kit" / "techjam-conversational-search",
     )
 )
-ASSET = ROOT / ".artifacts" / "indexes" / "catalog-signatures.sqlite3"
+
+
+def default_asset(root: Path = ROOT) -> Path:
+    """Prefer the archive asset, with the development build as fallback."""
+    bundled = root / "submission" / "assets" / "catalog-signatures.sqlite3"
+    if bundled.is_file():
+        return bundled
+    return root / ".artifacts" / "indexes" / "catalog-signatures.sqlite3"
+
+
+ASSET = default_asset()
 HTML = ROOT / "demo" / "storefront.html"
 sys.path.insert(0, str(ROOT))
 

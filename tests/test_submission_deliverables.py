@@ -249,6 +249,17 @@ class TheStorefrontShips(unittest.TestCase):
             with self.subTest(path=name):
                 self.assertIn(name, shipped)
 
+        launcher = runpy.run_path(str(ROOT / "scripts" / "needle_storefront.py"))
+        with tempfile.TemporaryDirectory() as raw_root:
+            bundle_root = Path(raw_root)
+            bundled_asset = (
+                bundle_root / "submission" / "assets" /
+                "catalog-signatures.sqlite3"
+            )
+            bundled_asset.parent.mkdir(parents=True)
+            bundled_asset.write_bytes(b"archive asset")
+            self.assertEqual(launcher["default_asset"](bundle_root), bundled_asset)
+
     def test_nothing_scored_imports_it(self) -> None:
         """The archive carries one policy. A demo quietly running a different
         one would be worse than no demo, so the dependency runs one way only.
