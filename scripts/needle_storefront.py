@@ -205,7 +205,8 @@ def build_service(arguments: argparse.Namespace) -> StorefrontService:
     if not catalog.is_file():
         raise SystemExit(
             f"catalog not found: {catalog}\n"
-            "run `python scripts/bootstrap.py` first, or pass --catalog"
+            "set TECHJAM_KIT_ROOT to the extracted participant-kit root, "
+            "or pass --catalog"
         )
     asset = Path(arguments.signature_index) if arguments.signature_index else ASSET
     return StorefrontService(

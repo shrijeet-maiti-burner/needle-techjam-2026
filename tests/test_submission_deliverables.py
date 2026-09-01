@@ -157,17 +157,48 @@ class TheArchiveOpensOnArchiveInstructions(unittest.TestCase):
             destination = Path(raw_destination)
             namespace["copy_tracked"](destination)
             root_readme = (destination / "README.md").read_text(encoding="utf-8")
+            self.assertEqual(root_readme, RUN_NOTES.read_text(encoding="utf-8"))
 
-        self.assertEqual(root_readme, RUN_NOTES.read_text(encoding="utf-8"))
-        for source_only_command in (
-            "scripts/bootstrap.py",
-            "scripts/build_signature_index.py",
-            "scripts/evaluate.py",
-            "scripts/run_experiment.py",
-            "scripts/needle_lens.py",
-        ):
-            with self.subTest(command=source_only_command):
-                self.assertNotIn(source_only_command, root_readme)
+            source_only_commands = (
+                "scripts/bootstrap.py",
+                "scripts/build_signature_index.py",
+                "scripts/evaluate.py",
+                "scripts/run_experiment.py",
+                "scripts/needle_lens.py",
+                "scripts/storefront_smoke.py",
+                "scripts/journey_redteam.py",
+            )
+            runnable_documents = (
+                destination / "README.md",
+                destination / "submission" / "README.md",
+                destination / "docs" / "STOREFRONT.md",
+            )
+            for document in runnable_documents:
+                text = document.read_text(encoding="utf-8")
+                for source_only_command in source_only_commands:
+                    with self.subTest(document=document.name, command=source_only_command):
+                        self.assertNotIn(source_only_command, text)
+
+            link_pattern = re.compile(r"!?\[[^\]]*\]\(([^)\r\n]+)\)")
+            for document in destination.rglob("*.md"):
+                text = document.read_text(encoding="utf-8")
+                for raw_target in link_pattern.findall(text):
+                    target = raw_target.strip()
+                    if target.startswith("<") and ">" in target:
+                        target = target[1:target.index(">")]
+                    else:
+                        target = re.split(r"\s+[\"']", target, maxsplit=1)[0]
+                    if target.startswith(("http://", "https://", "mailto:", "#")):
+                        continue
+                    local_target = target.split("#", 1)[0]
+                    if not local_target:
+                        continue
+                    resolved = (document.parent / local_target).resolve()
+                    with self.subTest(document=document.name, target=target):
+                        self.assertTrue(
+                            resolved.exists(),
+                            f"{document.relative_to(destination)} links to missing {target}",
+                        )
 
 
 class TheDisclosedAssetIsTheShippedAsset(unittest.TestCase):
