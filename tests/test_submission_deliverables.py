@@ -16,13 +16,16 @@ here rather than reviewed by eye.
 from __future__ import annotations
 
 import re
+import runpy
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = ROOT / "submission" / "REPORT.md"
 RUN_NOTES = ROOT / "submission" / "README.md"
+BUNDLER = ROOT / "scripts" / "build_submission_bundle.py"
 
 # Paths the report may name without shipping them, each for a stated reason.
 NOT_SHIPPED = {
@@ -99,6 +102,13 @@ class TheRequiredDeliverablesArePresent(unittest.TestCase):
 
     def test_setup_and_reproduction_instructions(self) -> None:
         self.assertIn("submission/README.md", self.shipped)
+        self.assertIn("scripts/run_official.py", self.shipped)
+        run_notes = RUN_NOTES.read_text(encoding="utf-8")
+        self.assertIn(
+            'python scripts/run_official.py --kit-root ',
+            run_notes,
+        )
+        self.assertIn("--output results.json", run_notes)
 
     def test_a_working_agent_on_the_required_interface(self) -> None:
         self.assertIn("submission/agent.py", self.shipped)
@@ -132,6 +142,32 @@ class TheRequiredDeliverablesArePresent(unittest.TestCase):
         self.assertIn("scripts/demo_session.py", self.shipped,
                       "the transcript must also be reproducible from the archive")
         self.assertIn("TECHJAM_KIT_ROOT", transcript)
+
+
+class TheArchiveOpensOnArchiveInstructions(unittest.TestCase):
+    """The source README names development files omitted from the archive.
+
+    The bundler must replace it with the self-contained run notes instead of
+    asking a reviewer to run files that were deliberately not shipped.
+    """
+
+    def test_the_root_readme_is_the_bundle_runbook(self) -> None:
+        namespace = runpy.run_path(str(BUNDLER))
+        with tempfile.TemporaryDirectory() as raw_destination:
+            destination = Path(raw_destination)
+            namespace["copy_tracked"](destination)
+            root_readme = (destination / "README.md").read_text(encoding="utf-8")
+
+        self.assertEqual(root_readme, RUN_NOTES.read_text(encoding="utf-8"))
+        for source_only_command in (
+            "scripts/bootstrap.py",
+            "scripts/build_signature_index.py",
+            "scripts/evaluate.py",
+            "scripts/run_experiment.py",
+            "scripts/needle_lens.py",
+        ):
+            with self.subTest(command=source_only_command):
+                self.assertNotIn(source_only_command, root_readme)
 
 
 class TheDisclosedAssetIsTheShippedAsset(unittest.TestCase):

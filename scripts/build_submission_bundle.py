@@ -34,6 +34,7 @@ SHIPPING_PATHS = (
     "README.md",
     "requirements.txt",
     "scripts/demo_session.py",
+    "scripts/run_official.py",
     "docs/OWNERSHIP.md",
     "docs/SUBMISSION_DISCLOSURES.md",
     # The storefront. The specification puts interface work out of scope, so
@@ -72,6 +73,13 @@ def copy_tracked(destination: Path) -> list[str]:
         target = destination / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+    # The repository README documents the full development checkout and names
+    # scripts and tests that are deliberately excluded from the minimal
+    # archive. A reviewer opening the zip must land on instructions that work
+    # from that zip, so publish the submission run notes at its root. Keep the
+    # same file under submission/ because the report and source repository cite
+    # that stable path.
+    shutil.copy2(ROOT / "submission" / "README.md", destination / "README.md")
     return names
 
 
